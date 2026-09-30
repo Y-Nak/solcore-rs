@@ -1,0 +1,13 @@
+// Deploys the built playground to https://playground.solcore.soliditylang.org
+// as a static-assets Cloudflare Worker. The Worker and its custom domain are
+// managed by the Argot infrastructure team, with workers.dev and preview URLs
+// disabled; keep `workers_dev` and `preview_urls` false to match.
+{
+  "name": "solcore-playground",
+  "compatibility_date": "2026-09-30",
+  "assets": {
+    "directory": "./dist"
+  },
+  "workers_dev": false,
+  "preview_urls": false
+}
