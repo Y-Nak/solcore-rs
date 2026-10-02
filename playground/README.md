@@ -150,6 +150,14 @@ For static hosting under a subpath, set `VITE_BASE`:
 VITE_BASE=/solcore-rs/ npm run build
 ```
 
+The public playground at https://playground.solcore.soliditylang.org is a Cloudflare Worker configured in `wrangler.jsonc`. After `npm run build`, deploy it from `playground/`:
+
+```sh
+npx wrangler deploy
+```
+
+Authenticate with `npx wrangler login` as a member of the Argot Cloudflare account, or set `CLOUDFLARE_API_TOKEN` (Workers Scripts edit permission) and `CLOUDFLARE_ACCOUNT_ID`. The Worker and its custom domain are managed by the Argot infrastructure team.
+
 ## WASM packages
 
 Rebuild the sibling wasm crates whenever the compiler or LSP changes. Preferred (size-optimized):
