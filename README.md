@@ -5,7 +5,7 @@
 > [!WARNING]
 > This project is a work in progress and is not ready for production use.
 
-Try it in the [online playground](https://solcore-rs-preview.solcore-rs-team.workers.dev/).
+Try it in the [online playground](https://playground.solcore.soliditylang.org/).
 
 ## Language and compatibility targets
 
