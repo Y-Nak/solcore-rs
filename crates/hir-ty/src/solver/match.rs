@@ -416,7 +416,7 @@ fn match_ty<'db>(
     }
 }
 
-pub(super) fn head_can_unify<'db>(
+pub(crate) fn head_can_unify<'db>(
     db: &'db dyn Db,
     clause: &ProgramClause<'db>,
     goal: Pred<'db>,

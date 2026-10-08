@@ -12,8 +12,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::{
     abi::{
         AbiAdtEvidence, AbiParam, AbiSelector, AbiSignature, AbiType, abi_outputs, abi_params,
-        abi_selector, abi_type_contains_user_adt, contract_diag_unsupported_abi_type,
-        method_signature_string,
+        abi_selector, abi_sig_string_dependencies, abi_type_contains_user_adt,
+        contract_diag_unsupported_abi_type, method_signature_string,
     },
     helpers::{
         find_contract_by_def, function_type_vars, ident_text, lower_normalized_function,
@@ -21,7 +21,7 @@ use super::{
     },
 };
 use crate::{
-    ClassId, ClauseOrigin, Db, DerivedClauseKind, PredKind, TraitEnvId, TyCtor, TyKind,
+    ClassId, ClauseOrigin, Db, DerivedClauseKind, Pred, PredKind, TraitEnvId, Ty, TyCtor, TyKind,
     UserTyCtorKind,
 };
 
@@ -188,13 +188,14 @@ pub fn module_contract_diagnostics<'db>(db: &'db dyn Db, module: Module<'db>) ->
 pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
+    prepared_module: Module<'db>,
     trait_env: TraitEnvId<'db>,
 ) -> Vec<Diagnostic> {
-    let manual_evidence = trait_env
-        .clauses(db)
-        .into_iter()
+    let clauses = trait_env.clauses(db);
+    let manual_evidence = clauses
+        .iter()
         .filter_map(|clause| {
-            let ClauseOrigin::Instance { def: instance, .. } = clause.origin else {
+            let ClauseOrigin::Instance { def: instance, .. } = &clause.origin else {
                 return None;
             };
             if instance
@@ -231,12 +232,15 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
             } else {
                 None
             };
-            Some((instance, class_name, generic_adt))
+            Some((*instance, class_name, generic_adt, clause))
         })
         .collect::<Vec<_>>();
     if manual_evidence.is_empty() {
         return Vec::new();
     }
+    let has_manual_sig_string = manual_evidence
+        .iter()
+        .any(|(_, class_name, _, _)| *class_name == "SigString");
 
     let item_resolutions = resolve_contract_item_types(db, module);
     let mut diagnostics = Vec::new();
@@ -277,7 +281,59 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
             if function.kind(db) == FuncKind::Function {
                 exposed_tys.push(lowered.ret);
             }
-            for (instance, class_name, generic_adt) in &manual_evidence {
+            // Selector.compute uses SigString for the method name and argument
+            // product. Constructors and return values do not request it.
+            let mut sig_string_tys =
+                if has_manual_sig_string && function.kind(db) == FuncKind::Function {
+                    let args = crate::lower::product_ty(db, lowered.params.iter().copied());
+                    abi_sig_string_dependencies(db, args)
+                } else {
+                    Vec::new()
+                };
+            if !sig_string_tys.is_empty() {
+                let name = crate::contract_dispatch_name_type_name(
+                    &contract_name,
+                    &ident_text(db, &sig.name),
+                );
+                if let Some(name_ty) =
+                    prepared_module
+                        .items(db)
+                        .iter()
+                        .find_map(|item| match item {
+                            Item::AdtDef(adt)
+                                if ident_text(db, &adt.name_elem(db)) == name
+                                    && adt.def_id_value(db).fingerprint(db).as_deref()
+                                        == Some("solcore.generated.std_dispatch.name_type") =>
+                            {
+                                Some(Ty::named(
+                                    db,
+                                    TyCtor::User(crate::UserTyCtor {
+                                        def: adt.def_id_value(db),
+                                        kind: UserTyCtorKind::Adt,
+                                    }),
+                                    Vec::new(),
+                                ))
+                            }
+                            _ => None,
+                        })
+                {
+                    sig_string_tys.push(name_ty);
+                }
+            }
+            for (instance, class_name, generic_adt, clause) in &manual_evidence {
+                if *class_name == "SigString"
+                    && !sig_string_tys.iter().any(|ty| {
+                        let PredKind::InClass { class, .. } = clause.head.kind(db) else {
+                            return false;
+                        };
+                        let goal = Pred::in_class(db, *class, *ty, Vec::new());
+                        let mut goal_vars = FxHashSet::default();
+                        crate::solver::collect_pred_vars(db, goal, &mut goal_vars);
+                        crate::solver::head_can_unify(db, clause, goal, &goal_vars)
+                    })
+                {
+                    continue;
+                }
                 if generic_adt.is_some_and(|adt| {
                     !exposed_tys
                         .iter()

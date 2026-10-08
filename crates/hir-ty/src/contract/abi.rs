@@ -492,6 +492,125 @@ fn generic_product_sig_string<'db>(
         .map(|parts| parts.join(","))
 }
 
+/// Collects the `SigString` goals used to sign one generated dispatch argument
+/// product. Standard primitive and location instances are leaves; derived ADTs
+/// delegate to their `Generic` representation rather than every type argument.
+pub(super) fn abi_sig_string_dependencies<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Vec<Ty<'db>> {
+    fn is_proper_subterm<'db>(db: &'db dyn Db, ancestor: Ty<'db>, candidate: Ty<'db>) -> bool {
+        let contains = |child| child == candidate || is_proper_subterm(db, child, candidate);
+        match ancestor.kind(db) {
+            TyKind::Named { args, .. } | TyKind::Tuple(args) => args.iter().copied().any(contains),
+            TyKind::Function { params, ret } => {
+                params.iter().copied().any(contains) || contains(*ret)
+            }
+            TyKind::Comptime(inner) => contains(*inner),
+            TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => false,
+        }
+    }
+
+    fn visit<'db>(
+        db: &'db dyn Db,
+        ty: Ty<'db>,
+        adt_stack: &mut AbiAdtStack<'db>,
+        seen: &mut FxHashSet<Ty<'db>>,
+        dependencies: &mut Vec<Ty<'db>>,
+    ) {
+        if !seen.insert(ty) {
+            return;
+        }
+        dependencies.push(ty);
+        match ty.kind(db) {
+            TyKind::Tuple(elems) => {
+                for elem in elems {
+                    visit(db, *elem, adt_stack, seen, dependencies);
+                }
+            }
+            TyKind::Named {
+                ctor: TyCtor::Builtin(BuiltinTyCtor::Pair | BuiltinTyCtor::Sum),
+                args,
+            } if args.len() == 2 => {
+                for arg in args {
+                    visit(db, *arg, adt_stack, seen, dependencies);
+                }
+            }
+            TyKind::Named {
+                ctor: TyCtor::User(user),
+                args,
+            } => {
+                if args.is_empty() && canonical_user_abi_name(db, user).is_some() {
+                    return;
+                }
+                match canonical_calldata_array_element(db, user, args) {
+                    Ok(Some(element)) => {
+                        visit(db, element, adt_stack, seen, dependencies);
+                        return;
+                    }
+                    Ok(None) => {}
+                    Err(_) => return,
+                }
+                match canonical_location_abi_name(db, user, args) {
+                    Ok(None) => {}
+                    Ok(Some(_)) | Err(_) => return,
+                }
+                // Repeated ADTs must descend through source type arguments.
+                // Comparing only concrete types misses recursion that grows
+                // its arguments, while Box<Box<t>> -> Box<t> remains finite.
+                if reject_structural_std_abi_fallback(db, user, args).is_err()
+                    || adt_stack.iter().any(|ancestor| {
+                        matches!(
+                            ancestor.kind(db),
+                            TyKind::Named {
+                                ctor: TyCtor::User(ancestor_user),
+                                ..
+                            } if ancestor_user.def == user.def
+                        ) && !is_proper_subterm(db, *ancestor, ty)
+                    })
+                {
+                    return;
+                }
+                let module = parse_file_to_hir(db, user.def.file(db)).module(db);
+                let Some(adt) = find_adt_by_def(db, module, user.def) else {
+                    return;
+                };
+                if adt.ty_param_elems(db).len() != args.len() {
+                    return;
+                }
+                let Some(generic) = visible_generic_class(db, module) else {
+                    return;
+                };
+                let Some(plan) =
+                    crate::solver::derived_generic_instance_plan(db, module, adt, generic)
+                else {
+                    return;
+                };
+                if crate::solver::derived_abi_rep_mentions_adt(db, plan.rep, user.def) {
+                    return;
+                }
+                let rep = substitute_bound_tys(db, plan.rep, args);
+                adt_stack.push(ty);
+                visit(db, rep, adt_stack, seen, dependencies);
+                adt_stack.pop();
+            }
+            TyKind::Error
+            | TyKind::Unknown
+            | TyKind::BoundVar(_)
+            | TyKind::Named { .. }
+            | TyKind::Function { .. }
+            | TyKind::Comptime(_) => {}
+        }
+    }
+
+    let mut dependencies = Vec::new();
+    visit(
+        db,
+        ty,
+        &mut Vec::new(),
+        &mut FxHashSet::default(),
+        &mut dependencies,
+    );
+    dependencies
+}
+
 fn compiler_owned_generic_source_name<'db>(
     db: &'db dyn Db,
     user: &UserTyCtor<'db>,

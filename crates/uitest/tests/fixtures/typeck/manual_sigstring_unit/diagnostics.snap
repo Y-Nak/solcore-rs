@@ -1,0 +1,36 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/manual_sigstring_unit/main.sol
+---
+error[SC0218]: Overlapping impls are not supported
+               impl:
+               (): SigString
+               overlaps with:
+               (): SigString
+  --> /main/main.sol:4:6
+   |
+ 3 |
+ 4 | impl SigString<()> {
+   |      ^^^^^^^^^^^^^ overlapping impl
+ 5 |   function sigStr(p: Proxy<()>) returns (string) { return "changed"; }
+   |
+  ::: /std/dispatch.sol:56
+   |
+56 | impl SigString<memory<bytes>> { function sigStr(x: Proxy<memory<bytes>>) returns (string) { "bytes" }}
+57 | impl SigString<()> { function sigStr(x: Proxy<()>) returns (string) { "" } }
+   |      ------------- previous overlapping impl
+58 |
+   |
+---
+
+error[SC0231]: public function `hello` ABI for contract `C` cannot use visible manual `SigString` evidence
+  --> /main/main.sol:9:3
+   |
+ 8 | contract C {
+ 9 |   function hello() public returns (uint256) {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+10 |     return uint256(7);
+   |
+   = note: impl `SigString` can override canonical `SigString` behavior
+   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

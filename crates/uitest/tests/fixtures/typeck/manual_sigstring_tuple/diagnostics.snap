@@ -1,0 +1,36 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/manual_sigstring_tuple/main.sol
+---
+error[SC0218]: Overlapping impls are not supported
+               impl:
+               pair<uint256, bool>: SigString
+               overlaps with:
+               pair<_, _>: SigString
+  --> /main/main.sol:4:6
+   |
+ 3 |
+ 4 | impl SigString<(uint256, bool)> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^ overlapping impl
+ 5 |   function sigStr(p: Proxy<(uint256, bool)>) returns (string) { return "changed"; }
+   |
+  ::: /std/dispatch.sol:58
+   |
+58 |
+59 | impl<a, b> SigString<(a, b)> where a: SigString, b: SigString {
+   |            ----------------- previous overlapping impl
+60 |   function sigStr(x: Proxy<(a, b)>) returns (string) {
+   |
+---
+
+error[SC0231]: public function `inspect` ABI for contract `C` cannot use visible manual `SigString` evidence
+  --> /main/main.sol:9:3
+   |
+ 8 | contract C {
+ 9 |   function inspect(value: uint256, flag: bool) public returns (uint256) {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+10 |     return value;
+   |
+   = note: impl `SigString` can override canonical `SigString` behavior
+   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI
