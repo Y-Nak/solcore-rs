@@ -1,0 +1,6 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ok_contract_imported_function_renamed/main.sol
+---
+no diagnostics

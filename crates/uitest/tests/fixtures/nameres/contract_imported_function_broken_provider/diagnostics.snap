@@ -1,0 +1,12 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/contract_imported_function_broken_provider/main.sol
+---
+error[SC0001]: could not parse top-level item near `lost(x) returns (word) { return 0; }`; expected a declaration starting with `import`, `pragma`, `type`, `enum`, `trait`, `impl`, `contract`, or `function`
+ --> /main/util.sol:1:1
+  |
+1 | lost(x) returns (word) { return 0; }
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2 | function other() {}
+  |

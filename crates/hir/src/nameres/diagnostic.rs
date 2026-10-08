@@ -36,9 +36,9 @@ pub enum UndefinedNameKind {
 
 /// Typed local name-resolution diagnostic.
 ///
-/// The variants mirror the `SC010x` local resolver codes and store
-/// lifetime-free label spans. Lowering to the generic user-facing diagnostic is
-/// deferred until the driver or another diagnostic edge asks for it.
+/// The variants store lifetime-free label spans. Lowering to the generic
+/// user-facing diagnostic is deferred until the driver or another diagnostic
+/// edge asks for it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum NameresDiagnostic {
     /// `SC0101`: failed term, field, module, or qualified-name lookup.
@@ -101,6 +101,13 @@ pub enum NameresDiagnostic {
         previous: LabelSpan,
         /// Optional contextual note, such as the enclosing contract.
         context: Option<String>,
+    },
+    /// `SC0225`: a contract function conflicts with an imported function.
+    DuplicateFunction {
+        /// Duplicated surface name.
+        name: String,
+        /// Span of the contract function name.
+        span: LabelSpan,
     },
 }
 
@@ -234,6 +241,12 @@ impl NameresDiagnostic {
                     diagnostic = diagnostic.with_note(format!("context: {context}"));
                 }
                 diagnostic
+            }
+            NameresDiagnostic::DuplicateFunction { name, span } => {
+                Diagnostic::error(format!("duplicate function definition: {name}"))
+                    .with_code(DiagnosticCode::NAMERES_DUPLICATE_FUNCTION)
+                    .with_primary_label_span(span.clone(), Some("duplicate function"))
+                    .with_help("rename or remove the duplicate function definition")
             }
         }
     }

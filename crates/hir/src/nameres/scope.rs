@@ -1,5 +1,38 @@
 use super::*;
 
+pub(super) fn contract_import_diagnostics<'db>(
+    db: &'db dyn Db,
+    scope: &ItemScopeFacts<'db>,
+    imports: &dyn ImportedNames<'db>,
+) -> Vec<NameresDiagnostic> {
+    let mut diagnostics = Vec::new();
+    // Imports are available only after local scopes have been built. Check the
+    // exposed name so aliases and qualified-only imports keep their semantics.
+    for contract in &scope.contracts {
+        for entry in &contract.terms {
+            if matches!(
+                entry.resolution,
+                Resolution::Def {
+                    kind: DefResolutionKind::Function,
+                    ..
+                }
+            ) && matches!(
+                imports.imported(db, Namespace::Term, &entry.name),
+                Some(Resolution::Def {
+                    kind: DefResolutionKind::Function,
+                    ..
+                })
+            ) {
+                diagnostics.push(NameresDiagnostic::DuplicateFunction {
+                    name: entry.name.clone(),
+                    span: LabelSpan::from_span(db, entry.span),
+                });
+            }
+        }
+    }
+    diagnostics
+}
+
 pub(super) struct ItemScopeBuilder<'db> {
     db: &'db dyn Db,
     module: Module<'db>,

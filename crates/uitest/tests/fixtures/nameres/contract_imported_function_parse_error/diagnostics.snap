@@ -1,0 +1,14 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/contract_imported_function_parse_error/main.sol
+---
+error[SC0001]: parse error: unexpected `;`
+ --> /main/main.sol:5:17
+  |
+4 |     function setValue(x: word) {
+5 |         let y = ;
+  |                 ^ unexpected token
+6 |     }
+  |
+  = note: expecting `&&`, `&`, `(`, `.`, `?`, `[`, `^`, `|`, or `||`

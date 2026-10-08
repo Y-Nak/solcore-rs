@@ -74,7 +74,8 @@ pub fn resolve_item_type_facts<'db>(
 /// names.
 ///
 /// `scope` must be the item scope for `module`. `imports` is consulted after
-/// local item/contract scopes and before builtin names.
+/// local item/contract scopes and before builtin names. Contract functions that
+/// conflict with imported functions are diagnosed here once imports are known.
 pub fn resolve_item_types_with_imports<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
@@ -82,6 +83,10 @@ pub fn resolve_item_types_with_imports<'db>(
     imports: &dyn ImportedNames<'db>,
 ) -> ItemResolutionMap<'db> {
     let mut resolver = TypeResolver::new(db, scope, imports);
+    resolver
+        .map
+        .diagnostics
+        .extend(scope::contract_import_diagnostics(db, scope, imports));
     for item in module.items(db) {
         resolver.item(*item, None, &[]);
     }

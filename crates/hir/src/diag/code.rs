@@ -63,6 +63,7 @@ impl DiagnosticCode {
     pub const NAMERES_UNQUALIFIED_CONSTRUCTOR: &'static str = "SC0106";
     pub const NAMERES_INVALID_PATTERN: &'static str = "SC0107";
     pub const NAMERES_DUPLICATE_DECLARATION: &'static str = "SC0108";
+    pub const NAMERES_DUPLICATE_FUNCTION: &'static str = "SC0225";
     pub const MODULE_NOT_FOUND: &'static str = "SC0109";
     pub const MODULE_UNKNOWN_IMPORT_ITEM: &'static str = "SC0110";
     pub const MODULE_DUPLICATE_EXPORTED_ITEM_NAME: &'static str = "SC0111";
@@ -188,6 +189,10 @@ impl DiagnosticCode {
         DiagnosticCodeEntry::new(
             "NAMERES_DUPLICATE_DECLARATION",
             Self::NAMERES_DUPLICATE_DECLARATION,
+        ),
+        DiagnosticCodeEntry::new(
+            "NAMERES_DUPLICATE_FUNCTION",
+            Self::NAMERES_DUPLICATE_FUNCTION,
         ),
         DiagnosticCodeEntry::new("MODULE_NOT_FOUND", Self::MODULE_NOT_FOUND),
         DiagnosticCodeEntry::new(

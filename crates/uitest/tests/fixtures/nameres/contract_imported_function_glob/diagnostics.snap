@@ -1,0 +1,25 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/contract_imported_function_glob/main.sol
+---
+error[SC0225]: duplicate function definition: setValue
+ --> /main/main.sol:2:14
+  |
+1 | contract Before {
+2 |     function setValue(x: word) {
+  |              ^^^^^^^^ duplicate function
+3 |         setValue(x);
+  |
+  = help: rename or remove the duplicate function definition
+---
+
+error[SC0225]: duplicate function definition: setValue
+  --> /main/main.sol:10:14
+   |
+ 9 | contract After {
+10 |     function setValue(x: word) {
+   |              ^^^^^^^^ duplicate function
+11 |         setValue(x);
+   |
+   = help: rename or remove the duplicate function definition

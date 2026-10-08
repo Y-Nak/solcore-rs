@@ -1,0 +1,14 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/contract_imported_function/main.sol
+---
+error[SC0225]: duplicate function definition: setValue
+ --> /main/main.sol:5:14
+  |
+4 | contract C {
+5 |     function setValue(x: uint256) public {
+  |              ^^^^^^^^ duplicate function
+6 |         setValue(x);
+  |
+  = help: rename or remove the duplicate function definition
