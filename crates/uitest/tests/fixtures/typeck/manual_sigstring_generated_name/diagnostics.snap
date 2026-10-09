@@ -40,15 +40,3 @@ error[SC0103]: undefined type constructor: DispatchNameTy_C_hello
   |                            ^^^^^^^^^^^^^^^^^^^^^^ undefined type constructor
 6 | }
   |
----
-
-error[SC0231]: public function `hello` ABI for contract `C` cannot use visible manual `SigString` evidence
-  --> /main/main.sol:9:3
-   |
- 8 | contract C {
- 9 |   function hello() public returns (uint256) {
-   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-10 |     return uint256(7);
-   |
-   = note: impl `SigString` can override canonical `SigString` behavior
-   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI
