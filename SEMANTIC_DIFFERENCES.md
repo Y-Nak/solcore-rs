@@ -36,8 +36,8 @@ not mean that accidental self-recursion has been prevented. Any future
 diagnostic should be considered as a separate language-policy change.
 The overlap UI fixture verifies that this accepted name shadowing does not
 suppress `SC0218`. General suppression after genuine item-resolution errors
-is a separate behavior. Use an explicit module-qualified call when the
-imported function is intended; `contract-method-shadowing` tests both targets.
+is a separate behavior. In Rust, an explicit module-qualified call selects
+the imported function; `contract-method-shadowing` tests both Rust call targets.
 
 ## Intentional corrections and retained differences
 
@@ -50,7 +50,7 @@ unstaged `issues.md`. The following Rust corrections remain intentional.
 | Static variant head size | `buildABIAttribs` delegates to nested structural sums even though the derived encoder now emits only one tag. For three or more constructors this can count extra tag words. | Use one tag plus the maximum constructor-product head. The static 0/1/3-field variant regression requires exactly 128 bytes. |
 | Non-callable values | Latest legacy full frontend still accepts `Uncurry` and `rec`, which call a `word` value. | Reject non-callable values. |
 | Function tuple arity | Function lowering erases the distinction between one tuple argument and several arguments. Latest `ListModule`, `Pair`, and `Peano` accept calls inconsistent with their explicit function types. | Preserve source parameter arity. `function_tuple_parameter_arity` rejects `f(x, y)` when `f` requires one tuple, while accepting `f((x, y))`. |
-| Explicit closure desugaring | `compose_desugared` is rejected because its generated-style `invoke` implementation is considered insufficiently polymorphic. | Accept the valid explicit closure representation; retain the specialization regression. |
+| Closure type names | `compose_desugared` reaches `SC0209` because source-declared `t_closure…` types are treated as generated closures by name and omitted from generated invocation arguments. Renaming the type avoids the error. | Accept the valid explicit closure representation; retain the specialization regression. |
 | Renamed type witnesses | With `import {Proxy as P} from lib`, `@word` is still annotated as unqualified `Proxy<word>`, which fails to unify with the expected `P<word>`. | Resolve the expected alias to the actual ADT and construct its visible `Proxy` constructor. `proxy_local_and_qualified` includes a renamed import. |
 | Assembly lexical scopes | Deeply nested let names can incorrectly conceal writes to outer variables, yielding stale constants. Loop initializer masking and later assembly blocks can also retain erased comptime identifiers. | Track writes in their actual scopes, substitute initializers before binding names, and preserve untouched outer constants. `asm-scope` executes both conditional-write paths. |
 | Compile-time heap invalidation | A runtime memory write can leave an older compile-time heap value available to a later comptime load. | Invalidate heap facts after residual memory effects. `ct_memory_after_runtime_asm` rejects direct, wrapped, branch, loop, and compound-expression witnesses. |
