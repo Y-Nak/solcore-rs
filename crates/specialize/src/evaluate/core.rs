@@ -699,9 +699,8 @@ impl<'db> Evaluator<'db> {
                 )
             }
             MonoStmtKind::Assembly(body) => {
-                let mut subst = venv_to_yul_subst(self.db, &env);
+                let subst = venv_to_yul_subst(self.db, &env);
                 let written = yul_written_names(self.db, &body);
-                subst.retain(|name, _| !written.contains(name));
                 let body = subst_yul_block(self.db, &subst, body);
                 let state = venv_to_yul_state(&env);
                 if let Some(state) = self.eval_yul_block(state, &body) {
@@ -714,11 +713,15 @@ impl<'db> Evaluator<'db> {
                         }],
                     )
                 } else {
-                    let (mut env, mut comptime_env) =
-                        self.preserve_comptime_known_env(env, comptime_env);
-                    for name in written {
-                        env.remove(&name);
-                        comptime_env.remove(&name);
+                    // Inline Yul can assign enclosing locals only through its
+                    // lexical writes. Keep other known locals, including erased
+                    // comptime numbers, but invalidate storage facts because
+                    // arbitrary assembly may execute sstore or an external call.
+                    let mut env = env;
+                    let mut comptime_env = comptime_env;
+                    for name in written.iter().chain(self.storage_fields.iter()) {
+                        env.remove(name);
+                        comptime_env.remove(name);
                     }
                     (
                         env,

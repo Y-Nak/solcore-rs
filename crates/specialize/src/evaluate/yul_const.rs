@@ -103,36 +103,46 @@ pub(super) fn venv_to_yul_subst<'db>(
 
 pub(super) fn yul_written_names<'db>(db: &'db dyn Db, body: &[YulStmt<'db>]) -> FxHashSet<String> {
     let mut names = FxHashSet::default();
-    collect_yul_written_names(db, body, &mut names);
+    collect_yul_written_names(db, body, &mut FxHashSet::default(), &mut names);
     names
 }
 
 fn collect_yul_written_names<'db>(
     db: &'db dyn Db,
     body: &[YulStmt<'db>],
+    locals: &mut FxHashSet<String>,
     names: &mut FxHashSet<String>,
 ) {
     for stmt in body {
         match &stmt.kind {
-            YulStmtKind::Let { names: bound, .. } | YulStmtKind::Assign { names: bound, .. } => {
-                names.extend(bound.iter().map(|name| ident_text(db, name)));
+            YulStmtKind::Let { names: bound, .. } => {
+                locals.extend(bound.iter().map(|name| ident_text(db, name)));
+            }
+            YulStmtKind::Assign { names: bound, .. } => {
+                names.extend(
+                    bound
+                        .iter()
+                        .map(|name| ident_text(db, name))
+                        .filter(|name| !locals.contains(name)),
+                );
             }
             YulStmtKind::Block(body) | YulStmtKind::If { body, .. } => {
-                collect_yul_written_names(db, body, names);
+                collect_yul_written_names(db, body, &mut locals.clone(), names);
             }
             YulStmtKind::For {
                 init, post, body, ..
             } => {
-                collect_yul_written_names(db, init, names);
-                collect_yul_written_names(db, post, names);
-                collect_yul_written_names(db, body, names);
+                let mut loop_locals = locals.clone();
+                collect_yul_written_names(db, init, &mut loop_locals, names);
+                collect_yul_written_names(db, post, &mut loop_locals.clone(), names);
+                collect_yul_written_names(db, body, &mut loop_locals, names);
             }
             YulStmtKind::Switch { cases, default, .. } => {
                 for case in cases {
-                    collect_yul_written_names(db, &case.body, names);
+                    collect_yul_written_names(db, &case.body, &mut locals.clone(), names);
                 }
                 if let Some(default) = default {
-                    collect_yul_written_names(db, default, names);
+                    collect_yul_written_names(db, default, &mut locals.clone(), names);
                 }
             }
             // A Yul function cannot capture or mutate values from its enclosing
@@ -164,9 +174,20 @@ fn yul_lit_from_known_expr<'db>(db: &'db dyn Db, expr: &MonoExpr<'db>) -> Option
     })
 }
 
+/// Substitute literals in source order, preserving lexical shadowing. A write
+/// invalidates later reads, while a nested local must not erase an outer
+/// comptime value that has no runtime binding.
 pub(super) fn subst_yul_block<'db>(
     db: &'db dyn Db,
     subst: &FxHashMap<String, YulExpr<'db>>,
+    body: Vec<YulStmt<'db>>,
+) -> Vec<YulStmt<'db>> {
+    subst_yul_sequence(db, &mut subst.clone(), body)
+}
+
+fn subst_yul_sequence<'db>(
+    db: &'db dyn Db,
+    subst: &mut FxHashMap<String, YulExpr<'db>>,
     body: Vec<YulStmt<'db>>,
 ) -> Vec<YulStmt<'db>> {
     body.into_iter()
@@ -176,16 +197,22 @@ pub(super) fn subst_yul_block<'db>(
 
 fn subst_yul_stmt<'db>(
     db: &'db dyn Db,
-    subst: &FxHashMap<String, YulExpr<'db>>,
+    subst: &mut FxHashMap<String, YulExpr<'db>>,
     stmt: YulStmt<'db>,
 ) -> YulStmt<'db> {
     let span = stmt.span;
+    // Only assignments to names outside the nested scope escape. In
+    // particular, a same-named let in a sibling block cannot hide a write.
+    let escaping = yul_written_names(db, std::slice::from_ref(&stmt));
     let kind = match stmt.kind {
         YulStmtKind::Block(body) => YulStmtKind::Block(subst_yul_block(db, subst, body)),
-        YulStmtKind::Let { names, init } => YulStmtKind::Let {
-            names,
-            init: init.map(|expr| subst_yul_expr(db, subst, expr)),
-        },
+        YulStmtKind::Let { names, init } => {
+            let init = init.map(|expr| subst_yul_expr(db, subst, expr));
+            for name in &names {
+                subst.remove(&ident_text(db, name));
+            }
+            YulStmtKind::Let { names, init }
+        }
         YulStmtKind::Assign { names, value } => YulStmtKind::Assign {
             names,
             value: subst_yul_expr(db, subst, value),
@@ -200,12 +227,21 @@ fn subst_yul_stmt<'db>(
             cond,
             post,
             body,
-        } => YulStmtKind::For {
-            init: subst_yul_block(db, subst, init),
-            cond: subst_yul_expr(db, subst, cond),
-            post: subst_yul_block(db, subst, post),
-            body: subst_yul_block(db, subst, body),
-        },
+        } => {
+            let mut inner = subst.clone();
+            // The initializer runs once and its top-level lets remain in scope
+            // for the condition, body, and post block.
+            let init = subst_yul_sequence(db, &mut inner, init);
+            let mut repeated_writes = yul_written_names(db, &post);
+            repeated_writes.extend(yul_written_names(db, &body));
+            inner.retain(|name, _| !repeated_writes.contains(name));
+            YulStmtKind::For {
+                init,
+                cond: subst_yul_expr(db, &inner, cond),
+                post: subst_yul_block(db, &inner, post),
+                body: subst_yul_block(db, &inner, body),
+            }
+        }
         YulStmtKind::Switch {
             expr,
             cases,
@@ -240,6 +276,7 @@ fn subst_yul_stmt<'db>(
         YulStmtKind::Continue => YulStmtKind::Continue,
         YulStmtKind::Error => YulStmtKind::Error,
     };
+    subst.retain(|name, _| !escaping.contains(name));
     YulStmt { span, kind }
 }
 
