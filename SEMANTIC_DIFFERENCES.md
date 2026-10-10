@@ -49,9 +49,13 @@ The shared shadowing rule still permits the silent self-call reported in
 [solcore-rs #48](https://github.com/argotorg/solcore-rs/issues/48). Haskell
 [PR #599](https://github.com/argotorg/solcore/pull/599) changed its duplicate
 check to use qualified contract names, so latest Haskell also accepts the
-original imported `setValue` example and emits a self-call. Rust follows this
-rule and does not add `SC0225`. A warning or rejection of accidental recursion
-remains a language-policy question; this synchronization does not solve it.
+original imported `setValue` example and emits a self-call. The compatibility
+policy is to retain this latest-Haskell behavior in Rust without adding
+`SC0225` or a new warning. For the unit-returning method with a runtime
+argument in #48, both compilers emit unbounded self-recursion without a warning
+or error. This shared problem remains unresolved; matching the reference does
+not mean that accidental self-recursion has been prevented. Any future
+diagnostic should be considered as a separate language-policy change.
 The overlap UI fixture verifies that this accepted name shadowing does not
 suppress `SC0218`. General suppression after genuine item-resolution errors
 is a separate behavior. Use an explicit module-qualified call when the
