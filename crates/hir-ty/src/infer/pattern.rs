@@ -781,7 +781,7 @@ impl<'db> InferCtx<'db> {
             if elems.len() == 1 {
                 return Some(vec![expected]);
             }
-            match product_elems(&mut self.engine, expected) {
+            match product_elems_for_arity_by(expected, elems.len(), |ty| self.engine.resolve(ty)) {
                 Some(expected_elems) if expected_elems.len() == elems.len() => Some(expected_elems),
                 Some(expected_elems) => {
                     self.emit_expr_error(
@@ -835,7 +835,11 @@ impl<'db> InferCtx<'db> {
             if elems.len() == 1 {
                 return Some(vec![expected]);
             }
-            if let Some(expected_elems) = product_elems(&mut self.engine, expected.clone()) {
+            if let Some(expected_elems) =
+                product_elems_for_arity_by(expected.clone(), elems.len(), |ty| {
+                    self.engine.resolve(ty)
+                })
+            {
                 if expected_elems.len() != elems.len() {
                     self.emit_pat_error(
                         body,

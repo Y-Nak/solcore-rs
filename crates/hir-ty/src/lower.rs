@@ -355,7 +355,7 @@ impl<'db> TypeLowering<'db> {
         let params = match ctor.field_count {
             0 => Vec::new(),
             1 => vec![fields],
-            _ => tuple_params(self.db, fields),
+            arity => tuple_params(self.db, fields, arity),
         };
         let adt_def = adt.def_id_value(self.db);
         let ret_args = adt
@@ -680,8 +680,8 @@ fn user_type_ctor<'db>(
     Some(TyCtor::User(UserTyCtor { def, kind }))
 }
 
-fn tuple_params<'db>(db: &'db dyn HirDb, ty: Ty<'db>) -> Vec<Ty<'db>> {
-    match ty.kind(db) {
+fn tuple_params<'db>(db: &'db dyn HirDb, ty: Ty<'db>, arity: usize) -> Vec<Ty<'db>> {
+    let mut params = match ty.kind(db) {
         TyKind::Tuple(elems) => elems.clone(),
         TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Unit),
@@ -697,7 +697,15 @@ fn tuple_params<'db>(db: &'db dyn HirDb, ty: Ty<'db>) -> Vec<Ty<'db>> {
             params
         }
         _ => vec![ty],
+    };
+    // The constructor's last field may itself be a tuple. Its product tail is
+    // one parameter, even though the aggregate field type has the same shape
+    // as a constructor with more scalar fields.
+    if arity > 0 && params.len() > arity {
+        let tail = params.split_off(arity - 1);
+        params.push(product_ty(db, tail));
     }
+    params
 }
 
 pub(crate) fn product_ty<'db>(

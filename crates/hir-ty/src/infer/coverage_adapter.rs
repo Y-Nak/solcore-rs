@@ -172,7 +172,10 @@ impl<'db> InferCtx<'db> {
             PatKind::ComptimeLabel { .. } => None,
             PatKind::Tuple { elems } => {
                 let expected = self.coverage_ty(expected);
-                if let Some(field_tys) = self.product_field_tys(expected.clone())
+                if let Some(field_tys) =
+                    product_elems_for_arity_by(expected.clone(), elems.len(), |ty| {
+                        self.coverage_ty(ty)
+                    })
                     && field_tys.len() == elems.len()
                 {
                     return self.coverage_product_pat(body, &elems, &field_tys);
