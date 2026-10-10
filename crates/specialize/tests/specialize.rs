@@ -5872,82 +5872,23 @@ contract Sums {
         "specialized function names must be globally unique: {duplicate_names:#?}"
     );
 
-    let mut bridge_names = BTreeSet::new();
-    let mut generic_from_names = BTreeSet::new();
-    let mut representation_returns = BTreeSet::new();
-    let encode_into_candidates = functions
-        .iter()
-        .copied()
-        .filter_map(|function| match &function.origin {
-            MonoFunctionOrigin::InstanceMethod { class, method, .. } if method == "encodeInto" => {
-                Some((
-                    class.clone(),
-                    function.name.clone(),
-                    function
-                        .params
-                        .iter()
-                        .map(|param| param.ty.ty().display(db))
-                        .collect::<Vec<_>>(),
-                    function.ret.ty().display(db),
-                    function_call_names(function),
-                ))
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let mut encoder_names = BTreeSet::new();
     for adt_name in ["D2", "D3", "S2"] {
-        let displayed_adt = format!("adt:{adt_name}");
-        let bridge = functions
-            .iter()
-            .copied()
-            .find(|function| {
-                matches!(
-                    &function.origin,
-                    MonoFunctionOrigin::InstanceMethod { class, method, .. }
-                        if class == "ABIEncode" && method == "encodeInto"
-                ) && function
-                    .params
-                    .first()
-                    .is_some_and(|param| param.ty.ty().display(db) == displayed_adt)
-            })
-            .unwrap_or_else(|| {
-                panic!("missing ABIEncode bridge for {adt_name}: {encode_into_candidates:#?}")
-            });
+        let encoder = functions.iter().copied().find(|function| matches!(
+            &function.origin,
+            MonoFunctionOrigin::DerivedGeneric { adt, method }
+                if method == "ABIEncode.encodeInto" && adt.name(db).as_deref() == Some(adt_name)
+        )).unwrap_or_else(|| panic!("missing variant-aware encoder for {adt_name}"));
         assert!(
-            bridge_names.insert(bridge.name.clone()),
-            "shared ABIEncode bridge: {bridge:#?}"
+            encoder_names.insert(encoder.name.clone()),
+            "shared variant encoder"
         );
-
-        let generic_from = function_call_names(bridge)
-            .into_iter()
-            .find(|name| name.starts_with("Generic_from_"))
-            .unwrap_or_else(|| panic!("missing Generic.from call in {bridge:#?}"));
         assert!(
-            generic_from_names.insert(generic_from.clone()),
-            "shared Generic.from specialization: {bridge:#?}"
+            function_call_names(encoder)
+                .iter()
+                .all(|name| !name.starts_with("Generic_from_")),
+            "variant names must survive until the wire tag is emitted"
         );
-        let generic_from_function = functions_by_name
-            .get(generic_from.as_str())
-            .and_then(|candidates| candidates.first())
-            .expect("Generic.from specialization is emitted");
-        representation_returns.insert(generic_from_function.ret.ty().display(db));
-    }
-    assert_eq!(
-        representation_returns.len(),
-        3,
-        "D2, D3, and S2 must retain distinct Generic representations: {representation_returns:?}"
-    );
-
-    fn unary_expr_arg<'a, 'db>(expr: &'a MonoExpr<'db>, expected_ctor: &str) -> &'a MonoExpr<'db> {
-        let MonoExprKind::Con { ctor, args } = &expr.kind else {
-            panic!("expected {expected_ctor} expression: {expr:#?}");
-        };
-        assert_eq!(ctor.name, expected_ctor, "{expr:#?}");
-        assert_eq!(ctor.ty, expr.ty, "constructor/result annotation mismatch");
-        let [arg] = args.as_slice() else {
-            panic!("expected unary {expected_ctor}: {expr:#?}");
-        };
-        arg
     }
 
     fn unary_pat_arg<'a, 'db>(
@@ -5965,56 +5906,6 @@ contract Sums {
         arg
     }
 
-    let d3_from = functions
-        .iter()
-        .copied()
-        .find(|function| {
-            matches!(
-                &function.origin,
-                MonoFunctionOrigin::DerivedGeneric { adt, method }
-                    if method == "from" && adt.name(db).as_deref() == Some("D3")
-            )
-        })
-        .expect("D3 Generic.from");
-    let TyKind::Named {
-        ctor: hir_ty::TyCtor::Builtin(BuiltinTyCtor::Sum),
-        args: d3_rep_args,
-    } = d3_from.ret.ty().kind(db)
-    else {
-        panic!("D3 representation is not a sum: {d3_from:#?}");
-    };
-    let d3_right_suffix = d3_rep_args[1];
-    let [
-        MonoStmt {
-            kind: MonoStmtKind::Match {
-                arms: from_arms, ..
-            },
-            ..
-        },
-    ] = d3_from.body.as_slice()
-    else {
-        panic!("D3 Generic.from body: {d3_from:#?}");
-    };
-    for (arm, inner_ctor) in [(&from_arms[1], "inl"), (&from_arms[2], "inr")] {
-        let [
-            MonoStmt {
-                kind: MonoStmtKind::Return(Some(expr)),
-                ..
-            },
-        ] = arm.body.as_slice()
-        else {
-            panic!("D3 Generic.from arm: {arm:#?}");
-        };
-        assert_eq!(expr.ty, d3_from.ret, "outer inr must retain full D3 rep");
-        let inner = unary_expr_arg(expr, "inr");
-        assert_eq!(
-            inner.ty.ty(),
-            d3_right_suffix,
-            "inner sum expression must use the right-hand suffix"
-        );
-        unary_expr_arg(inner, inner_ctor);
-    }
-
     let d3_to = functions
         .iter()
         .copied()
@@ -6026,6 +5917,15 @@ contract Sums {
             )
         })
         .expect("D3 Generic.to");
+    let TyKind::Named {
+        ctor: hir_ty::TyCtor::Builtin(BuiltinTyCtor::Sum),
+        args: d3_rep_args,
+    } = d3_to.params[0].ty.ty().kind(db)
+    else {
+        panic!("D3 representation is not a sum: {d3_to:#?}");
+    };
+    let d3_right_suffix = d3_rep_args[1];
+
     let [
         MonoStmt {
             kind: MonoStmtKind::Match { arms: to_arms, .. },

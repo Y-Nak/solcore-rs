@@ -8,15 +8,19 @@ import * from std.StorageGeneric;
 //
 // The public entry points take and return `Option(uint256)` directly, so the
 // generated dispatch has to
-//   * derive an ABIDecode instance for the type (DeriveGeneric.buildABIDecode),
-//   * reach ABIEncode / ABIAttribs through the default Generic bridges, and
-//   * build a selector from the derived SigString, which for a sum is the
-//     structural string "sum(<l>,<r>)" — here rep = sum((), uint256) and
-//     sigStr(()) = "", so the signature is `setOpt(sum(,uint256))`.
+//   * derive a variant-aware ABIDecode + ABIEncode for the type
+//     (DeriveGeneric.buildABIDecodeSum / buildABIEncode),
+//   * reach ABIAttribs through the concrete derived instance, and
+//   * build the *method* selector from the derived SigString, which for a sum is
+//     still the structural string "sum(<l>,<r>)" — here rep = sum((), uint256) and
+//     sigStr(()) = "", so the signature is `setOpt(sum(,uint256))`. (The method
+//     selector is unrelated to the per-variant value tag below.)
 //
-// Wire layout of a sum (std.ABIGeneric): one tag word, then the branch payload
-// at +32. So `Some(42)` is 0x...01 followed by 0x...2a, and `None` is 0x...00
-// followed by a don't-care word.
+// Wire layout of a sum (std.ABIGeneric): one bytes32 variant tag, then the branch
+// payload at +32. The tag is keccak256 of the variant signature `Name(argSigs)`:
+//   Some(42) -> keccak256("Some(uint256)") followed by 0x...2a
+//   None     -> keccak256("None()")        followed by a don't-care word
+// (This replaced the old positional 0x..00/0x..01 inl/inr tag.)
 
 enum Option<a> { None, Some(a) }
 
@@ -29,7 +33,7 @@ contract C {
     }
 
     // ADT as a parameter: decoded from calldata, then written to storage.
-    function setOpt(o: Option<uint256>) public {
+    function setOpt(o : Option<uint256>) public returns (()) {
         stored = o;
     }
 
@@ -39,29 +43,21 @@ contract C {
     }
 
     // Round-trip in one call, without touching storage.
-    function echo(o: Option<uint256>) public returns (Option<uint256>) {
+    function echo(o : Option<uint256>) public returns (Option<uint256>) {
         return o;
     }
 
     function isSome() public returns (bool) {
-        match (stored) {
-case Option.None {
-return false;
-}
-case Option.Some(_) {
-return true;
-}
-}
+        match (stored ) {
+        case Option.None    { return false;
+        } case Option.Some(_) { return true;
+        } }
     }
 
-    function unwrapOr(d: uint256) public returns (uint256) {
-        match (stored) {
-case Option.None {
-return d;
-}
-case Option.Some(v) {
-return v;
-}
-}
+    function unwrapOr(d : uint256) public returns (uint256) {
+        match (stored ) {
+        case Option.None    { return d;
+        } case Option.Some(v) { return v;
+        } }
     }
 }

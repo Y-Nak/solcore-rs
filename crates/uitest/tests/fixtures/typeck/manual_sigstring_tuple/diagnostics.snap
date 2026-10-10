@@ -20,5 +20,5 @@ error[SC0218]: Overlapping impls are not supported
 58 |
 59 | impl<a, b> SigString<(a, b)> where a: SigString, b: SigString {
    |            ----------------- previous overlapping impl
-60 |   function sigStr(x: Proxy<(a, b)>) returns (string) {
+60 |   function sigStr(x:Proxy<(a, b)>) returns (string) {
    |

@@ -419,7 +419,7 @@ impl<'db> Driver<'db> {
         })
     }
 
-    fn derived_class_absurd_expr(
+    pub(super) fn derived_class_absurd_expr(
         &mut self,
         ret: Ty<'db>,
         span: Span<'db>,

@@ -447,8 +447,8 @@ fn canonical_std_adt_ty<'db>(db: &'db dyn Db, name: &str, args: Vec<Ty<'db>>) ->
 }
 
 /// Follows selected dictionaries, including representation and superclass
-/// subproofs. Selector roots only own SigString evidence; execution roots own
-/// encoding, decoding, and layout evidence.
+/// subproofs. Signature roots own SigString evidence for method selectors and
+/// variant tags; execution roots own encoding, decoding, and layout evidence.
 fn collect_manual_abi_evidence<'db>(
     db: &'db dyn Db,
     evidence: &Evidence<'db>,
@@ -508,7 +508,9 @@ fn collect_manual_abi_evidence<'db>(
             if !selector
                 && matches!(
                     kind,
-                    DerivedClauseKind::AbiAttribs { .. } | DerivedClauseKind::AbiDecode { .. }
+                    DerivedClauseKind::AbiAttribs { .. }
+                        | DerivedClauseKind::AbiEncode { .. }
+                        | DerivedClauseKind::AbiDecode { .. }
                 )
                 && !visited_derived.contains(&(*kind, *pred))
             {
@@ -517,15 +519,19 @@ fn collect_manual_abi_evidence<'db>(
                 } else {
                     visited_derived.insert((*kind, *pred));
                     match crate::solver::derived_abi_delegated_evidence(db, evidence) {
-                        Ok(Some(delegated)) => collect_manual_abi_evidence(
-                            db,
-                            &delegated,
-                            manual_instances,
-                            selector,
-                            selected,
-                            visited_derived,
-                            exhausted_derived,
-                        ),
+                        Ok(Some(dependencies)) => {
+                            for (signature, dependency) in dependencies {
+                                collect_manual_abi_evidence(
+                                    db,
+                                    &dependency,
+                                    manual_instances,
+                                    signature,
+                                    selected,
+                                    visited_derived,
+                                    exhausted_derived,
+                                );
+                            }
+                        }
                         Err(pred) => {
                             exhausted_derived.get_or_insert(pred);
                         }

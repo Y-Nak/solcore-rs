@@ -251,6 +251,11 @@ pub enum DerivedClauseKind<'db> {
         /// ADT whose ABI metadata instance was synthesized.
         adt: DefId<'db>,
     },
+    /// Variant-aware encoder for a multi-constructor ADT.
+    AbiEncode {
+        /// ADT whose encoder instance was synthesized.
+        adt: DefId<'db>,
+    },
     /// Concrete `ABIDecoder(T, reader):ABIDecode(T)` instance.
     AbiDecode {
         /// ADT whose decoder instance was synthesized.

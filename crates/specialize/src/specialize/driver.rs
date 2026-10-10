@@ -103,6 +103,7 @@ pub(super) struct DerivedClassKey<'db> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum DerivedAbiFamily {
     Attribs,
+    Encode,
     Decode,
 }
 

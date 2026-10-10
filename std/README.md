@@ -1,15 +1,15 @@
 # Solcore standard library snapshot
 
-The `.sol` files in this directory are syntax-migrated ports of the Haskell
+The `.sol` files in this directory are byte-for-byte copies of the Haskell
 reference standard library at revision
-`2f372bde2801612814015a22319d0bc51486cbf0`:
+`a7b7afb0638e50895008d778a167afd0e50a2c86`:
 
 ```text
-https://github.com/argotorg/solcore/tree/2f372bde2801612814015a22319d0bc51486cbf0/std
+https://github.com/argotorg/solcore/tree/a7b7afb0638e50895008d778a167afd0e50a2c86/std
 ```
 
-The migration changes surface syntax only; supported semantics remain pinned to
-that reference snapshot. The copies under
+Upstream now uses canonical `.sol` syntax, so no syntax migration is required.
+The copies under
 `crates/parser/tests/fixtures/corpus/ok/std/` are parser fixtures and must remain
 byte-for-byte identical to the files here.
 
@@ -18,19 +18,15 @@ snapshot.
 
 ## Synchronization policy
 
-Do not apply Rust-only semantic fixes directly to these `.sol` files.
+Keep the vendored sources aligned with the recorded upstream revision. When
+upstream changes, update all eight files and their parser-corpus copies together.
 
-When a shared standard-library defect is found:
-
-1. reproduce it with the Haskell compiler and the upstream std;
-2. fix it in the Haskell reference implementation first;
-3. record the new upstream revision;
-4. re-vendor the complete upstream std change and apply the canonical syntax
-   migration to it here and in the parser corpus;
-5. verify both backends against the updated semantic snapshot.
-
-Compiler-side code and surface spelling may differ between the Haskell and Rust
-implementations, but changes to the library's meaning should not.
+Do not reproduce an upstream compiler bug or problematic specification merely
+for compatibility. Record confirmed upstream problems in the local `issues.md`
+without staging that file, and document intentional Rust behavior in
+[`SEMANTIC_DIFFERENCES.md`](../SEMANTIC_DIFFERENCES.md). Any necessary library
+exception must be documented explicitly instead of silently changing the
+recorded snapshot.
 
 ## Compatibility decisions
 

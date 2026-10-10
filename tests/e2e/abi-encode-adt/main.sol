@@ -25,10 +25,13 @@ pragma no-bounded-variable-condition ;
 // `headSize` would fall back to the catch-all `default instance t:ABIAttribs`
 // (32 bytes) and truncate the encoding to its first word. See DeriveGeneric.hs.
 //
+// The sum discriminant is one bytes32 keccak256("Ctor(argSigs)") variant tag
+// (the ABI wire form), not a positional 0/1 index.
+//
 // Layouts pinned here:
 //   * static product  (uint256, uint256)      -> two head words   (len 0x40)
-//   * static sum       sum(uint256, uint256)   -> [tag][branch]     (len 0x40)
-//   * dynamic sum      sum(uint256, string)    -> a dynamic value: the head slot
+//   * static sum       Choice                  -> [tag][branch]     (len 0x40)
+//   * dynamic sum      StrBox                   -> a dynamic value: the head slot
 //        holds an offset (0x20) to the sum body [tag][branch...] laid out in the
 //        tail — even the static (Empty) branch keeps that offset wrapper.
 
@@ -45,26 +48,26 @@ contract AbiEncodeAdt {
   constructor() {}
 
   // Static product: encodes as the tuple (a, b) — two inline head words.
-  function encPoint(a: uint256, b: uint256) public returns (memory<bytes>) {
+  function encPoint(a : uint256, b : uint256) public returns (memory<bytes>) {
     return abi_encode(Point(a, b));
   }
 
-  // Static sum, left constructor: [tag = 0][x].
-  function encFirst(x: uint256) public returns (memory<bytes>) {
+  // Static sum, left constructor: [keccak("First(uint256)")][x].
+  function encFirst(x : uint256) public returns (memory<bytes>) {
     return abi_encode(Choice.First(x));
   }
 
-  // Static sum, right constructor: [tag = 1][x].
-  function encSecond(x: uint256) public returns (memory<bytes>) {
+  // Static sum, right constructor: [keccak("Second(uint256)")][x].
+  function encSecond(x : uint256) public returns (memory<bytes>) {
     return abi_encode(Choice.Second(x));
   }
 
-  // Dynamic sum, static branch: still offset-wrapped — [0x20] -> [tag = 0][n].
-  function encEmpty(n: uint256) public returns (memory<bytes>) {
+  // Dynamic sum, static branch: still offset-wrapped — [0x20] -> [keccak("Empty(uint256)")][n].
+  function encEmpty(n : uint256) public returns (memory<bytes>) {
     return abi_encode(StrBox.Empty(n));
   }
 
-  // Dynamic sum, dynamic branch: [0x20] -> [tag = 1][branch offset][len][data].
+  // Dynamic sum, dynamic branch: [0x20] -> [keccak("Text(string)")][branch offset][len][data].
   function encText() public returns (memory<bytes>) {
     let raw : string = "abc";
     let s : memory<string> = Str.fromString(raw);

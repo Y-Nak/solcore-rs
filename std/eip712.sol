@@ -25,7 +25,12 @@ export {
 // keccak256 of the (dynamic) name / version strings — typically compile-time
 // constants produced with `keccakLit`. `chainId` / `verifyingContract` are
 // encoded as their left-padded 32-byte words.
-function eip712DomainSeparator(nameHash: bytes32, versionHash: bytes32, chainId: uint256, verifyingContract: address) returns (bytes32) {
+function eip712DomainSeparator(
+    nameHash: bytes32,
+    versionHash: bytes32,
+    chainId: uint256,
+    verifyingContract: address
+) returns (bytes32) {
     let typeHash = keccakLit("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
     // Lay the five 32-byte words out contiguously and hash them. We borrow the
     // area above the free-memory pointer as scratch (as `ecrecover` does): the

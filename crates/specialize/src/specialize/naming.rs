@@ -310,6 +310,10 @@ fn hash_evidence<'db>(db: &'db dyn Db, evidence: &Evidence<'db>, state: &mut Def
                     3u8.hash(state);
                     hash_def_id(db, *adt, state);
                 }
+                DerivedClauseKind::AbiEncode { adt } => {
+                    7u8.hash(state);
+                    hash_def_id(db, *adt, state);
+                }
                 DerivedClauseKind::AbiDecode { adt, word_reader } => {
                     4u8.hash(state);
                     hash_def_id(db, *adt, state);

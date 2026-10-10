@@ -131,6 +131,23 @@ impl<'db> Driver<'db> {
                 depth,
             ),
             Evidence::Derived {
+                kind: DerivedClauseKind::AbiEncode { adt },
+                pred,
+                sub_evidence,
+            } => self.specialize_derived_abi(
+                DerivedAbiKey {
+                    adt,
+                    family: DerivedAbiFamily::Encode,
+                    word_reader: None,
+                    method: method.to_owned(),
+                    pred,
+                    target_ty,
+                    sub_evidence,
+                },
+                call_span,
+                depth,
+            ),
+            Evidence::Derived {
                 kind: DerivedClauseKind::AbiDecode { adt, word_reader },
                 pred,
                 sub_evidence,
