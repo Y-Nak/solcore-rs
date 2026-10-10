@@ -59,12 +59,12 @@ unstaged `issues.md`. The following Rust corrections remain intentional.
 | Runtime `main` | Any contract-local `main` suppresses dispatch, including a function with parameters. | Keep suppression, but require zero parameters (`SC0236`). The runtime has no argument source for this entry. |
 | ABI validation | Nullary names pass through metadata; unsupported shapes can reach a partial Haskell `error`. | Validate actual ABI evidence and use structured diagnostics. Reject same-named user-defined substitutes for canonical std wrappers and unsupported `memory<DynArray<address>>` outputs in `storage_array` and `ufcs_array`. |
 | Parameterized ADT metadata | Runtime evidence can be derived but `abiTypeOf` still handles source ADTs only as `TyCon n []`. | Keep the deliberate concrete source spelling extension, e.g. `Point<uint256>`, and require all concrete/phantom arguments to satisfy ABI evidence. |
-| Signature/selector collisions | No equivalent upstream preflight. | Reject duplicate signatures and distinct signatures sharing four selector bytes. |
+| Selector collisions | Distinct method signatures can share four selector bytes. Duplicate method names are already rejected by name resolution. | Reject selector collisions before emitting dispatch. |
 | Tuple return boundaries | Latest metadata preserves a single tuple return item, but the erased result passed to `abi_encode` does not preserve the corresponding outer dynamic-tuple offset. | Retain flattened output metadata consistent with runtime bytes. Correct the source boundary, wrapper, metadata, and encoding together before changing this. |
 
 For tuple returns, a concrete upstream witness is
 `returns ((uint256, memory<bytes>))`: metadata reports one dynamic tuple, while
-`std.dispatch.runMethod` encodes the pair directly. ABI consumers expecting the
+`std.dispatch.do_exec` encodes the pair directly. ABI consumers expecting the
 advertised outer tuple would interpret the first returned integer as an
 offset. Rust keeps the same payload with two output entries. Static and nested
 tuple execution remains covered by `composite-values`.
