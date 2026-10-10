@@ -1410,7 +1410,12 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             ExprKind::Array(_)
         );
         if rhs_is_literal {
-            if !self.has_visible_canonical_term_def("storeArrayLit") {
+            if !self
+                .driver
+                .functions
+                .keys()
+                .any(|def| is_canonical_std_def_named(self.driver.db, *def, "storeArrayLit"))
+            {
                 self.push_missing_contract_field_support("array-literal field write", span);
                 return None;
             }
