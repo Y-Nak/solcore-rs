@@ -34,7 +34,7 @@ now newer; see the [corpus README](crates/parser/tests/fixtures/corpus/README.md
 | Compile-time memory | An unresolved memory read cannot establish comptime purity, including through a wrapper or closure. Residual assembly and unknown call effects invalidate earlier heap facts, including inside branches, loops, and compound arguments. Actual evaluation can still fold a known `mstore`/`mload` sequence. UI fixtures cover stale and unresolved reads; evaluator tests cover successful folding. |
 | Compile-time numeric values | A known numeric comptime binding can be used as a runtime value without leaking its erased type marker. Constructor parameter types follow materialized known arguments while preserving checks on unknown values. The Hull UI fixture and `comptime-materialize` cover decimal, hexadecimal, and mixed runtime/comptime constructor fields. |
 | Assembly substitution | Constants are substituted in source order with lexical shadowing. Loop initializers see outer bindings before introducing locals, repeated writes invalidate loop constants, and untouched source constants survive residual assembly. The latest upstream `asm_subst` vectors and the additional `asm-scope` / Hull UI fixtures cover the behavior. Yul function scope remains separate. |
-| Contract naming and nested storage reads | Same-named methods in separate contracts remain distinct. The latest upstream duplicate-method fixture and field-access-in-tuple runtime case pin the behavior. |
+| Contract naming and nested storage reads | Same-named methods in separate contracts remain distinct; a contract method can also share a name with a top-level or imported function. Unqualified calls inside the contract prefer its method. The duplicate-method and `imported_contract_method` dir fixtures, `contract-method-shadowing` E2E, and field-access-in-tuple runtime case pin the behavior. |
 | Canonical syntax fixes | Upstream now accepts `let` in a `for` post clause and separates source Yul from internal quasiquotes. These old `2f372bde` differences are resolved; Rust retains its existing parser behavior and diagnostics. |
 | Type names and witnesses | `word` is the builtin spelling; uppercase `Word` needs an explicit alias. Duplicate ADT/contract names in the same type scope are rejected. `@T` selects an available `Proxy<T>` from its scope or expected type and diagnoses a missing definition instead of inventing an unconstrained type. A loaded canonical std supplies the witness even through a selective import that does not open `Proxy`; custom witnesses still require constructor visibility. UI and dir fixtures cover absent, local, qualified, renamed, and selective-import witnesses. |
 | Trait derivation | Latest upstream unary derivation and qualified/aliased trait selection are covered by dir fixtures. Parameterized contract `main` examples are adapted to module-scope functions so the tests isolate derivation rather than the invalid runtime entry convention. |
@@ -44,6 +44,18 @@ and qualified imports. Compound storage updates reuse the saved receiver;
 `struct-load-once` distinguishes their single custom load from explicitly
 written extra reads. These checks preserve the reference's abstraction and
 evaluation rules.
+
+The shared shadowing rule still permits the silent self-call reported in
+[solcore-rs #48](https://github.com/argotorg/solcore-rs/issues/48). Haskell
+[PR #599](https://github.com/argotorg/solcore/pull/599) changed its duplicate
+check to use qualified contract names, so latest Haskell also accepts the
+original imported `setValue` example and emits a self-call. Rust follows this
+rule and does not add `SC0225`. A warning or rejection of accidental recursion
+remains a language-policy question; this synchronization does not solve it.
+The overlap UI fixture verifies that this accepted name shadowing does not
+suppress `SC0218`. General suppression after genuine item-resolution errors
+is a separate behavior. Use an explicit module-qualified call when the
+imported function is intended; `contract-method-shadowing` tests both targets.
 
 ## Intentional corrections and retained differences
 
