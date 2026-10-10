@@ -62,7 +62,9 @@ impl<'db> InferCtx<'db> {
                 args,
                 expected.clone(),
             ),
-            ExprKind::Proxy { ty, .. } => self.infer_proxy_expr(*ty, expected.clone()),
+            ExprKind::Proxy { ty, .. } => {
+                self.infer_proxy_expr(body, expr_id, *ty, expected.clone())
+            }
             ExprKind::Lambda {
                 params,
                 ret,
@@ -305,41 +307,145 @@ impl<'db> InferCtx<'db> {
     /// definition would make otherwise identical types nominally distinct.
     fn infer_proxy_expr(
         &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
         ty: TypeRef<'db>,
         expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
         let inner = self.lower_type_ref(ty);
         if let Some(expected) = expected {
-            let resolved = self.engine.resolve(expected.clone());
-            if let InferTy::Named { ctor, args } = &resolved
+            let expected = self.normalize_aliases(expected);
+            let resolved = self.engine.resolve(expected);
+            if let InferTy::Named {
+                ctor: TyCtor::User(user),
+                args,
+            } = &resolved
                 && args.len() == 1
-                && matches!(
-                    ctor,
-                    TyCtor::User(user)
-                        if user.def.name(self.db).as_deref() == Some("Proxy")
-                )
+                && user.def.name(self.db).as_deref() == Some("Proxy")
             {
+                if !self.validate_proxy_constructor(body, expr, user.def, ty) {
+                    return InferTy::Error;
+                }
                 self.unify_span(ty.span(self.db), args[0].clone(), inner);
                 return resolved;
             }
         }
 
-        crate::support::canonical_std_adt_defs(self.db, "Proxy")
-            .into_iter()
-            .find(|def| {
-                self.entry_module.is_some_and(|entry| {
-                    crate::support::module_for_def_via_graph(self.db, entry, *def).is_some()
+        let local = match self.expr_resolutions.get(&(body, expr)) {
+            Some(hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Adt,
+            }) => Some(*def),
+            _ => None,
+        };
+        let proxy = local.or_else(|| {
+            crate::support::canonical_std_adt_defs(self.db, "Proxy")
+                .into_iter()
+                .find(|def| {
+                    self.entry_module.is_some_and(|entry| {
+                        crate::support::module_for_def_via_graph(self.db, entry, *def).is_some()
+                    })
                 })
+        });
+        proxy
+            .map(|def| {
+                if !self.validate_proxy_constructor(body, expr, def, ty) {
+                    return InferTy::Error;
+                }
+                InferTy::Named {
+                    ctor: TyCtor::User(UserTyCtor {
+                        def,
+                        kind: UserTyCtorKind::Adt,
+                    }),
+                    args: vec![inner],
+                }
             })
-            .or_else(|| crate::support::canonical_std_adt_def(self.db, "Proxy"))
-            .map(|def| InferTy::Named {
-                ctor: TyCtor::User(UserTyCtor {
-                    def,
-                    kind: UserTyCtorKind::Adt,
-                }),
-                args: vec![inner],
+            .unwrap_or_else(|| {
+                self.emit_error_with_poison(
+                    TypeckDiagnostic::UndefinedTypeConstructor {
+                        span: self.expr_label_span(body, expr),
+                        name: "Proxy".to_owned(),
+                    },
+                    [PoisonTarget::Expr(body, expr)],
+                );
+                InferTy::Error
             })
-            .unwrap_or_else(|| self.engine.fresh_var())
+    }
+
+    fn validate_proxy_constructor(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        def: DefId<'db>,
+        inner: TypeRef<'db>,
+    ) -> bool {
+        let info = find_adt_info(self.db, self.module, def).or_else(|| {
+            let module = module_for_def(self.db, self.entry_module?, def)?;
+            find_adt_info(self.db, module_hir(self.db, module)?, def)
+        });
+        let span = self.expr_label_span(body, expr);
+        if def.file(self.db) != self.module.def_id_value(self.db).file(self.db) {
+            let visible = nameres::module_id_for_source_file(
+                self.db,
+                self.module.def_id_value(self.db).file(self.db),
+            )
+            .is_some_and(|module| {
+                nameres::module_import_surface(self.db, module)
+                    .terms
+                    .values()
+                    .any(|resolution| {
+                        matches!(resolution, hir_nameres::Resolution::Ctor { ty, index }
+                            if *ty == def && info.as_ref().is_some_and(|info|
+                                info.adt.ctors(self.db).get(index.as_usize()).is_some_and(|ctor|
+                                    ident_text(self.db, &ctor.name) == "Proxy")))
+                    })
+            });
+            if !visible {
+                self.emit_error_with_poison(
+                    TypeckDiagnostic::MissingProxyConstructor { span },
+                    [PoisonTarget::Expr(body, expr)],
+                );
+                return false;
+            }
+        }
+        let diagnostic = if let Some(info) = info {
+            let arity = info.adt.ty_param_elems(self.db).len();
+            if arity != 1 {
+                Some(TypeckDiagnostic::TypeConstructorArity {
+                    span,
+                    constructor: "Proxy".to_owned(),
+                    ty: format!(
+                        "Proxy<{}>",
+                        crate::display::display_type_ref_source(self.db, inner)
+                    ),
+                    expected: arity,
+                    actual: 1,
+                })
+            } else if let Some(ctor) = info
+                .adt
+                .ctors(self.db)
+                .iter()
+                .find(|ctor| ident_text(self.db, &ctor.name) == "Proxy")
+            {
+                (ctor.field_count != 0).then(|| TypeckDiagnostic::WrongArity {
+                    span,
+                    context: "constructor Proxy.Proxy".to_owned(),
+                    expected: ctor.field_count,
+                    actual: 0,
+                    callee: None,
+                })
+            } else {
+                Some(TypeckDiagnostic::MissingProxyConstructor { span })
+            }
+        } else {
+            Some(TypeckDiagnostic::MissingProxyConstructor { span })
+        };
+        if let Some(diagnostic) = diagnostic {
+            self.emit_error_with_poison(diagnostic, [PoisonTarget::Expr(body, expr)]);
+            false
+        } else {
+            true
+        }
     }
 
     fn report_numeric_if_branch_mismatch(

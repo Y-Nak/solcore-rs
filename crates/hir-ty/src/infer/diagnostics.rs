@@ -90,6 +90,18 @@ pub enum TypeckDiagnostic {
         /// Undeclared variables with their source spans.
         vars: Vec<(LabelSpan, String)>,
     },
+    /// `SC0103`: a contextual expression requires an unavailable type constructor.
+    UndefinedTypeConstructor {
+        /// Source span for the expression requiring the type.
+        span: LabelSpan,
+        /// Missing type constructor name.
+        name: String,
+    },
+    /// `SC0205`: the type selected by a proxy expression has no `Proxy` constructor.
+    MissingProxyConstructor {
+        /// Source span for the proxy expression.
+        span: LabelSpan,
+    },
     /// `SC0203`: function, constructor, or match arm arity mismatch.
     WrongArity {
         /// Source span for the call, constructor, signature, or syntactic
@@ -525,6 +537,16 @@ impl TypeckDiagnostic {
                         .with_primary_label_span(span.clone(), Some("undefined type variable"));
                 }
                 diagnostic
+            }
+            TypeckDiagnostic::UndefinedTypeConstructor { span, name } => {
+                Diagnostic::error(format!("undefined type constructor: {name}"))
+                    .with_code(DiagnosticCode::NAMERES_UNDEFINED_TYPE_CONSTRUCTOR)
+                    .with_primary_label_span(span.clone(), Some("undefined type constructor"))
+            }
+            TypeckDiagnostic::MissingProxyConstructor { span } => {
+                Diagnostic::error("undefined constructor: Proxy.Proxy")
+                    .with_code(DiagnosticCode::TYPECK_UNKNOWN_FIELD)
+                    .with_primary_label_span(span.clone(), Some("proxy constructor required here"))
             }
             TypeckDiagnostic::WrongArity {
                 span,

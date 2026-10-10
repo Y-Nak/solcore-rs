@@ -658,10 +658,31 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     }
                 }
             }
-            ExprKind::Proxy { ty, .. } => {
-                let ty = self.lower_body_ty(*ty)?;
-                let ty = self.subst.apply_ty(self.driver.db, ty);
-                MonoExprKind::Proxy(self.driver.mono_ty(ty, "proxy", expr.span)?)
+            ExprKind::Proxy { .. } => {
+                let TyKind::Named {
+                    ctor: TyCtor::User(user),
+                    ..
+                } = ty.kind(self.driver.db)
+                else {
+                    return None;
+                };
+                let adt = self.driver.adts.get(&user.def)?.adt;
+                let index = adt
+                    .ctors(self.driver.db)
+                    .iter()
+                    .position(|ctor| ident_text(self.driver.db, &ctor.name) == "Proxy")?;
+                MonoExprKind::Con {
+                    ctor: MonoId {
+                        name: ctor_name(
+                            self.driver.db,
+                            Some(adt),
+                            hir_nameres::CtorIndex::from_usize(index),
+                        ),
+                        ty: mono_ty,
+                        span: expr.span,
+                    },
+                    args: Vec::new(),
+                }
             }
             ExprKind::TypeAnnot { expr: inner, ty } => {
                 let ty = self.lower_body_ty(*ty)?;
