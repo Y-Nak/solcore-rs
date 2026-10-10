@@ -31,7 +31,7 @@ recorded snapshot.
 ## Compatibility decisions
 
 The canonical analysis of Haskell/Rust semantic differences, ABI evidence
-gaps, and the recommended owner for each fix is in
+gaps, and compatibility decisions is in
 [`SEMANTIC_DIFFERENCES.md`](../SEMANTIC_DIFFERENCES.md). ABI metadata support
 alone does not make a type externally dispatchable. Keep ABI JSON, selector
 spelling, calldata decoding, and result encoding aligned.
@@ -51,7 +51,8 @@ E2E=1 E2E_REQUIRED=1 cargo test --profile e2e \
   --nocapture --test-threads=1
 ```
 
-The byte-exact upstream raw-vector metadata is preserved, while both Yul and
-Sonatina compile and execute the complete set against Osaka. See
+Imported upstream raw-vector cases retain their calldata, output, and EVM
+metadata; fixtures may append local regressions. Both Yul and Sonatina compile
+and execute the complete set against Osaka. See
 [`tests/e2e/README.md`](../tests/e2e/README.md) for the full validation
 commands.

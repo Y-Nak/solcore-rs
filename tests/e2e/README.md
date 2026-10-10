@@ -66,26 +66,30 @@ a real transaction from `0x1212121212121212121212121212120000000012`; the same
 execution supplies both the status/output assertion and the state observed by
 later entries. Both backends compile and execute every raw vector against
 Osaka, regardless of the optional `evmVersion` metadata, and each vector runs
-on a fresh, dedicated Osaka Anvil instance. This keeps the byte-exact upstream
-JSON intact while using the one runtime supported consistently by both backend
-pipelines.
+on a fresh, dedicated Osaka Anvil instance. Both backend pipelines therefore
+use the same runtime. Imported upstream cases retain their calldata, output, and EVM
+metadata; fixtures may also append documented local regression cases.
 
-The 2f372bde snapshot contains 51 executable source/vector pairs. Their Core
-sources are syntax-migrated semantic ports; the adjacent JSON vectors retain
-the original calldata, expected output, and `evmVersion` metadata. Its
-remaining `template.json` is a source-less placeholder used by the upstream
-generator, not an executable fixture.
+The historical 2f372bde snapshot supplied 51 executable source/vector pairs.
+Their Core sources were syntax-migrated semantic ports. The current set also
+includes newer upstream vectors and local regressions, so it is not a byte-exact
+copy of that historical snapshot. Its remaining `template.json` is a source-less
+placeholder used by the upstream generator, not an executable fixture.
 
-This is also the migration format for Solcore's dispatch fixtures with dynamic
-arrays or ADTs. For a non-recursive, compiler-derived nullary ADT `T`, the ABI
-surface follows the `2f372bde` reference convention: ABI JSON uses the source
-spelling (`T` directly or `T[]` in a lazy array), while the selector preimage
-uses the final Generic `SigString` (for example, `rt(sum(uint256,bytes))` or
-`count(sum(uint256,uint256)[])`). Upstream 2f372bde can derive runtime evidence
-for a concrete parameterized ADT, but its `ContractDispatch.abiTypeOf` only
-handles `TyCon n []` and fails ABI JSON emission for that case. Rust
-intentionally extends the metadata surface with source spellings such as
-`Point<uint256>`.
+The active std/semantic target is now `a7b7afb0`. Variant-related raw vectors
+have been updated to its constructor-keccak tags, and latest struct,
+message-context, and assembly regressions are included. Local additions reject
+unknown constructor tags and verify the corrected single-tag static size for
+three or more variants. See `SEMANTIC_DIFFERENCES.md` for upstream defects.
+
+For a finite derived ADT `T`, ABI JSON retains the source spelling (`T` or
+`T[]`), while selectors still use its structural Generic signature (for
+example, `rt(sum(uint256,bytes))`). On the wire, compiler-derived
+multi-constructor ADTs use one full `keccak256("Constructor(field signatures)")`
+tag, followed by that constructor's payload. Explicit structural `sum`
+encoders and `std.ABIGeneric.encode`/`decode` retain 0/1 Generic tags.
+Upstream still cannot emit parameterized ADT metadata; Rust deliberately
+supports source spellings such as `Point<uint256>`.
 This extension is supported only when every type argument, including an unused
 phantom argument, has the required ABI evidence. Finite nested instantiations
 are distinguished from definition-recursive representations. Recursive,
@@ -103,7 +107,7 @@ for an alternate Yul runtime. Raw vectors always compile and run against Osaka.
 For local optimized runs, use the workspace's E2E profile. It uses moderate
 optimization (`opt-level = 2`) without LTO, keeping execution representative
 while avoiding the native release profile's link-time optimization cost. Run
-the complete E2E fixture set, including every 2f372bde raw vector, through Yul:
+the complete E2E fixture set through Yul:
 
 ```sh
 E2E=1 E2E_REQUIRED=1 cargo test --profile e2e \

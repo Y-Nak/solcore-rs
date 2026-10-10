@@ -9,26 +9,18 @@ Try it in the [online playground](https://playground.solcore.soliditylang.org/).
 
 ## Language and compatibility targets
 
-The canonical source-language target is [`syntax.md`](syntax.md). It
-intentionally replaces legacy Haskell Solcore spellings with the new Core
-surface, so source-syntax compatibility with the Haskell implementation is not
-a language goal. The compiler, standard library, examples, and fixtures use the
-new `.sol` surface.
+The source-language and standard-library target is the Haskell implementation
+at [`argotorg/solcore@a7b7afb0`](https://github.com/argotorg/solcore/tree/a7b7afb0638e50895008d778a167afd0e50a2c86).
+Both implementations now use the canonical `.sol`
+[source syntax](https://github.com/argotorg/solcore/blob/a7b7afb0638e50895008d778a167afd0e50a2c86/doc/src/sail/syntax.md).
+The eight library sources in `std/` match that revision byte-for-byte.
 
-For semantics already supported by Core, the comparison baseline remains the
-Haskell reference implementation at
-[`argotorg/solcore@2f372bde`](https://github.com/argotorg/solcore/tree/2f372bde2801612814015a22319d0bc51486cbf0).
-The standard library and the complete 499-source frontend corpus are semantic
-ports of that exact revision to the canonical syntax. See
-[`SEMANTIC_DIFFERENCES.md`](SEMANTIC_DIFFERENCES.md) for intentional Rust
-extensions, shared upstream limitations, and phase-sensitive differences, and
-the [corpus README](crates/parser/tests/fixtures/corpus/README.md) for the
-reproducible reference verdict configuration.
-
-Semantic compatibility does not imply source-syntax compatibility, production
-readiness, or byte-for-byte compiler output. Rust deliberately keeps structured
-diagnostics and several safety checks that are stricter than the reference
-target, while shared upstream limitations remain explicitly unsupported.
+See [`SEMANTIC_DIFFERENCES.md`](SEMANTIC_DIFFERENCES.md) for intentional
+corrections to upstream defects, ABI limitations, and validation scope. Rust
+retains structured diagnostics and safety checks; compatibility does not imply
+identical compiler output or production readiness. The 499-source parser
+corpus remains a historical `2f372bde` regression set, as documented in its
+[README](crates/parser/tests/fixtures/corpus/README.md).
 
 ## Build and test
 
