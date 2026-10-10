@@ -384,7 +384,12 @@ impl<'db> InferCtx<'db> {
             find_adt_info(self.db, module_hir(self.db, module)?, def)
         });
         let span = self.expr_label_span(body, expr);
-        if def.file(self.db) != self.module.def_id_value(self.db).file(self.db) {
+        // `@T` can use the canonical witness from a loaded std module even
+        // when a selective import does not open Proxy's constructor. Custom
+        // witnesses still obey their defining module's constructor visibility.
+        let canonical_proxy =
+            crate::support::canonical_std_adt_defs(self.db, "Proxy").contains(&def);
+        if !canonical_proxy && def.file(self.db) != self.module.def_id_value(self.db).file(self.db) {
             let visible = nameres::module_id_for_source_file(
                 self.db,
                 self.module.def_id_value(self.db).file(self.db),

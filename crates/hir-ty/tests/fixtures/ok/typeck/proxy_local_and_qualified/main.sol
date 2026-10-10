@@ -1,4 +1,5 @@
 import lib;
+import {Proxy as Renamed} from lib;
 
 type Word = word;
 type Witness = lib.Proxy<word>;
@@ -20,5 +21,9 @@ function qualified() returns (lib.Proxy<word>) {
 }
 
 function aliased() returns (Witness) {
+    return @word;
+}
+
+function renamed() returns (Renamed<word>) {
     return @word;
 }
