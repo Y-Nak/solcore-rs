@@ -982,11 +982,23 @@ impl<'db> Evaluator<'db> {
         let span = expr.span;
         let ty = expr.ty;
         match expr.kind {
-            MonoExprKind::Var(id) => env.get(&id.name).cloned().unwrap_or(MonoExpr {
-                span,
-                ty,
-                kind: MonoExprKind::Var(id),
-            }),
+            MonoExprKind::Var(id) => env
+                .get(&id.name)
+                .cloned()
+                .map(|value| {
+                    // An erased comptime binding still supplies its concrete
+                    // value at a runtime use, just like a folded comptime call.
+                    if self.comptime_mode {
+                        value
+                    } else {
+                        materialize_comptime_value(self.db, value)
+                    }
+                })
+                .unwrap_or(MonoExpr {
+                    span,
+                    ty,
+                    kind: MonoExprKind::Var(id),
+                }),
             MonoExprKind::Lit(_) | MonoExprKind::Error => MonoExpr {
                 span,
                 ty,
@@ -1055,17 +1067,38 @@ impl<'db> Evaluator<'db> {
                     },
                 }
             }
-            MonoExprKind::Con { ctor, args } => MonoExpr {
-                span,
-                ty,
-                kind: MonoExprKind::Con {
-                    ctor,
-                    args: args
-                        .into_iter()
-                        .map(|arg| self.eval_expr(env, comptime_env, arg))
-                        .collect(),
-                },
-            },
+            MonoExprKind::Con { mut ctor, args } => {
+                let args = args
+                    .into_iter()
+                    .map(|arg| self.eval_expr(env, comptime_env, arg))
+                    .collect::<Vec<_>>();
+                // A materialized argument also loses its source comptime
+                // marker in the constructor signature. Keep unknown arguments
+                // and the result type intact for the erasure checks.
+                if !self.comptime_mode
+                    && let TyKind::Function { params, ret } = ctor.ty.ty().kind(self.db)
+                    && params.len() == args.len()
+                {
+                    let params = params
+                        .iter()
+                        .zip(&args)
+                        .map(|(param, arg)| {
+                            let runtime = erase_comptime_ty(self.db, *param);
+                            if self.expr_is_known_value(arg) && arg.ty.ty() == runtime {
+                                runtime
+                            } else {
+                                *param
+                            }
+                        })
+                        .collect();
+                    ctor.ty = MonoTy::new_unchecked(hir_ty::Ty::function(self.db, params, *ret));
+                }
+                MonoExpr {
+                    span,
+                    ty,
+                    kind: MonoExprKind::Con { ctor, args },
+                }
+            }
             MonoExprKind::ClosureDispatch { callee, args } => {
                 let callee = self.eval_expr(env, comptime_env, *callee);
                 let args = args
