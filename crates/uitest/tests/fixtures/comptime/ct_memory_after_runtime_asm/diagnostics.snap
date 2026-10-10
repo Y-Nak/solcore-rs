@@ -1,0 +1,53 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/comptime/ct_memory_after_runtime_asm/main.sol
+---
+error[SC0409]: comptime evaluation failed: comptime let 'observed' is bound to a runtime expression
+  --> /main/main.sol:15:3
+   |
+14 |   assembly { mstore(0, 99) }
+15 |   let observed: comptime<word> = readMem();
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
+16 |   return observed;
+   |
+---
+
+error[SC0409]: comptime evaluation failed: comptime let 'observed' is bound to a runtime expression
+  --> /main/main.sol:26:3
+   |
+25 |   writeMem();
+26 |   let observed: comptime<word> = readMem();
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
+27 |   return observed;
+   |
+---
+
+error[SC0409]: comptime evaluation failed: comptime let 'observed' is bound to a runtime expression
+  --> /main/main.sol:38:4
+   |
+37 |    // A later iteration cannot reuse memory from before the loop.
+38 |    let observed: comptime<word> = readMem();
+   |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
+39 |    writeMem();
+   |
+---
+
+error[SC0409]: comptime evaluation failed: comptime let 'observed' is bound to a runtime expression
+  --> /main/main.sol:51:3
+   |
+50 |   if (primEqWord(count, 1)) { writeMem(); }
+51 |   let observed: comptime<word> = readMem();
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
+52 |   return observed;
+   |
+---
+
+error[SC0409]: comptime evaluation failed: comptime let 'observed' is bound to a runtime expression
+  --> /main/main.sol:67:3
+   |
+66 |   let seed: comptime<word> = storeLoad(42);
+67 |   let observed: comptime<word> = second(writeUnknown(input), readMem());
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
+68 |   return observed;
+   |

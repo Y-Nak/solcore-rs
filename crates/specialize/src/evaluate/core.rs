@@ -713,6 +713,9 @@ impl<'db> Evaluator<'db> {
                         }],
                     )
                 } else {
+                    // Residual assembly may change memory, so earlier folded
+                    // writes cannot justify a later comptime load.
+                    self.memory.clear();
                     // Inline Yul can assign enclosing locals only through its
                     // lexical writes. Keep other known locals, including erased
                     // comptime numbers, but invalidate storage facts because
@@ -835,13 +838,16 @@ impl<'db> Evaluator<'db> {
     }
 
     fn mask_assigned_env(
-        &self,
+        &mut self,
         env: VEnv<'db>,
         comptime_env: CEnv,
         assigned: &AssignedNames,
     ) -> (VEnv<'db>, CEnv) {
         match assigned {
-            AssignedNames::All => self.preserve_comptime_known_env(env, comptime_env),
+            AssignedNames::All => {
+                self.memory.clear();
+                self.preserve_comptime_known_env(env, comptime_env)
+            }
             AssignedNames::Names(_) => (
                 remove_assigned(env, assigned),
                 remove_comptime_assigned(comptime_env, assigned),
@@ -850,12 +856,13 @@ impl<'db> Evaluator<'db> {
     }
 
     fn invalidate_assigned_effects(
-        &self,
+        &mut self,
         assigned: &AssignedNames,
         env: &mut VEnv<'db>,
         comptime_env: &mut CEnv,
     ) {
         if matches!(assigned, AssignedNames::All) {
+            self.memory.clear();
             let old_env = std::mem::take(env);
             let old_comptime_env = std::mem::take(comptime_env);
             let (kept_env, kept_comptime_env) =
@@ -1643,6 +1650,14 @@ impl<'db> Evaluator<'db> {
         span: Span<'db>,
     ) -> Option<MonoExpr<'db>> {
         let function = self.functions.get(name)?.clone();
+        // Substituting a callee body must not discard or duplicate evaluation
+        // of an effectful argument, even when that parameter is unused.
+        if args
+            .iter()
+            .any(|arg| !self.expr_write_effects(arg).is_empty())
+        {
+            return None;
+        }
         if !self.function_can_inline(name, &function) {
             return None;
         }
