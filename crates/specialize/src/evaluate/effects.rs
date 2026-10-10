@@ -11,7 +11,7 @@ use super::{
     assigned::AssignedNames,
     ident_text,
     known::{collect_pat_binders, lvalue_root_name},
-    yul_const::asm_is_interpretable,
+    yul_const::{asm_is_comptime_pure, asm_is_interpretable},
 };
 use crate::ir::{
     MonoCallOrigin, MonoExpr, MonoExprKind, MonoFunction, MonoIntrinsic, MonoItem, MonoModule,
@@ -24,6 +24,26 @@ pub(super) fn compute_pure_funs<'db>(
     functions: &FxHashMap<String, MonoFunction<'db>>,
     storage_fields: &FxHashSet<String>,
 ) -> FxHashSet<String> {
+    compute_pure_funs_with(db, functions, storage_fields, true)
+}
+
+/// Structural comptime classification cannot assume the evaluator's memory
+/// state. Memory operations may fold during evaluation, but an unevaluated
+/// memory read or write is never evidence that a call is comptime.
+pub(super) fn compute_comptime_pure_funs<'db>(
+    db: &'db dyn Db,
+    functions: &FxHashMap<String, MonoFunction<'db>>,
+    storage_fields: &FxHashSet<String>,
+) -> FxHashSet<String> {
+    compute_pure_funs_with(db, functions, storage_fields, false)
+}
+
+fn compute_pure_funs_with<'db>(
+    db: &'db dyn Db,
+    functions: &FxHashMap<String, MonoFunction<'db>>,
+    storage_fields: &FxHashSet<String>,
+    allow_memory: bool,
+) -> FxHashSet<String> {
     let mut pure = FxHashSet::default();
     loop {
         let before = pure.len();
@@ -31,7 +51,7 @@ pub(super) fn compute_pure_funs<'db>(
             if pure.contains(name) || name == "revertLit" {
                 continue;
             }
-            if function_is_pure(db, function, &pure, name, storage_fields) {
+            if function_is_pure_with(db, function, &pure, name, storage_fields, allow_memory) {
                 pure.insert(name.clone());
             }
         }
@@ -75,6 +95,27 @@ pub(super) fn function_is_pure<'db>(
     self_name: &str,
     storage_fields: &FxHashSet<String>,
 ) -> bool {
+    function_is_pure_with(db, function, pure, self_name, storage_fields, true)
+}
+
+pub(super) fn function_is_comptime_pure<'db>(
+    db: &'db dyn Db,
+    function: &MonoFunction<'db>,
+    pure: &FxHashSet<String>,
+    self_name: &str,
+    storage_fields: &FxHashSet<String>,
+) -> bool {
+    function_is_pure_with(db, function, pure, self_name, storage_fields, false)
+}
+
+fn function_is_pure_with<'db>(
+    db: &'db dyn Db,
+    function: &MonoFunction<'db>,
+    pure: &FxHashSet<String>,
+    self_name: &str,
+    storage_fields: &FxHashSet<String>,
+    allow_memory: bool,
+) -> bool {
     let mut locals = function
         .params
         .iter()
@@ -87,6 +128,7 @@ pub(super) fn function_is_pure<'db>(
         self_name,
         storage_fields,
         &mut locals,
+        allow_memory,
     )
 }
 
@@ -97,9 +139,18 @@ fn stmts_are_pure<'db>(
     self_name: &str,
     storage_fields: &FxHashSet<String>,
     locals: &mut FxHashSet<String>,
+    allow_memory: bool,
 ) -> bool {
     for stmt in stmts {
-        if !stmt_is_pure(db, stmt, pure, self_name, storage_fields, locals) {
+        if !stmt_is_pure(
+            db,
+            stmt,
+            pure,
+            self_name,
+            storage_fields,
+            locals,
+            allow_memory,
+        ) {
             return false;
         }
     }
@@ -113,6 +164,7 @@ fn stmt_is_pure<'db>(
     self_name: &str,
     storage_fields: &FxHashSet<String>,
     locals: &mut FxHashSet<String>,
+    allow_memory: bool,
 ) -> bool {
     match &stmt.kind {
         MonoStmtKind::Let { id, init, .. } => {
@@ -150,6 +202,7 @@ fn stmt_is_pure<'db>(
                         self_name,
                         storage_fields,
                         &mut arm_locals,
+                        allow_memory,
                     )
                 })
         }
@@ -161,10 +214,33 @@ fn stmt_is_pure<'db>(
         } => {
             let mut loop_locals = locals.clone();
             let mut post_locals = loop_locals.clone();
-            stmts_are_pure(db, init, pure, self_name, storage_fields, &mut loop_locals)
-                && expr_is_pure(cond, pure, self_name)
-                && stmts_are_pure(db, post, pure, self_name, storage_fields, &mut post_locals)
-                && stmts_are_pure(db, body, pure, self_name, storage_fields, &mut loop_locals)
+            stmts_are_pure(
+                db,
+                init,
+                pure,
+                self_name,
+                storage_fields,
+                &mut loop_locals,
+                allow_memory,
+            ) && expr_is_pure(cond, pure, self_name)
+                && stmts_are_pure(
+                    db,
+                    post,
+                    pure,
+                    self_name,
+                    storage_fields,
+                    &mut post_locals,
+                    allow_memory,
+                )
+                && stmts_are_pure(
+                    db,
+                    body,
+                    pure,
+                    self_name,
+                    storage_fields,
+                    &mut loop_locals,
+                    allow_memory,
+                )
         }
         MonoStmtKind::If {
             cond,
@@ -181,16 +257,39 @@ fn stmt_is_pure<'db>(
                     self_name,
                     storage_fields,
                     &mut then_locals,
+                    allow_memory,
                 )
                 && else_body.as_ref().is_none_or(|body| {
-                    stmts_are_pure(db, body, pure, self_name, storage_fields, &mut else_locals)
+                    stmts_are_pure(
+                        db,
+                        body,
+                        pure,
+                        self_name,
+                        storage_fields,
+                        &mut else_locals,
+                        allow_memory,
+                    )
                 })
         }
         MonoStmtKind::Block(body) => {
             let mut block_locals = locals.clone();
-            stmts_are_pure(db, body, pure, self_name, storage_fields, &mut block_locals)
+            stmts_are_pure(
+                db,
+                body,
+                pure,
+                self_name,
+                storage_fields,
+                &mut block_locals,
+                allow_memory,
+            )
         }
-        MonoStmtKind::Assembly(body) => asm_is_interpretable(db, body),
+        MonoStmtKind::Assembly(body) => {
+            if allow_memory {
+                asm_is_interpretable(db, body)
+            } else {
+                asm_is_comptime_pure(db, body)
+            }
+        }
         MonoStmtKind::Break | MonoStmtKind::Continue => true,
         MonoStmtKind::Error => false,
     }

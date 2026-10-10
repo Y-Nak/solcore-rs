@@ -17,8 +17,8 @@ use super::{
     CEnv, TypeReg, VEnv, YulState,
     assigned::{AssignedNames, invalidate_assigned},
     effects::{
-        compute_pure_funs, compute_write_effects, expr_write_effects_from_call_summaries,
-        intrinsic_is_pure, storage_field_names,
+        compute_comptime_pure_funs, compute_pure_funs, compute_write_effects,
+        expr_write_effects_from_call_summaries, intrinsic_is_pure, storage_field_names,
     },
     erasure::{
         display_backend_symbol, display_mono_function_name, erase_comptime_ty,
@@ -113,6 +113,7 @@ pub(super) struct Evaluator<'db> {
     pub(super) db: &'db dyn Db,
     functions: FxHashMap<String, MonoFunction<'db>>,
     pure_funs: FxHashSet<String>,
+    comptime_pure_funs: FxHashSet<String>,
     write_effects: FxHashMap<String, AssignedNames>,
     pub(super) diagnostics: Vec<SpecializeDiagnostic<'db>>,
     inline_stack: Vec<InlineFrame<'db>>,
@@ -186,11 +187,13 @@ impl<'db> Evaluator<'db> {
             .collect::<FxHashMap<_, _>>();
         let storage_fields = storage_field_names(db, module);
         let pure_funs = compute_pure_funs(db, &functions, &storage_fields);
+        let comptime_pure_funs = compute_comptime_pure_funs(db, &functions, &storage_fields);
         let write_effects = compute_write_effects(&functions, &storage_fields);
         Self {
             db,
             functions,
             pure_funs,
+            comptime_pure_funs,
             write_effects,
             diagnostics: Vec::new(),
             inline_stack: Vec::new(),
@@ -1766,6 +1769,9 @@ impl<'db> Evaluator<'db> {
             if self.pure_funs.contains(&function.name) {
                 self.pure_funs.insert(name.clone());
             }
+            if self.comptime_pure_funs.contains(&function.name) {
+                self.comptime_pure_funs.insert(name.clone());
+            }
             self.write_effects.insert(
                 name.clone(),
                 self.write_effects
@@ -2294,7 +2300,7 @@ impl<'db> Evaluator<'db> {
                 let callee_is_comptime = match origin {
                     MonoCallOrigin::Builtin(intrinsic) => intrinsic_is_pure(*intrinsic),
                     MonoCallOrigin::Source(_) | MonoCallOrigin::ByName => {
-                        self.pure_funs.contains(&callee.name)
+                        self.comptime_pure_funs.contains(&callee.name)
                     }
                 };
                 callee_is_comptime

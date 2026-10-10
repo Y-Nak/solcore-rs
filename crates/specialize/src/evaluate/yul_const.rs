@@ -13,28 +13,51 @@ use super::{
 use crate::ir::{MonoExpr, MonoExprKind};
 
 pub(super) fn asm_is_interpretable<'db>(db: &'db dyn Db, body: &[YulStmt<'db>]) -> bool {
+    asm_is_interpretable_with(db, body, true)
+}
+
+pub(super) fn asm_is_comptime_pure<'db>(db: &'db dyn Db, body: &[YulStmt<'db>]) -> bool {
+    asm_is_interpretable_with(db, body, false)
+}
+
+fn asm_is_interpretable_with<'db>(
+    db: &'db dyn Db,
+    body: &[YulStmt<'db>],
+    allow_memory: bool,
+) -> bool {
     body.iter().all(|stmt| match &stmt.kind {
         YulStmtKind::Assign { names, value } if names.len() == 1 => {
-            yul_expr_is_interpretable(db, value)
+            yul_expr_is_interpretable(db, value, allow_memory)
         }
         YulStmtKind::Expr(YulExpr {
             kind: YulExprKind::Call { name, args },
             ..
-        }) if ["mstore", "mstore8"].contains(&ident_text(db, name).as_str()) && args.len() == 2 => {
-            args.iter().all(|arg| yul_expr_is_interpretable(db, arg))
+        }) if allow_memory
+            && ["mstore", "mstore8"].contains(&ident_text(db, name).as_str())
+            && args.len() == 2 =>
+        {
+            args.iter()
+                .all(|arg| yul_expr_is_interpretable(db, arg, allow_memory))
         }
         _ => false,
     })
 }
 
-fn yul_expr_is_interpretable<'db>(db: &'db dyn Db, expr: &YulExpr<'db>) -> bool {
+fn yul_expr_is_interpretable<'db>(
+    db: &'db dyn Db,
+    expr: &YulExpr<'db>,
+    allow_memory: bool,
+) -> bool {
     match &expr.kind {
         YulExprKind::Ident(_) => true,
         YulExprKind::Lit(YulLitKind::Number(_) | YulLitKind::Hex(_) | YulLitKind::Bool(_)) => true,
         YulExprKind::Call { name, args } => {
             let name = ident_text(db, name);
-            (name == "mload" && args.len() == 1 || yul_op_is_interpretable(&name, args.len()))
-                && args.iter().all(|arg| yul_expr_is_interpretable(db, arg))
+            (allow_memory && name == "mload" && args.len() == 1
+                || yul_op_is_interpretable(&name, args.len()))
+                && args
+                    .iter()
+                    .all(|arg| yul_expr_is_interpretable(db, arg, allow_memory))
         }
         YulExprKind::Lit(YulLitKind::String(_) | YulLitKind::Error) | YulExprKind::Error => false,
     }

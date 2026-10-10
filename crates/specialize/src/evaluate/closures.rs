@@ -4,7 +4,10 @@
 //! survive even when partial evaluation cannot produce a constant result.
 
 use super::*;
-use crate::evaluate::{effects::function_is_pure, known::collect_pat_binders};
+use crate::evaluate::{
+    effects::{function_is_comptime_pure, function_is_pure},
+    known::collect_pat_binders,
+};
 use crate::ir::{MonoFunctionOrigin, MonoParam, ParamMode, visit::walk_expr};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -324,6 +327,15 @@ impl<'db> Evaluator<'db> {
             &self.storage_fields,
         ) {
             self.pure_funs.insert(function.name.clone());
+        }
+        if function_is_comptime_pure(
+            self.db,
+            &function,
+            &self.comptime_pure_funs,
+            &function.name,
+            &self.storage_fields,
+        ) {
+            self.comptime_pure_funs.insert(function.name.clone());
         }
         // A closure's writes depend on its bound callable arguments. Until its
         // body has been evaluated, use a conservative summary at all call sites.
