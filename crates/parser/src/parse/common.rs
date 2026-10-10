@@ -92,6 +92,7 @@ contextual_keyword_parser!(from_kw_parser, "from");
 contextual_keyword_parser!(returns_kw_parser, "returns");
 contextual_keyword_parser!(where_kw_parser, "where");
 contextual_keyword_parser!(enum_kw_parser, "enum");
+contextual_keyword_parser!(struct_kw_parser, "struct");
 contextual_keyword_parser!(trait_kw_parser, "trait");
 contextual_keyword_parser!(impl_kw_parser, "impl");
 contextual_keyword_parser!(mapping_kw_parser, "mapping");
@@ -115,6 +116,7 @@ where
             | Token::Contract | Token::Function | Token::Default => (),
         },
         enum_kw_parser().ignored(),
+        struct_kw_parser().ignored(),
         trait_kw_parser().ignored(),
         impl_kw_parser().ignored(),
     ))

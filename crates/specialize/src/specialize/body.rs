@@ -1,5 +1,11 @@
 use super::*;
 
+struct StructFieldProjection<'db> {
+    pat: MonoPat<'db>,
+    vars: Vec<MonoId<'db>>,
+    index: usize,
+}
+
 pub(super) struct BodyCtx<'a, 'db> {
     pub(super) driver: &'a mut Driver<'db>,
     pub(super) info: &'a FunctionInfo<'db>,
@@ -316,6 +322,14 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 None => None,
             }),
             StmtKind::Expr(expr) => MonoStmtKind::Expr(self.expr(*expr)?),
+            StmtKind::Assign { op, lhs, rhs } if self.struct_storage_field_base(*lhs).is_some() => {
+                MonoStmtKind::Block(self.struct_storage_field_store(
+                    *lhs,
+                    *rhs,
+                    op.binary_op(),
+                    span,
+                )?)
+            }
             StmtKind::Assign { op, lhs, rhs }
                 if *op == hir::ast::function::AssignOp::Plain
                     && self.is_storage_index_lhs(*lhs) =>
@@ -523,7 +537,13 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 self.call_expr(expr_id, *callee, args, ty, expr.span)?
             }
             ExprKind::Field { base, field } => {
-                if let Some(resolution) = self.expr_resolution(expr_id) {
+                if self.expr_resolution(expr_id).is_none()
+                    && let Some(projection) = self.struct_field_parts(*base, field, expr.span)
+                {
+                    let receiver = self.expr(*base)?;
+                    self.struct_field_call(receiver, projection, None, None, expr.span)?
+                        .kind
+                } else if let Some(resolution) = self.expr_resolution(expr_id) {
                     match resolution {
                         hir_nameres::Resolution::Ctor { ty: adt, index } => MonoExprKind::Con {
                             ctor: MonoId {
@@ -1393,6 +1413,364 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         Some(array)
     }
 
+    fn struct_field_parts(
+        &mut self,
+        base: Id<Expr<'db>>,
+        field: &SpannedElem<'db, Ident<'db>>,
+        span: Span<'db>,
+    ) -> Option<StructFieldProjection<'db>> {
+        let receiver_ty = self.subst.apply_ty(self.driver.db, self.expr_ty(base)?);
+        let receiver_ty = self.normalize_body_ty(receiver_ty);
+        let TyKind::Named {
+            ctor:
+                TyCtor::User(UserTyCtor {
+                    def,
+                    kind: UserTyCtorKind::Adt,
+                }),
+            ..
+        } = receiver_ty.kind(self.driver.db)
+        else {
+            return None;
+        };
+        let info = self.driver.adts.get(def)?;
+        let adt = info.adt;
+        let module = info.module;
+        let ctor = adt.ctors(self.driver.db).first()?;
+        let index = ctor
+            .field_names
+            .as_ref()?
+            .iter()
+            .position(|name| name.atom() == field.atom())?;
+        let resolution = self.driver.try_module_resolution(module)?;
+        let mut type_vars = Vec::new();
+        for item in module.items(self.driver.db) {
+            if let Item::ContractDef(contract) = item
+                && contract.items(self.driver.db).iter().any(
+                    |item| matches!(item, ContractItem::AdtDef(candidate) if *candidate == adt),
+                )
+            {
+                type_vars.extend(hir_nameres::type_var_bindings_from(
+                    contract.def_id_value(self.driver.db),
+                    0,
+                    contract.ty_param_elems(self.driver.db),
+                ));
+            }
+        }
+        type_vars.extend(hir_nameres::type_var_bindings_from(
+            adt.def_id_value(self.driver.db),
+            type_vars.len() as u32,
+            adt.ty_param_elems(self.driver.db),
+        ));
+        let lowered = TypeLowering::from_item_resolutions(
+            self.driver.db,
+            &resolution.item_resolutions,
+            BinderEnv::from_type_vars(&type_vars),
+        )
+        .lower_adt_ctor(adt, ctor);
+        let mut subst = TySubst::default();
+        subst.match_ty(self.driver.db, lowered.ret, receiver_ty);
+        let mut normalizer =
+            AliasNormalizer::new(self.driver.db, module, &resolution.item_resolutions);
+        let vars = lowered
+            .params
+            .into_iter()
+            .enumerate()
+            .map(|(index, ty)| MonoId {
+                name: format!("$struct_field_{}_{}", span.begin().as_u32(), index),
+                ty: MonoTy::new_unchecked(
+                    normalizer.normalize_ty(subst.apply_ty(self.driver.db, ty)),
+                ),
+                span,
+            })
+            .collect::<Vec<_>>();
+        let pat = MonoPat {
+            span,
+            ty: MonoTy::new_unchecked(receiver_ty),
+            kind: MonoPatKind::Con {
+                ctor: MonoId {
+                    name: ctor_name(
+                        self.driver.db,
+                        Some(adt),
+                        hir_nameres::CtorIndex::from_usize(0),
+                    ),
+                    ty: MonoTy::new_unchecked(receiver_ty),
+                    span,
+                },
+                args: vars
+                    .iter()
+                    .map(|var| MonoPat {
+                        span,
+                        ty: var.ty,
+                        kind: MonoPatKind::Var(var.clone()),
+                    })
+                    .collect(),
+            },
+        };
+        Some(StructFieldProjection { pat, vars, index })
+    }
+
+    fn struct_storage_field_base(&self, lhs: Id<Expr<'db>>) -> Option<Id<Expr<'db>>> {
+        if self.expr_resolution(lhs).is_some() {
+            return None;
+        }
+        let ExprKind::Field { base, .. } = self.body.exprs(self.driver.db).get(lhs).kind else {
+            return None;
+        };
+        self.contract_field_resolution(base).map(|_| base)
+    }
+
+    fn struct_storage_field_store(
+        &mut self,
+        lhs: Id<Expr<'db>>,
+        rhs: Id<Expr<'db>>,
+        op: Option<BinOp>,
+        span: Span<'db>,
+    ) -> Option<Vec<MonoStmt<'db>>> {
+        let ExprKind::Field { base, field } = &self.body.exprs(self.driver.db).get(lhs).kind else {
+            return None;
+        };
+        let base = *base;
+        let projection = self.struct_field_parts(base, field, span)?;
+        let receiver = self.expr(base)?;
+        let receiver_id = MonoId {
+            name: format!("$struct_receiver_{}", span.begin().as_u32()),
+            ty: receiver.ty,
+            span: receiver.span,
+        };
+        let receiver_var = MonoExpr {
+            span: receiver.span,
+            ty: receiver.ty,
+            kind: MonoExprKind::Var(receiver_id.clone()),
+        };
+        let mut rhs = self.expr(rhs)?;
+        replace_desugared_read_at_span(&mut rhs, receiver.span, receiver.ty, &receiver_var, |_| {
+            true
+        });
+        let updated = self.struct_field_call(receiver_var, projection, Some(rhs), op, span)?;
+        let slot = self.contract_field_ref(self.contract_field_resolution(base)?, span)?;
+        let store = self.resolved_contract_field_class_call(
+            "Assign",
+            "assign",
+            vec![slot, updated],
+            Ty::unit(self.driver.db),
+            span,
+        )?;
+        Some(vec![
+            MonoStmt {
+                span,
+                kind: MonoStmtKind::Let {
+                    mode: LetMode::Runtime,
+                    id: receiver_id,
+                    ty: Some(receiver.ty),
+                    init: Some(receiver),
+                },
+            },
+            MonoStmt {
+                span,
+                kind: MonoStmtKind::Expr(store),
+            },
+        ])
+    }
+
+    fn struct_field_call(
+        &mut self,
+        receiver: MonoExpr<'db>,
+        projection: StructFieldProjection<'db>,
+        value: Option<MonoExpr<'db>>,
+        op: Option<BinOp>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        let StructFieldProjection { pat, vars, index } = projection;
+        let TyKind::Named {
+            ctor: TyCtor::User(user),
+            ..
+        } = receiver.ty.ty().kind(self.driver.db)
+        else {
+            return None;
+        };
+        let operator = op
+            .and_then(overloaded_operator_method)
+            .map_or("plain", |(_, method)| method);
+        let method = format!(
+            "struct_{}_{}_{operator}",
+            if value.is_some() { "set" } else { "get" },
+            index
+        );
+        let ret = if value.is_some() {
+            receiver.ty
+        } else {
+            vars[index].ty
+        };
+        let mut param_tys = vec![receiver.ty.ty()];
+        if let Some(value) = &value {
+            param_tys.push(value.ty.ty());
+        }
+        let callee_ty = Ty::function(self.driver.db, param_tys, ret.ty());
+        let key = SyntheticKey {
+            adt: user.def,
+            method: method.clone(),
+            main: receiver.ty.ty(),
+            rep: callee_ty,
+        };
+        let name = if let Some(name) = self.driver.synthetic.get(&key) {
+            name.clone()
+        } else {
+            let name = specialize_name(
+                self.driver.db,
+                &format!("{method}_{}", def_hash_suffix(self.driver.db, user.def)),
+                &[receiver.ty.ty()],
+            );
+            let mut params = vec![MonoParam {
+                name: "$struct_receiver".to_owned(),
+                mode: ParamMode::Runtime,
+                ty: receiver.ty,
+                span,
+            }];
+            let scrutinee = MonoExpr {
+                span,
+                ty: receiver.ty,
+                kind: MonoExprKind::Var(MonoId {
+                    name: params[0].name.clone(),
+                    ty: receiver.ty,
+                    span,
+                }),
+            };
+            let result = if let Some(value) = &value {
+                params.push(MonoParam {
+                    name: "$struct_value".to_owned(),
+                    mode: ParamMode::Runtime,
+                    ty: value.ty,
+                    span,
+                });
+                let MonoPatKind::Con { ctor, .. } = &pat.kind else {
+                    return None;
+                };
+                let value_expr = MonoExpr {
+                    span,
+                    ty: value.ty,
+                    kind: MonoExprKind::Var(MonoId {
+                        name: "$struct_value".to_owned(),
+                        ty: value.ty,
+                        span,
+                    }),
+                };
+                let updated_field = if let Some(op) = op {
+                    let old = MonoExpr {
+                        span,
+                        ty: vars[index].ty,
+                        kind: MonoExprKind::Var(vars[index].clone()),
+                    };
+                    let (class, method) = overloaded_operator_method(op)?;
+                    let operator_ty = Ty::function(
+                        self.driver.db,
+                        vec![old.ty.ty(), value.ty.ty()],
+                        old.ty.ty(),
+                    );
+                    let evidence = self.driver.solve_operator_method_pred(
+                        class,
+                        method,
+                        operator_ty,
+                        Some(span),
+                    )?;
+                    let name = self.driver.resolve_class_method_call(
+                        method,
+                        evidence,
+                        operator_ty,
+                        span,
+                        self.depth,
+                    )?;
+                    MonoExpr {
+                        span,
+                        ty: old.ty,
+                        kind: MonoExprKind::Call {
+                            callee: MonoId {
+                                name,
+                                ty: MonoTy::new_unchecked(operator_ty),
+                                span,
+                            },
+                            origin: MonoCallOrigin::ByName,
+                            args: vec![old, value_expr],
+                        },
+                    }
+                } else {
+                    value_expr
+                };
+                let args = vars
+                    .iter()
+                    .enumerate()
+                    .map(|(field_index, var)| MonoExpr {
+                        span,
+                        ty: var.ty,
+                        kind: if field_index == index {
+                            updated_field.kind.clone()
+                        } else {
+                            MonoExprKind::Var(var.clone())
+                        },
+                    })
+                    .collect();
+                MonoExpr {
+                    span,
+                    ty: receiver.ty,
+                    kind: MonoExprKind::Con {
+                        ctor: ctor.clone(),
+                        args,
+                    },
+                }
+            } else {
+                MonoExpr {
+                    span,
+                    ty: vars[index].ty,
+                    kind: MonoExprKind::Var(vars[index].clone()),
+                }
+            };
+            let function = MonoFunction {
+                origin: MonoFunctionOrigin::Source,
+                source: None,
+                shadowed_top_level: None,
+                name: name.clone(),
+                span,
+                params,
+                ret,
+                comptime_obligations: Vec::new(),
+                body: vec![MonoStmt {
+                    span,
+                    kind: MonoStmtKind::Match {
+                        scrutinees: vec![scrutinee],
+                        arms: vec![MonoArm {
+                            span,
+                            pats: vec![pat],
+                            body: vec![MonoStmt {
+                                span,
+                                kind: MonoStmtKind::Return(Some(result)),
+                            }],
+                        }],
+                    },
+                }],
+            };
+            self.driver.synthetic.insert(key.clone(), name.clone());
+            self.driver.synthetic_order.push(key.clone());
+            self.driver.synthetic_funs.insert(key, function);
+            name
+        };
+        let mut args = vec![receiver];
+        if let Some(value) = value {
+            args.push(value);
+        }
+        Some(MonoExpr {
+            span,
+            ty: ret,
+            kind: MonoExprKind::Call {
+                callee: MonoId {
+                    name,
+                    ty: MonoTy::new_unchecked(callee_ty),
+                    span,
+                },
+                origin: MonoCallOrigin::ByName,
+                args,
+            },
+        })
+    }
+
     fn contract_field_store(
         &mut self,
         lhs: Id<Expr<'db>>,
@@ -1660,7 +2038,9 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             kind: MonoExprKind::Var(slot_id.clone()),
         };
         let mut value = self.expr(rhs)?;
-        replace_storage_index_at_span(&mut value, lhs_span, slot.ty, &slot_var);
+        replace_desugared_read_at_span(&mut value, lhs_span, slot.ty, &slot_var, |kind| {
+            matches!(kind, MonoExprKind::StorageIndex { .. })
+        });
         let store = self.resolved_class_call(
             "CanStore",
             "store",
@@ -2263,62 +2643,66 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     }
 }
 
-/// Reuses the slot materialized for a desugared compound assignment.
+/// Reuses the storage reference or struct snapshot saved for a compound assignment.
 ///
 /// The parser represents `lhs op= rhs` as `lhs = lhs op rhs` and preserves the
 /// source span on the cloned `lhs`. Matching that span keeps the optimization
 /// specific to the synthetic read: an explicitly written `lhs = lhs op rhs`
 /// still evaluates both source expressions independently.
-fn replace_storage_index_at_span<'db>(
+fn replace_desugared_read_at_span<'db>(
     expr: &mut MonoExpr<'db>,
     target_span: Span<'db>,
     target_ty: MonoTy<'db>,
-    slot_ref: &MonoExpr<'db>,
+    saved: &MonoExpr<'db>,
+    matches_kind: fn(&MonoExprKind<'db>) -> bool,
 ) {
-    if expr.span == target_span
-        && expr.ty == target_ty
-        && matches!(expr.kind, MonoExprKind::StorageIndex { .. })
-    {
-        *expr = slot_ref.clone();
+    if expr.span == target_span && expr.ty == target_ty && matches_kind(&expr.kind) {
+        *expr = saved.clone();
         return;
     }
 
     match &mut expr.kind {
         MonoExprKind::Tuple(elems) => {
             for elem in elems {
-                replace_storage_index_at_span(elem, target_span, target_ty, slot_ref);
+                replace_desugared_read_at_span(elem, target_span, target_ty, saved, matches_kind);
             }
         }
         MonoExprKind::Call { args, .. } | MonoExprKind::Con { args, .. } => {
             for arg in args {
-                replace_storage_index_at_span(arg, target_span, target_ty, slot_ref);
+                replace_desugared_read_at_span(arg, target_span, target_ty, saved, matches_kind);
             }
         }
         MonoExprKind::ClosureDispatch { callee, args } => {
-            replace_storage_index_at_span(callee, target_span, target_ty, slot_ref);
+            replace_desugared_read_at_span(callee, target_span, target_ty, saved, matches_kind);
             for arg in args {
-                replace_storage_index_at_span(arg, target_span, target_ty, slot_ref);
+                replace_desugared_read_at_span(arg, target_span, target_ty, saved, matches_kind);
             }
         }
         MonoExprKind::BinOp { lhs, rhs, .. } => {
-            replace_storage_index_at_span(lhs, target_span, target_ty, slot_ref);
-            replace_storage_index_at_span(rhs, target_span, target_ty, slot_ref);
+            replace_desugared_read_at_span(lhs, target_span, target_ty, saved, matches_kind);
+            replace_desugared_read_at_span(rhs, target_span, target_ty, saved, matches_kind);
         }
         MonoExprKind::UnaryOp { expr, .. }
         | MonoExprKind::Field { base: expr, .. }
         | MonoExprKind::TypeAnnot { expr, .. } => {
-            replace_storage_index_at_span(expr, target_span, target_ty, slot_ref);
+            replace_desugared_read_at_span(expr, target_span, target_ty, saved, matches_kind);
         }
         MonoExprKind::Index { base, index }
         | MonoExprKind::MemoryArrayIndex { base, index }
         | MonoExprKind::StorageIndex { base, index, .. } => {
-            replace_storage_index_at_span(base, target_span, target_ty, slot_ref);
-            replace_storage_index_at_span(index, target_span, target_ty, slot_ref);
+            replace_desugared_read_at_span(base, target_span, target_ty, saved, matches_kind);
+            replace_desugared_read_at_span(index, target_span, target_ty, saved, matches_kind);
         }
         MonoExprKind::Match { scrutinee, arms } => {
-            replace_storage_index_at_span(scrutinee, target_span, target_ty, slot_ref);
+            replace_desugared_read_at_span(scrutinee, target_span, target_ty, saved, matches_kind);
             for arm in arms {
-                replace_storage_index_at_span(&mut arm.expr, target_span, target_ty, slot_ref);
+                replace_desugared_read_at_span(
+                    &mut arm.expr,
+                    target_span,
+                    target_ty,
+                    saved,
+                    matches_kind,
+                );
             }
         }
         MonoExprKind::If {
@@ -2326,9 +2710,9 @@ fn replace_storage_index_at_span<'db>(
             then_expr,
             else_expr,
         } => {
-            replace_storage_index_at_span(cond, target_span, target_ty, slot_ref);
-            replace_storage_index_at_span(then_expr, target_span, target_ty, slot_ref);
-            replace_storage_index_at_span(else_expr, target_span, target_ty, slot_ref);
+            replace_desugared_read_at_span(cond, target_span, target_ty, saved, matches_kind);
+            replace_desugared_read_at_span(then_expr, target_span, target_ty, saved, matches_kind);
+            replace_desugared_read_at_span(else_expr, target_span, target_ty, saved, matches_kind);
         }
         MonoExprKind::Var(_)
         | MonoExprKind::Lit(_)

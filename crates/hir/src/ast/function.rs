@@ -121,6 +121,23 @@ pub enum AssignOp {
     Mod,
 }
 
+impl AssignOp {
+    /// The binary operation applied by a compound assignment.
+    pub fn binary_op(self) -> Option<BinOp> {
+        Some(match self {
+            Self::Plain => return None,
+            Self::Add => BinOp::Add,
+            Self::Sub => BinOp::Sub,
+            Self::Mul => BinOp::Mul,
+            Self::Div => BinOp::Div,
+            Self::BitXor => BinOp::BitXor,
+            Self::BitAnd => BinOp::BitAnd,
+            Self::BitOr => BinOp::BitOr,
+            Self::Mod => BinOp::Mod,
+        })
+    }
+}
+
 /// Kinds of statements accepted in lowered function bodies.
 ///
 /// Child expressions, patterns, and statements are referenced by IDs into the

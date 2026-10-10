@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/struct_local_assignment/main.sol
+---
+error[SC0201]: type mismatch: expected struct field of a contract storage variable, found non-storage struct field assignment
+ --> /main/main.sol:4:3
+  |
+3 | function update(p: Point) returns (()) {
+4 |   p.x = 1;
+  |   ^^^ expression has mismatched type
+5 | }
+  |
+  = note: expected type: struct field of a contract storage variable
+  = note: found type: non-storage struct field assignment

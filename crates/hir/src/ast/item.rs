@@ -144,6 +144,8 @@ pub struct AdtCtor<'db> {
     /// erases the outer tuple around a unary field. For example, `Wrap((a, b))`
     /// and `Pair(a, b)` otherwise have the same lowered field type shape.
     pub field_count: usize,
+    /// Ordered field names for a source struct; enums have no named fields.
+    pub field_names: Option<Vec<SpannedElem<'db, Ident<'db>>>>,
 }
 
 impl<'db> AdtCtor<'db> {
@@ -157,6 +159,7 @@ impl<'db> AdtCtor<'db> {
             name,
             fields,
             field_count,
+            field_names: None,
         }
     }
 }

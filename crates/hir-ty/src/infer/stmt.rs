@@ -132,6 +132,11 @@ impl<'db> InferCtx<'db> {
                 self.infer_expr(body, *expr);
                 self.unit()
             }
+            StmtKind::Assign { op, lhs, rhs }
+                if self.infer_struct_field_assign(body, *op, *lhs, *rhs) =>
+            {
+                self.unit()
+            }
             StmtKind::Assign {
                 op: AssignOp::Plain,
                 lhs,

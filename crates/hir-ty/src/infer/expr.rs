@@ -143,24 +143,30 @@ impl<'db> InferCtx<'db> {
                 }
             }
             ExprKind::Field { base, .. } => {
-                if !self.is_namespace_expr(body, *base) {
-                    self.infer_expr(body, *base);
-                }
+                let receiver =
+                    (!self.is_namespace_expr(body, *base)).then(|| self.infer_expr(body, *base));
                 let resolution = self.expr_resolutions.get(&(body, expr_id)).cloned();
-                let resolution = if let Some(resolution) = resolution {
-                    resolution
+                if resolution.is_none()
+                    && let Some(receiver) = receiver
+                    && let Some(field_ty) = self.infer_struct_field(body, expr_id, *base, receiver)
+                {
+                    field_ty
                 } else {
-                    self.emit_expr_error(
-                        body,
-                        expr_id,
-                        TypeckDiagnostic::UnknownField {
-                            span: self.field_label_span(body, expr_id),
-                            field: self.field_name(body, expr_id),
-                        },
-                    );
-                    hir_nameres::Resolution::Err
-                };
-                self.infer_resolution(body, expr_id, resolution)
+                    let resolution = if let Some(resolution) = resolution {
+                        resolution
+                    } else {
+                        self.emit_expr_error(
+                            body,
+                            expr_id,
+                            TypeckDiagnostic::UnknownField {
+                                span: self.field_label_span(body, expr_id),
+                                field: self.field_name(body, expr_id),
+                            },
+                        );
+                        hir_nameres::Resolution::Err
+                    };
+                    self.infer_resolution(body, expr_id, resolution)
+                }
             }
             ExprKind::TypeAnnot { expr, ty } => {
                 let annot = self.lower_type_ref(*ty);
@@ -209,6 +215,73 @@ impl<'db> InferCtx<'db> {
         }
         self.expr_tys.push((body, expr_id, ty.clone()));
         ty
+    }
+
+    fn infer_struct_field(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        base: Id<Expr<'db>>,
+        receiver: InferTy<'db>,
+    ) -> Option<InferTy<'db>> {
+        let loaded_receiver = receiver.clone();
+        // CanStore's output is chosen by the solver after expression inference.
+        // A storage struct projection needs the declared product shape now.
+        let receiver = if let Some(hir_nameres::Resolution::Field(field)) =
+            self.expr_resolutions.get(&(body, base)).cloned()
+        {
+            self.instantiate_field(field, ObligationSource::Scheme)
+        } else {
+            receiver
+        };
+        let receiver = self.engine.resolve(receiver);
+        let receiver = self.normalize_aliases(receiver);
+        let InferTy::Named {
+            ctor:
+                TyCtor::User(UserTyCtor {
+                    def,
+                    kind: UserTyCtorKind::Adt,
+                }),
+            ..
+        } = &receiver
+        else {
+            return None;
+        };
+        let info = find_adt_info(self.db, self.module, *def).or_else(|| {
+            let module = module_for_def(self.db, self.entry_module?, *def)?;
+            find_adt_info(self.db, module_hir(self.db, module)?, *def)
+        })?;
+        let ctor = info.adt.ctors(self.db).first()?;
+        if def.file(self.db) != self.module.def_id_value(self.db).file(self.db) {
+            let module = nameres::module_id_for_source_file(
+                self.db,
+                self.module.def_id_value(self.db).file(self.db),
+            )?;
+            let imports = nameres::module_import_surface(self.db, module);
+            // A projection exposes the product representation just like a
+            // constructor pattern. Respect opaque exports, including aliases
+            // and qualified imports, by comparing constructor identities.
+            if !imports.terms.values().any(|resolution| {
+                matches!(resolution, hir_nameres::Resolution::Ctor { ty, index }
+                    if ty == def && index.as_usize() == 0)
+            }) {
+                return None;
+            }
+        }
+        let field = self.field_name(body, expr);
+        let index = ctor
+            .field_names
+            .as_ref()?
+            .iter()
+            .position(|name| (*name.atom()).text(self.db) == field)?;
+        self.unify_expr(body, base, loaded_receiver, receiver.clone());
+        let scheme = self.lookup_adt_ctor_scheme(*def, hir_nameres::CtorIndex::from_usize(0))?;
+        let instantiated = self.engine.instantiate_scheme(scheme);
+        let InferTy::Function { params, ret } = self.accept_instantiated(instantiated) else {
+            return None;
+        };
+        self.unify_expr(body, expr, receiver, *ret);
+        params.get(index).cloned()
     }
 
     fn infer_array_expr(
@@ -1074,7 +1147,7 @@ impl<'db> InferCtx<'db> {
         }
     }
 
-    fn infer_bin_op(
+    pub(super) fn infer_bin_op(
         &mut self,
         body: FuncBody<'db>,
         expr: Id<Expr<'db>>,
@@ -1437,7 +1510,13 @@ impl<'db> InferCtx<'db> {
         method: &str,
     ) -> Option<(DefId<'db>, String)> {
         let qualified = format!("{class_name}.{method}");
-        if let Some(module_id) = module_id_for_hir_module(self.db, self.module) {
+        if let Some(module_id) = module_id_for_hir_module(self.db, self.module).or_else(|| {
+            module_for_def(
+                self.db,
+                self.entry_module?,
+                self.module.def_id_value(self.db),
+            )
+        }) {
             let env = nameres::module_import_surface(self.db, module_id);
             let local = env
                 .item_scope
@@ -1498,7 +1577,13 @@ impl<'db> InferCtx<'db> {
     }
 
     fn lookup_operator_function(&self, name: &str) -> Option<hir_nameres::Resolution<'db>> {
-        if let Some(module_id) = module_id_for_hir_module(self.db, self.module) {
+        if let Some(module_id) = module_id_for_hir_module(self.db, self.module).or_else(|| {
+            module_for_def(
+                self.db,
+                self.entry_module?,
+                self.module.def_id_value(self.db),
+            )
+        }) {
             let env = nameres::module_import_surface(self.db, module_id);
             let local = env
                 .item_scope
