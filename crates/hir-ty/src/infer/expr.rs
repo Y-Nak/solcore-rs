@@ -389,7 +389,8 @@ impl<'db> InferCtx<'db> {
         // witnesses still obey their defining module's constructor visibility.
         let canonical_proxy =
             crate::support::canonical_std_adt_defs(self.db, "Proxy").contains(&def);
-        if !canonical_proxy && def.file(self.db) != self.module.def_id_value(self.db).file(self.db) {
+        if !canonical_proxy && def.file(self.db) != self.module.def_id_value(self.db).file(self.db)
+        {
             let visible = nameres::module_id_for_source_file(
                 self.db,
                 self.module.def_id_value(self.db).file(self.db),

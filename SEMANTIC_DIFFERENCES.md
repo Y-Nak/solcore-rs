@@ -165,6 +165,13 @@ and the deferred comptime obligation. Haskell timed out on `tabled-cycle-fail`
 and `tabled-left-recursive-fail`; Rust returned bounded diagnostics. These
 frontend counts do not establish runtime correctness by themselves.
 
+The follow-up review reran the Rust frontend on all 555 sources after the
+scope, tuple, witness, and evaluator fixes above; these verdict counts were
+unchanged. Additional probes checked generic/nested variant ABI layouts and
+definition-side signature evidence, and 15 ABI round trips executed
+successfully. The newly found evaluator and name-resolution cases are pinned
+by the focused UI/dir and shared backend E2E fixtures described above.
+
 Use the existing workflows for verification:
 
 ```sh
