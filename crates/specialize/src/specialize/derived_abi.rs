@@ -576,10 +576,7 @@ impl<'db> Driver<'db> {
         let def = self.functions.iter().find_map(|(def, info)| {
             (ident_text(self.db, &info.function.sig(self.db).name) == helper
                 && (is_canonical_std_def_named(self.db, *def, helper)
-                    || module_id_for_source_file(self.db, def.file(self.db)).is_some_and(|id| {
-                        id.library(self.db) == &LibraryId::Std
-                            && id.logical_path(self.db).as_slice() == ["ABIGeneric"]
-                    })))
+                    || is_canonical_std_module_def_named(self.db, *def, "ABIGeneric", helper)))
             .then_some(*def)
         })?;
         let info = self.functions.get(&def)?.clone();

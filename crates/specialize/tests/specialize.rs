@@ -5822,6 +5822,64 @@ fn derived_abi_wrappers_replay_definition_side_evidence() {
 }
 
 #[test]
+fn variant_abi_helpers_support_overlapping_main_and_std_roots() {
+    // The fixture runners use separate roots, so configure the overlapping roots here.
+    solcore_test_utils::run_in_large_stack(|| {
+        for abi_module in ["std.ABIGeneric", "ABIGeneric"] {
+            let mut db = TestDb::default();
+            let root = repo_root().join("std");
+            db.module_tree = Some(ModuleTree::new(
+                &db,
+                root.clone(),
+                root.clone(),
+                BTreeMap::new(),
+            ));
+            db.module_fs_snapshot = Some(module_fs_snapshot_for_roots(&db, [&*root]));
+            let path = root.join("main.sol");
+            let key = module_key_for_path(LibraryId::Main, &root, &path).unwrap();
+            let source = format!(
+                r#"
+import * from std;
+import * from std.dispatch;
+import * from std.Generic;
+import * from {abi_module};
+
+enum E {{ One(uint256), Two(uint256, uint256) }}
+
+function main(input: calldata<bytes>) returns (memory<bytes>) {{
+  let value = abi_decode(input, @E, @CalldataWordReader);
+  return abi_encode(value);
+}}
+"#,
+            );
+            let file = source_file_at_path(&db, &path, &source);
+            db.insert_module_file(key.clone(), file);
+            assert!(load_reachable_modules(&mut db, key).is_empty());
+            let module = parse_file_to_hir(&db, file).module(&db);
+            let output = specialize_module(&db, module, SpecializeOptions::default());
+
+            assert!(
+                output.diagnostics.is_empty(),
+                "{abi_module}: {:#?}",
+                output.diagnostics
+            );
+            for expected in ["ABIEncode.encodeInto", "ABIDecode.decode"] {
+                assert!(
+                    output.module.items.iter().any(|item| matches!(
+                        item,
+                        MonoItem::Function(function)
+                            if matches!(&function.origin,
+                                MonoFunctionOrigin::DerivedGeneric { adt, method }
+                                    if method == expected && adt.name(&db).as_deref() == Some("E"))
+                    )),
+                    "{abi_module}: missing {expected}"
+                );
+            }
+        }
+    });
+}
+
+#[test]
 fn direct_adt_abi_specializations_keep_sum_representations_separate() {
     let (db, _, output) = specialize_src_with_std_and_db(
         r#"

@@ -129,6 +129,17 @@ pub(crate) fn module_for_def_via_tree<'db>(
 }
 
 pub fn is_canonical_std_def_named(db: &dyn Db, def: DefId<'_>, name: &str) -> bool {
+    is_canonical_std_module_def_named(db, def, "std", name)
+}
+
+/// Recognizes a definition from a canonical std file even when overlapping roots
+/// make that file reachable through the main library.
+pub fn is_canonical_std_module_def_named(
+    db: &dyn Db,
+    def: DefId<'_>,
+    module_name: &str,
+    name: &str,
+) -> bool {
     if def.name(db).as_deref() != Some(name) {
         return false;
     }
@@ -137,10 +148,11 @@ pub fn is_canonical_std_def_named(db: &dyn Db, def: DefId<'_>, name: &str) -> bo
     let tree = db.module_tree();
     let is_std_root_file = hir::url_to_file_path(file.url(db))
         .and_then(|path| module_key_for_path(LibraryId::Std, tree.std_root(db), &path))
-        .is_some_and(|key| key.logical_path.as_slice() == ["std"]);
+        .is_some_and(|key| key.logical_path.as_slice() == [module_name]);
 
     is_std_root_file
         || module_id_for_source_file(db, file).is_some_and(|module| {
-            module.library(db) == &LibraryId::Std && module.logical_path(db).as_slice() == ["std"]
+            module.library(db) == &LibraryId::Std
+                && module.logical_path(db).as_slice() == [module_name]
         })
 }
