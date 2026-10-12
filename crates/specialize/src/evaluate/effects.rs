@@ -235,19 +235,31 @@ impl<'db> PurityChecker<'_, 'db> {
     }
 
     fn expr(&self, expr: &MonoExpr<'db>) -> bool {
-        let mut visitor = ExprPurityVisitor {
-            pure: self.pure,
-            self_name: self.self_name,
-            is_pure: true,
-        };
-        visitor.visit_expr(expr);
-        visitor.is_pure
+        expr_is_pure_with_self(expr, self.pure, Some(self.self_name))
     }
+}
+
+pub(super) fn expr_is_pure(expr: &MonoExpr<'_>, pure: &FxHashSet<String>) -> bool {
+    expr_is_pure_with_self(expr, pure, None)
+}
+
+fn expr_is_pure_with_self(
+    expr: &MonoExpr<'_>,
+    pure: &FxHashSet<String>,
+    self_name: Option<&str>,
+) -> bool {
+    let mut visitor = ExprPurityVisitor {
+        pure,
+        self_name,
+        is_pure: true,
+    };
+    visitor.visit_expr(expr);
+    visitor.is_pure
 }
 
 struct ExprPurityVisitor<'pure> {
     pure: &'pure FxHashSet<String>,
-    self_name: &'pure str,
+    self_name: Option<&'pure str>,
     is_pure: bool,
 }
 
@@ -291,8 +303,8 @@ impl<'pure, 'db> Visitor<'db> for ExprPurityVisitor<'pure> {
     }
 }
 
-fn source_callee_is_pure(callee: &str, pure: &FxHashSet<String>, self_name: &str) -> bool {
-    callee == self_name || pure.contains(callee)
+fn source_callee_is_pure(callee: &str, pure: &FxHashSet<String>, self_name: Option<&str>) -> bool {
+    self_name == Some(callee) || pure.contains(callee)
 }
 
 pub(super) fn compute_write_effects<'db>(
@@ -589,9 +601,10 @@ mod tests {
     fn self_recursion_does_not_require_cloning_the_known_pure_set() {
         let pure = FxHashSet::from_iter(["known".to_owned()]);
 
-        assert!(source_callee_is_pure("candidate", &pure, "candidate"));
-        assert!(source_callee_is_pure("known", &pure, "candidate"));
-        assert!(!source_callee_is_pure("impure", &pure, "candidate"));
+        assert!(source_callee_is_pure("candidate", &pure, Some("candidate")));
+        assert!(source_callee_is_pure("known", &pure, Some("candidate")));
+        assert!(!source_callee_is_pure("impure", &pure, Some("candidate")));
+        assert!(!source_callee_is_pure("candidate", &pure, None));
         assert_eq!(pure, FxHashSet::from_iter(["known".to_owned()]));
     }
 }

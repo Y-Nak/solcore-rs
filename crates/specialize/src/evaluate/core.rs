@@ -17,7 +17,7 @@ use super::{
     CEnv, TypeReg, VEnv, YulState,
     assigned::{AssignedNames, invalidate_assigned},
     effects::{
-        compute_comptime_pure_funs, compute_pure_funs, compute_write_effects,
+        compute_comptime_pure_funs, compute_pure_funs, compute_write_effects, expr_is_pure,
         expr_write_effects_from_call_summaries, intrinsic_is_pure, storage_field_names,
     },
     erasure::{
@@ -1685,10 +1685,10 @@ impl<'db> Evaluator<'db> {
         let function = self.functions.get(name)?.clone();
         // Substituting a callee body must not discard or duplicate evaluation
         // of an effectful argument, even when that parameter is unused.
-        if args
-            .iter()
-            .any(|arg| !self.expr_write_effects(arg).is_empty())
-        {
+        // Write summaries alone do not account for aborting or allocating builtins.
+        if args.iter().any(|arg| {
+            !self.expr_write_effects(arg).is_empty() || !expr_is_pure(arg, &self.comptime_pure_funs)
+        }) {
             return None;
         }
         if !self.function_can_inline(name, &function) {
