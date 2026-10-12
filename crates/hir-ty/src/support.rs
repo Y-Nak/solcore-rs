@@ -10,24 +10,29 @@ use parser::parse_file_to_hir;
 
 use crate::{Db, Ty, TyCtor, UserTyCtor, UserTyCtorKind};
 
-pub(crate) fn canonical_std_adt_defs<'db>(db: &'db dyn Db, name: &str) -> Vec<DefId<'db>> {
+pub(crate) fn canonical_std_module_ids<'db>(
+    db: &'db dyn Db,
+    name: &str,
+) -> impl Iterator<Item = ModuleId<'db>> {
     let std_module = module_id_from_key(
         db,
         &nameres::ModuleKey {
             library: LibraryId::Std,
-            logical_path: vec!["std".to_owned()],
+            logical_path: vec![name.to_owned()],
         },
     );
     let tree = db.module_tree();
-    let main_std_module = module_key_for_path(
+    let main_module = module_key_for_path(
         LibraryId::Main,
         tree.main_root(db),
-        &tree.std_root(db).join("std.sol"),
+        &tree.std_root(db).join(format!("{name}.sol")),
     )
     .map(|key| module_id_from_key(db, &key));
+    std::iter::once(std_module).chain(main_module)
+}
 
-    let mut defs = std::iter::once(std_module)
-        .chain(main_std_module)
+pub(crate) fn canonical_std_adt_defs<'db>(db: &'db dyn Db, name: &str) -> Vec<DefId<'db>> {
+    let mut defs = canonical_std_module_ids(db, "std")
         .filter_map(|module| {
             let file = db.module_file(module)?;
             parse_file_to_hir(db, file)

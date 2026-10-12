@@ -1,0 +1,120 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/manual_abi_missing_dispatch_import/main.sol
+---
+error[SC0101]: undefined name: Contract
+  --> /main/main.sol:16:10
+   |
+15 |
+16 | contract C {
+   |          ^ unknown name
+17 |   function echo(value: word) public returns (word) { return value; }
+   |
+---
+
+error[SC0101]: undefined name: Fallback
+  --> /main/main.sol:16:10
+   |
+15 |
+16 | contract C {
+   |          ^ unknown name
+17 |   function echo(value: word) public returns (word) { return value; }
+   |
+---
+
+error[SC0101]: undefined name: Method
+  --> /main/main.sol:16:10
+   |
+15 |
+16 | contract C {
+   |          ^ unknown name
+17 |   function echo(value: word) public returns (word) { return value; }
+   |
+   = help: did you mean `Mod`?
+---
+
+error[SC0101]: undefined name: RunContract
+  --> /main/main.sol:16:10
+   |
+15 |
+16 | contract C {
+   |          ^ unknown name
+17 |   function echo(value: word) public returns (word) { return value; }
+   |
+---
+
+error[SC0101]: undefined name: fallback_default_implementation
+  --> /main/main.sol:16:10
+   |
+15 |
+16 | contract C {
+   |          ^ unknown name
+17 |   function echo(value: word) public returns (word) { return value; }
+   |
+---
+
+error[SC0103]: undefined type constructor: NonPayable
+  --> /main/main.sol:16:10
+   |
+15 |
+16 | contract C {
+   |          ^ undefined type constructor
+17 |   function echo(value: word) public returns (word) { return value; }
+   |
+---
+
+error[SC0103]: undefined type constructor: NonPayable
+  --> /main/main.sol:17:3
+   |
+16 | contract C {
+17 |   function echo(value: word) public returns (word) { return value; }
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ undefined type constructor
+18 | }
+   |
+---
+
+error[SC0105]: undefined trait: SigString
+  --> /main/main.sol:17:3
+   |
+16 | contract C {
+17 |   function echo(value: word) public returns (word) { return value; }
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ undefined trait
+18 | }
+   |
+---
+
+error[SC0231]: public function `echo` ABI for contract `C` cannot use visible manual `ABIAttribs` evidence
+  --> /main/main.sol:17:3
+   |
+16 | contract C {
+17 |   function echo(value: word) public returns (word) { return value; }
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+18 | }
+   |
+   = note: impl `ABIAttribs` can override canonical `ABIAttribs` behavior
+   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI
+---
+
+error[SC0231]: public function `echo` ABI for contract `C` cannot use visible manual `ABIDecode` evidence
+  --> /main/main.sol:17:3
+   |
+16 | contract C {
+17 |   function echo(value: word) public returns (word) { return value; }
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+18 | }
+   |
+   = note: impl `ABIDecode` can override canonical `ABIDecode` behavior
+   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI
+---
+
+error[SC0231]: public function `echo` ABI for contract `C` cannot use visible manual `ABIEncode` evidence
+  --> /main/main.sol:17:3
+   |
+16 | contract C {
+17 |   function echo(value: word) public returns (word) { return value; }
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+18 | }
+   |
+   = note: impl `ABIEncode` can override canonical `ABIEncode` behavior
+   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

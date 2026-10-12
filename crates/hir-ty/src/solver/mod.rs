@@ -110,6 +110,7 @@ use r#match::{
     InstantiatedClause, MatchSubst, instantiate_clause, match_head, max_pred_var, offset_pred_vars,
     ty_equal, unify_ty,
 };
+pub(crate) use r#match::{clause_conditions_for_goal, scheme_conditions_for_type};
 use r#match::{collect_evidence_vars, collect_pred_vars, collect_ty_vars, head_can_unify};
 use module_lookup::{
     ident_text, module_for_def, scope_resolution_for_module_id, type_var_bindings, unique_modules,
