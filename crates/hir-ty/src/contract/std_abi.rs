@@ -197,7 +197,13 @@ impl DispatchClass {
         let name = def.name(db)?;
         [Self::Selector, Self::ExecMethod]
             .into_iter()
-            .find(|class| class.name() == name && StdAbiModule::Dispatch.contains(db, def))
+            .find(|class| {
+                // Match the canonical definition, including the Main fallback
+                // used when the project root contains the standard library.
+                class.name() == name
+                    && StdAbiModule::Dispatch.find_def(db, class.name(), DefKind::Class)
+                        == Some(def)
+            })
     }
 }
 
