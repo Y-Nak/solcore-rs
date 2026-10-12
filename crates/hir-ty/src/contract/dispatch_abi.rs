@@ -10,13 +10,15 @@ use nameres::module_id_for_source_file;
 use rustc_hash::FxHashMap;
 
 use super::std_abi::{
-    ABI_HEAD_SIZE_METHOD, AbiClass, AbiEvidenceRole, DispatchClass, StdAbiFunction, StdAbiModule,
-    StdAbiType,
+    ABI_HEAD_SIZE_METHOD, AbiClass, DispatchClass, StdAbiFunction, StdAbiModule, StdAbiType,
 };
 use crate::{
     ClassId, ClauseOrigin, Db, Pred, PredKind, Ty, TyKind, function_scheme,
     infer::class_method_scheme,
-    solver::{clause_conditions_for_goal, scheme_conditions_for_type, trait_env_for_module},
+    solver::{
+        AbiEvidenceRole, clause_conditions_for_goal, scheme_conditions_for_type,
+        trait_env_for_module,
+    },
 };
 
 /// The argument order shared by generated `Method` values and their types.

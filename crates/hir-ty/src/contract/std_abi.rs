@@ -7,7 +7,10 @@ use hir::{
 use nameres::{LibraryId, ModuleId, module_id_for_source_file};
 use parser::parse_file_to_hir;
 
-use crate::{Db, Ty, TyCtor, UserTyCtor, UserTyCtorKind, support::canonical_std_module_ids};
+use crate::{
+    Db, Ty, TyCtor, UserTyCtor, UserTyCtorKind, solver::AbiEvidenceRole,
+    support::canonical_std_module_ids,
+};
 
 pub(super) const ABI_HEAD_SIZE_METHOD: &str = "headSize";
 
@@ -72,12 +75,6 @@ pub(crate) enum AbiClass {
     Attribs,
     Encode,
     Decode,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum AbiEvidenceRole {
-    Signature,
-    Codec,
 }
 
 impl AbiClass {

@@ -71,13 +71,13 @@ mod soundness;
 use canonical::{
     GoalRenaming, RigidVar, TableKey, actualize_answer, canonicalize_goal, canonicalize_local_given,
 };
+pub(crate) use derived_abi::{
+    AbiEvidenceRole, definition_supports_derived_abi, derived_abi_delegated_evidence,
+    ty_mentions_adt as derived_abi_rep_mentions_adt,
+};
 use derived_abi::{
     DerivedAbiClauseSource, push_derived_abi_clauses, resolved_abi_clause_source,
     visible_abi_clause_source,
-};
-pub(crate) use derived_abi::{
-    definition_supports_derived_abi, derived_abi_delegated_evidence,
-    ty_mentions_adt as derived_abi_rep_mentions_adt,
 };
 pub(crate) use derived_class::class_derivation_diagnostics;
 pub use derived_class::derived_class_plans;

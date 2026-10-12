@@ -1,6 +1,13 @@
 use super::derived_generic::AdtDeriveInfo;
 use super::*;
 
+/// Distinguishes selector and variant-tag dictionaries from codec dictionaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum AbiEvidenceRole {
+    Signature,
+    Codec,
+}
+
 /// Definitions needed to synthesize the ABI instances backed by a compiler-
 /// owned `Generic` representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
@@ -138,12 +145,11 @@ fn adt_named<'db>(db: &'db dyn Db, def: DefId<'db>, name: &str) -> Option<()> {
 /// Solves the dictionaries actually used by a selected derived ABI method.
 /// Product codecs delegate to their Generic representation; variant codecs use
 /// each constructor's product, layout, and signature dictionaries separately.
-/// The boolean marks signature dependencies, including constructor wire tags.
 /// Local givens are replayed using the selected type-parameter dictionaries.
 pub(crate) fn derived_abi_delegated_evidence<'db>(
     db: &'db dyn Db,
     evidence: &Evidence<'db>,
-) -> Result<Option<Vec<(bool, Evidence<'db>)>>, Pred<'db>> {
+) -> Result<Option<Vec<(AbiEvidenceRole, Evidence<'db>)>>, Pred<'db>> {
     let mut exhausted = None;
     let evidence = try_derived_abi_delegated_evidence(db, evidence, &mut exhausted);
     match exhausted {
@@ -156,7 +162,7 @@ fn try_derived_abi_delegated_evidence<'db>(
     db: &'db dyn Db,
     evidence: &Evidence<'db>,
     exhausted: &mut Option<Pred<'db>>,
-) -> Option<Vec<(bool, Evidence<'db>)>> {
+) -> Option<Vec<(AbiEvidenceRole, Evidence<'db>)>> {
     let Evidence::Derived {
         kind,
         pred,
@@ -313,7 +319,7 @@ fn try_derived_abi_delegated_evidence<'db>(
         for arm in &plan.from_arms {
             let product = fields.apply_ty(db, arm.product_rep);
             goals.push((
-                false,
+                AbiEvidenceRole::Codec,
                 Pred::in_class(db, ClassId::User(source.abi_attribs), product, vec![]),
             ));
             if !matches!(kind, DerivedClauseKind::AbiAttribs { .. }) {
@@ -327,17 +333,17 @@ fn try_derived_abi_delegated_evidence<'db>(
                 } else {
                     Pred::in_class(db, *class, product, vec![])
                 };
-                goals.push((false, codec));
+                goals.push((AbiEvidenceRole::Codec, codec));
                 if let Some(signature) = source.sig_string {
                     goals.push((
-                        true,
+                        AbiEvidenceRole::Signature,
                         Pred::in_class(db, ClassId::User(signature), product, vec![]),
                     ));
                 }
             }
         }
     } else {
-        goals.push((false, delegated));
+        goals.push((AbiEvidenceRole::Codec, delegated));
     }
     let env = trait_env_with_givens(db, base, givens.clone());
     let bindings = givens
@@ -345,7 +351,7 @@ fn try_derived_abi_delegated_evidence<'db>(
         .zip(sub_evidence.iter().cloned())
         .collect::<Vec<_>>();
     let mut dependencies = Vec::new();
-    for (signature, goal) in goals {
+    for (role, goal) in goals {
         let report = solve_report(db, env, canonical_goal(db, goal));
         if report.exhausted {
             *exhausted = Some(goal);
@@ -355,7 +361,7 @@ fn try_derived_abi_delegated_evidence<'db>(
             continue;
         };
         if solver_answer_is_closed_over_goal(db, goal, env, &subst, &evidence) {
-            dependencies.push((signature, replay_abi_evidence_bindings(evidence, &bindings)));
+            dependencies.push((role, replay_abi_evidence_bindings(evidence, &bindings)));
         }
     }
     Some(dependencies)

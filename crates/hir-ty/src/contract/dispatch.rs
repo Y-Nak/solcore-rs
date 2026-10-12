@@ -20,12 +20,15 @@ use super::{
         find_contract_by_def, function_type_vars, ident_text, lower_normalized_function,
         param_names, resolve_contract_item_types, type_var_bindings,
     },
-    std_abi::{AbiClass, AbiEvidenceRole, StdAbiType},
+    std_abi::{AbiClass, StdAbiType},
 };
 use crate::{
     ClassId, ClauseOrigin, Db, DerivedClauseKind, Pred, PredKind, TraitEnvId, Ty, TyCtor, TyKind,
     TypeckDiagnostic, UserTyCtorKind,
-    solver::{Evidence, Solution, canonical_goal, solve_report, solver_answer_is_closed_over_goal},
+    solver::{
+        AbiEvidenceRole, Evidence, Solution, canonical_goal, solve_report,
+        solver_answer_is_closed_over_goal,
+    },
 };
 
 const MAX_DERIVED_ABI_EVIDENCE: usize = 1_024;
@@ -350,9 +353,7 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
             } else {
                 Vec::new()
             };
-            let mut selected_manual = FxHashSet::default();
-            let mut visited_derived = FxHashSet::default();
-            let mut exhausted_derived = None;
+            let mut manual = ManualAbiEvidence::new(db, &manual_instances);
             for (role, goal) in roots {
                 let report = solve_report(db, trait_env, canonical_goal(db, goal));
                 if report.exhausted {
@@ -361,18 +362,10 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
                 if let Solution::Unique { subst, evidence } = report.solution
                     && solver_answer_is_closed_over_goal(db, goal, trait_env, &subst, &evidence)
                 {
-                    collect_manual_abi_evidence(
-                        db,
-                        &evidence,
-                        &manual_instances,
-                        role,
-                        &mut selected_manual,
-                        &mut visited_derived,
-                        &mut exhausted_derived,
-                    );
+                    manual.collect(&evidence, role);
                 }
             }
-            if let Some(pred) = exhausted_derived {
+            if let Some(pred) = manual.exhausted_derived {
                 diagnostics.push(
                     TypeckDiagnostic::SolverFuelExhausted {
                         span: LabelSpan::from_span(db, sig.span),
@@ -382,7 +375,7 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
                 );
             }
             for (instance, class, generic_adt) in &manual_evidence {
-                if *class != AbiClass::Generic && !selected_manual.contains(instance) {
+                if *class != AbiClass::Generic && !manual.selected.contains(instance) {
                     continue;
                 }
                 if generic_adt.is_some_and(|adt| {
@@ -429,109 +422,84 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
 /// Follows selected dictionaries, including representation and superclass
 /// subproofs. Signature roots own SigString evidence for method selectors and
 /// variant tags; execution roots own encoding, decoding, and layout evidence.
-fn collect_manual_abi_evidence<'db>(
+/// All roots of one declaration share the same visited set and proof budget.
+struct ManualAbiEvidence<'db, 'a> {
     db: &'db dyn Db,
-    evidence: &Evidence<'db>,
-    manual_instances: &FxHashMap<DefId<'db>, AbiClass>,
-    role: AbiEvidenceRole,
-    selected: &mut FxHashSet<DefId<'db>>,
-    visited_derived: &mut FxHashSet<(DerivedClauseKind<'db>, Pred<'db>)>,
-    exhausted_derived: &mut Option<Pred<'db>>,
-) {
-    match evidence {
-        Evidence::Instance {
-            instance,
-            sub_evidence,
-            ..
-        } => {
-            if let Some(class) = manual_instances.get(instance)
-                && class.evidence_role() == Some(role)
-            {
-                selected.insert(*instance);
-            }
-            for evidence in sub_evidence {
-                collect_manual_abi_evidence(
-                    db,
-                    evidence,
-                    manual_instances,
-                    role,
-                    selected,
-                    visited_derived,
-                    exhausted_derived,
-                );
-            }
+    manual_instances: &'a FxHashMap<DefId<'db>, AbiClass>,
+    selected: FxHashSet<DefId<'db>>,
+    visited_derived: FxHashSet<(DerivedClauseKind<'db>, Pred<'db>)>,
+    exhausted_derived: Option<Pred<'db>>,
+}
+
+impl<'db, 'a> ManualAbiEvidence<'db, 'a> {
+    fn new(db: &'db dyn Db, manual_instances: &'a FxHashMap<DefId<'db>, AbiClass>) -> Self {
+        Self {
+            db,
+            manual_instances,
+            selected: FxHashSet::default(),
+            visited_derived: FxHashSet::default(),
+            exhausted_derived: None,
         }
-        Evidence::Derived {
-            kind,
-            pred,
-            sub_evidence,
-        } => {
-            for evidence in sub_evidence {
-                collect_manual_abi_evidence(
-                    db,
-                    evidence,
-                    manual_instances,
-                    role,
-                    selected,
-                    visited_derived,
-                    exhausted_derived,
-                );
+    }
+
+    fn collect(&mut self, evidence: &Evidence<'db>, role: AbiEvidenceRole) {
+        match evidence {
+            Evidence::Instance {
+                instance,
+                sub_evidence,
+                ..
+            } => {
+                if let Some(class) = self.manual_instances.get(instance)
+                    && class.evidence_role() == Some(role)
+                {
+                    self.selected.insert(*instance);
+                }
+                for evidence in sub_evidence {
+                    self.collect(evidence, role);
+                }
             }
-            // Derived ABI bodies resolve their representation dictionaries in
-            // the defining module. Bound that additional proof graph just like
-            // the solver bounds type-growing tables; cyclic source layouts
-            // retain their existing unsupported-ABI diagnostic.
-            if role == AbiEvidenceRole::Codec
-                && matches!(
-                    kind,
-                    DerivedClauseKind::AbiAttribs { .. }
-                        | DerivedClauseKind::AbiEncode { .. }
-                        | DerivedClauseKind::AbiDecode { .. }
-                )
-                && !visited_derived.contains(&(*kind, *pred))
-            {
-                if visited_derived.len() == MAX_DERIVED_ABI_EVIDENCE {
-                    exhausted_derived.get_or_insert(*pred);
-                } else {
-                    visited_derived.insert((*kind, *pred));
-                    match crate::solver::derived_abi_delegated_evidence(db, evidence) {
-                        Ok(Some(dependencies)) => {
-                            for (signature, dependency) in dependencies {
-                                collect_manual_abi_evidence(
-                                    db,
-                                    &dependency,
-                                    manual_instances,
-                                    if signature {
-                                        AbiEvidenceRole::Signature
-                                    } else {
-                                        AbiEvidenceRole::Codec
-                                    },
-                                    selected,
-                                    visited_derived,
-                                    exhausted_derived,
-                                );
+            Evidence::Derived {
+                kind,
+                pred,
+                sub_evidence,
+            } => {
+                for evidence in sub_evidence {
+                    self.collect(evidence, role);
+                }
+                // Derived ABI bodies resolve their representation dictionaries in
+                // the defining module. Bound that additional proof graph just like
+                // the solver bounds type-growing tables; cyclic source layouts
+                // retain their existing unsupported-ABI diagnostic.
+                if role == AbiEvidenceRole::Codec
+                    && matches!(
+                        kind,
+                        DerivedClauseKind::AbiAttribs { .. }
+                            | DerivedClauseKind::AbiEncode { .. }
+                            | DerivedClauseKind::AbiDecode { .. }
+                    )
+                    && !self.visited_derived.contains(&(*kind, *pred))
+                {
+                    if self.visited_derived.len() == MAX_DERIVED_ABI_EVIDENCE {
+                        self.exhausted_derived.get_or_insert(*pred);
+                    } else {
+                        self.visited_derived.insert((*kind, *pred));
+                        match crate::solver::derived_abi_delegated_evidence(self.db, evidence) {
+                            Ok(Some(dependencies)) => {
+                                for (role, dependency) in dependencies {
+                                    self.collect(&dependency, role);
+                                }
                             }
+                            Err(pred) => {
+                                self.exhausted_derived.get_or_insert(pred);
+                            }
+                            Ok(None) => {}
                         }
-                        Err(pred) => {
-                            exhausted_derived.get_or_insert(pred);
-                        }
-                        Ok(None) => {}
                     }
                 }
             }
+            Evidence::Superclass { child, .. } => self.collect(child, role),
+            Evidence::Builtin { .. } => {}
         }
-        Evidence::Superclass { child, .. } => {
-            collect_manual_abi_evidence(
-                db,
-                child,
-                manual_instances,
-                role,
-                selected,
-                visited_derived,
-                exhausted_derived,
-            );
-        }
-        Evidence::Builtin { .. } => {}
     }
 }
 
