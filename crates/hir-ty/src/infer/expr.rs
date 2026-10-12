@@ -249,24 +249,13 @@ impl<'db> InferCtx<'db> {
         else {
             return None;
         };
-        let info = find_adt_info(self.db, self.module, *def).or_else(|| {
-            let module = module_for_def(self.db, self.entry_module?, *def)?;
-            find_adt_info(self.db, module_hir(self.db, module)?, *def)
-        })?;
+        let info = self.lookup_adt_info(*def)?;
         let ctor = info.adt.ctors(self.db).first()?;
         if def.file(self.db) != self.module.def_id_value(self.db).file(self.db) {
-            let module = nameres::module_id_for_source_file(
-                self.db,
-                self.module.def_id_value(self.db).file(self.db),
-            )?;
-            let imports = nameres::module_import_surface(self.db, module);
             // A projection exposes the product representation just like a
             // constructor pattern. Respect opaque exports, including aliases
             // and qualified imports, by comparing constructor identities.
-            if !imports.terms.values().any(|resolution| {
-                matches!(resolution, hir_nameres::Resolution::Ctor { ty, index }
-                    if ty == def && index.as_usize() == 0)
-            }) {
+            if !self.is_imported_adt_ctor_visible(*def, hir_nameres::CtorIndex::from_usize(0)) {
                 return None;
             }
         }
@@ -379,10 +368,7 @@ impl<'db> InferCtx<'db> {
         def: DefId<'db>,
         inner: TypeRef<'db>,
     ) -> bool {
-        let info = find_adt_info(self.db, self.module, def).or_else(|| {
-            let module = module_for_def(self.db, self.entry_module?, def)?;
-            find_adt_info(self.db, module_hir(self.db, module)?, def)
-        });
+        let info = self.lookup_adt_info(def);
         let span = self.expr_label_span(body, expr);
         // `@T` can use the canonical witness from a loaded std module even
         // when a selective import does not open Proxy's constructor. Custom
@@ -391,19 +377,17 @@ impl<'db> InferCtx<'db> {
             crate::support::canonical_std_adt_defs(self.db, "Proxy").contains(&def);
         if !canonical_proxy && def.file(self.db) != self.module.def_id_value(self.db).file(self.db)
         {
-            let visible = nameres::module_id_for_source_file(
-                self.db,
-                self.module.def_id_value(self.db).file(self.db),
-            )
-            .is_some_and(|module| {
-                nameres::module_import_surface(self.db, module)
-                    .terms
-                    .values()
-                    .any(|resolution| {
-                        matches!(resolution, hir_nameres::Resolution::Ctor { ty, index }
-                            if *ty == def && info.as_ref().is_some_and(|info|
-                                info.adt.ctors(self.db).get(index.as_usize()).is_some_and(|ctor|
-                                    ident_text(self.db, &ctor.name) == "Proxy")))
+            let visible = info.as_ref().is_some_and(|info| {
+                info.adt
+                    .ctors(self.db)
+                    .iter()
+                    .enumerate()
+                    .any(|(index, ctor)| {
+                        ident_text(self.db, &ctor.name) == "Proxy"
+                            && self.is_imported_adt_ctor_visible(
+                                def,
+                                hir_nameres::CtorIndex::from_usize(index),
+                            )
                     })
             });
             if !visible {

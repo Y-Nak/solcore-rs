@@ -29,6 +29,36 @@ pub(super) struct ClassLookup<'db> {
     pub(super) class: ClassDef<'db>,
 }
 
+impl<'db> InferCtx<'db> {
+    pub(super) fn lookup_adt_info(&self, def: DefId<'db>) -> Option<AdtLookup<'db>> {
+        find_adt_info(self.db, self.module, def).or_else(|| {
+            let module = module_for_def(self.db, self.entry_module?, def)?;
+            find_adt_info(self.db, module_hir(self.db, module)?, def)
+        })
+    }
+
+    /// Checks the imported constructor identity, including qualified and aliased
+    /// imports. Callers decide whether local or compiler-provided constructors
+    /// need an import at all.
+    pub(super) fn is_imported_adt_ctor_visible(
+        &self,
+        def: DefId<'db>,
+        index: hir_nameres::CtorIndex,
+    ) -> bool {
+        let Some(module) = nameres::module_id_for_source_file(
+            self.db,
+            self.module.def_id_value(self.db).file(self.db),
+        ) else {
+            return false;
+        };
+        let imports = nameres::module_import_surface(self.db, module);
+        imports.terms.values().any(|resolution| {
+            matches!(resolution, hir_nameres::Resolution::Ctor { ty, index: visible_index }
+                if *ty == def && *visible_index == index)
+        })
+    }
+}
+
 pub(super) fn find_function_info<'db>(
     db: &'db dyn HirDb,
     module: Module<'db>,
