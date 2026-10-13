@@ -3,7 +3,7 @@ import * from std.dispatch;
 import * from std.Generic;
 import * from std.StorageGeneric;
 
-// An escrow whose lifecycle is a sum type stored in a contract field.
+// An escrow whose lifecycle is an enum stored in a state variable.
 enum Phase {
     AwaitingPayment,
     Funded(uint256),
@@ -26,12 +26,12 @@ contract Escrow {
                 phase = Phase.Funded(amount);
             }
             default {
-                require(false, "already funded");
+                revertWithError("already funded");
             }
         }
     }
 
-    // Commit the release before checking that it cannot be repeated.
+    // Record the release so that it cannot be repeated.
     // #[() -> 42]
     // #[send()]
     // #[() -> revert]
@@ -42,8 +42,8 @@ contract Escrow {
                 return amount;
             }
             default {
-                require(false, "nothing to release");
-                return uint256(0);
+                revertWithError("nothing to release");
+                return 0;
             }
         }
     }
@@ -52,9 +52,9 @@ contract Escrow {
     // #[() -> 2]
     function status() public returns (uint256) {
         match (phase) {
-            case Phase.AwaitingPayment { return uint256(0); }
-            case Phase.Funded(_) { return uint256(1); }
-            case Phase.Released(_) { return uint256(2); }
+            case Phase.AwaitingPayment { return 0; }
+            case Phase.Funded(_) { return 1; }
+            case Phase.Released(_) { return 2; }
         }
     }
 }
