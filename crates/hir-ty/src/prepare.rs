@@ -35,7 +35,14 @@ use hir::{
     span::{Span, Spanned, SpannedElem},
 };
 
-use crate::{Db, contract_needs_generated_dispatch};
+use crate::{
+    Db,
+    contract::{
+        dispatch_abi::MethodParts,
+        std_abi::{AbiClass, StdAbiFunction, StdAbiType},
+    },
+    contract_needs_generated_dispatch,
+};
 
 const GENERATED_MAIN_NAME: &str = "$solcore$dispatch$main";
 const MAIN_FINGERPRINT: &str = "solcore.generated.std_dispatch.main";
@@ -511,12 +518,17 @@ fn generated_constructor_copy_arguments<'db>(
             body: constructor_copy_yul(db, constructor.span, contract_name),
         });
         let offset = builder.ident("memoryDataOffset");
-        let memory_value = builder.call_ident("memory", vec![offset]);
+        let memory_value = builder.call_ident(StdAbiType::Memory.name(), vec![offset]);
         let source_ty = named_ty(
             db,
             constructor.span,
-            "memory",
-            vec![named_ty(db, constructor.span, "bytes", Vec::new())],
+            StdAbiType::Memory.name(),
+            vec![named_ty(
+                db,
+                constructor.span,
+                StdAbiType::Bytes.name(),
+                Vec::new(),
+            )],
         );
         let source = builder.let_stmt("source", Some(source_ty), Some(memory_value));
         let source_expr = builder.ident("source");
@@ -524,10 +536,13 @@ fn generated_constructor_copy_arguments<'db>(
         let reader_proxy = builder.proxy(named_ty(
             db,
             constructor.span,
-            "MemoryWordReader",
+            StdAbiType::MemoryWordReader.name(),
             Vec::new(),
         ));
-        let decoded = builder.call_ident("abi_decode", vec![source_expr, args_proxy, reader_proxy]);
+        let decoded = builder.call_ident(
+            StdAbiFunction::Decode.name(),
+            vec![source_expr, args_proxy, reader_proxy],
+        );
         let lhs = builder.ident("res");
         let assign = builder.alloc_stmt(StmtKind::Assign {
             op: AssignOp::Plain,
@@ -1098,7 +1113,7 @@ fn dispatch_name_declarations<'db>(
         db,
         module_def,
         DefKind::Instance,
-        "SigString",
+        AbiClass::SigString.name(),
         &format!("solcore.generated.std_dispatch.sig_string.{ty_name}"),
     );
     let method_def = generated_def(
@@ -1127,7 +1142,7 @@ fn dispatch_name_declarations<'db>(
         db,
         PredRefKind {
             ty: named_ty(db, method.span, &ty_name, Vec::new()),
-            class: spanned_ident(db, method.span, "SigString"),
+            class: spanned_ident(db, method.span, AbiClass::SigString.name()),
             args: SpannedElem::new(Vec::new(), method.span),
         },
     );
@@ -1197,7 +1212,7 @@ fn sig_string_method<'db>(
     let proxy_ty = named_ty(
         db,
         span,
-        "Proxy",
+        StdAbiType::Proxy.name(),
         vec![named_ty(db, span, ty_name, Vec::new())],
     );
     let sig = FuncSig {
@@ -1245,9 +1260,9 @@ fn generated_dispatch_main<'db>(
             db,
             method.span,
             if method.payable {
-                "Payable"
+                StdAbiType::Payable.name()
             } else {
-                "NonPayable"
+                StdAbiType::NonPayable.name()
             },
             Vec::new(),
         ));
@@ -1259,8 +1274,19 @@ fn generated_dispatch_main<'db>(
         // `allowance` cannot resolve to the field, nor can `C.Foo` resolve to a
         // same-named constructor of a contract-local ADT.
         let implementation = builder.ident(&compiler_contract_method_ref(&method.name));
-        method_values
-            .push(builder.call_ident("Method", vec![name, payability, args, rets, implementation]));
+        method_values.push(
+            builder.call_ident(
+                StdAbiType::Method.name(),
+                MethodParts {
+                    name,
+                    payability,
+                    args,
+                    returns: rets,
+                    implementation,
+                }
+                .into_args(),
+            ),
+        );
     }
     let methods = builder.product_expr(&method_values);
     let fallback = match fallback {
@@ -1269,9 +1295,9 @@ fn generated_dispatch_main<'db>(
                 db,
                 span,
                 if fallback.payable {
-                    "Payable"
+                    StdAbiType::Payable.name()
                 } else {
-                    "NonPayable"
+                    StdAbiType::NonPayable.name()
                 },
                 Vec::new(),
             ));
@@ -1282,7 +1308,12 @@ fn generated_dispatch_main<'db>(
             builder.call_ident("Fallback", vec![payability, args, rets, implementation])
         }
         None => {
-            let payability = builder.proxy(named_ty(db, span, "NonPayable", Vec::new()));
+            let payability = builder.proxy(named_ty(
+                db,
+                span,
+                StdAbiType::NonPayable.name(),
+                Vec::new(),
+            ));
             let args = builder.proxy(unit_ty(db, span));
             let rets = builder.proxy(unit_ty(db, span));
             let implementation = builder.ident("fallback_default_implementation");
@@ -1433,8 +1464,8 @@ impl<'db> BodyBuilder<'db> {
     }
 
     fn proxy(&mut self, ty: TypeRef<'db>) -> Id<Expr<'db>> {
-        let proxy = self.ident("Proxy");
-        let proxy_ty = named_ty(self.db, self.span, "Proxy", vec![ty]);
+        let proxy = self.ident(StdAbiType::Proxy.name());
+        let proxy_ty = named_ty(self.db, self.span, StdAbiType::Proxy.name(), vec![ty]);
         self.alloc_expr(ExprKind::TypeAnnot {
             expr: proxy,
             ty: proxy_ty,

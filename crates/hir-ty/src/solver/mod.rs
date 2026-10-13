@@ -71,13 +71,13 @@ mod soundness;
 use canonical::{
     GoalRenaming, RigidVar, TableKey, actualize_answer, canonicalize_goal, canonicalize_local_given,
 };
+pub(crate) use derived_abi::{
+    AbiEvidenceRole, definition_supports_derived_abi, derived_abi_delegated_evidence,
+    ty_mentions_adt as derived_abi_rep_mentions_adt,
+};
 use derived_abi::{
     DerivedAbiClauseSource, push_derived_abi_clauses, resolved_abi_clause_source,
     visible_abi_clause_source,
-};
-pub(crate) use derived_abi::{
-    definition_supports_derived_abi, derived_abi_delegated_evidence,
-    ty_mentions_adt as derived_abi_rep_mentions_adt,
 };
 pub(crate) use derived_class::class_derivation_diagnostics;
 pub use derived_class::derived_class_plans;
@@ -110,6 +110,7 @@ use r#match::{
     InstantiatedClause, MatchSubst, instantiate_clause, match_head, max_pred_var, offset_pred_vars,
     ty_equal, unify_ty,
 };
+pub(crate) use r#match::{clause_conditions_for_goal, scheme_conditions_for_type};
 use r#match::{collect_evidence_vars, collect_pred_vars, collect_ty_vars, head_can_unify};
 use module_lookup::{
     ident_text, module_for_def, scope_resolution_for_module_id, type_var_bindings, unique_modules,
@@ -249,6 +250,11 @@ pub enum DerivedClauseKind<'db> {
     /// Concrete `T:ABIAttribs` instance backed by `T`'s Generic representation.
     AbiAttribs {
         /// ADT whose ABI metadata instance was synthesized.
+        adt: DefId<'db>,
+    },
+    /// Variant-aware encoder for a multi-constructor ADT.
+    AbiEncode {
+        /// ADT whose encoder instance was synthesized.
         adt: DefId<'db>,
     },
     /// Concrete `ABIDecoder(T, reader):ABIDecode(T)` instance.

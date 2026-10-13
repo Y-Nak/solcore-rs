@@ -11,7 +11,7 @@ use super::{
     assigned::AssignedNames,
     ident_text,
     known::{collect_pat_binders, lvalue_root_name},
-    yul_const::asm_is_interpretable,
+    yul_const::{asm_is_comptime_pure, asm_is_interpretable},
 };
 use crate::ir::{
     MonoCallOrigin, MonoExpr, MonoExprKind, MonoFunction, MonoIntrinsic, MonoItem, MonoModule,
@@ -24,6 +24,32 @@ pub(super) fn compute_pure_funs<'db>(
     functions: &FxHashMap<String, MonoFunction<'db>>,
     storage_fields: &FxHashSet<String>,
 ) -> FxHashSet<String> {
+    compute_pure_funs_with(db, functions, storage_fields, PurityMode::Evaluation)
+}
+
+/// Structural comptime classification cannot assume the evaluator's memory
+/// state. Memory operations may fold during evaluation, but an unevaluated
+/// memory read or write is never evidence that a call is comptime.
+pub(super) fn compute_comptime_pure_funs<'db>(
+    db: &'db dyn Db,
+    functions: &FxHashMap<String, MonoFunction<'db>>,
+    storage_fields: &FxHashSet<String>,
+) -> FxHashSet<String> {
+    compute_pure_funs_with(db, functions, storage_fields, PurityMode::Comptime)
+}
+
+#[derive(Clone, Copy)]
+enum PurityMode {
+    Evaluation,
+    Comptime,
+}
+
+fn compute_pure_funs_with<'db>(
+    db: &'db dyn Db,
+    functions: &FxHashMap<String, MonoFunction<'db>>,
+    storage_fields: &FxHashSet<String>,
+    mode: PurityMode,
+) -> FxHashSet<String> {
     let mut pure = FxHashSet::default();
     loop {
         let before = pure.len();
@@ -31,7 +57,7 @@ pub(super) fn compute_pure_funs<'db>(
             if pure.contains(name) || name == "revertLit" {
                 continue;
             }
-            if function_is_pure(db, function, &pure, name, storage_fields) {
+            if function_is_pure_with(db, function, &pure, name, storage_fields, mode) {
                 pure.insert(name.clone());
             }
         }
@@ -75,128 +101,153 @@ pub(super) fn function_is_pure<'db>(
     self_name: &str,
     storage_fields: &FxHashSet<String>,
 ) -> bool {
+    function_is_pure_with(
+        db,
+        function,
+        pure,
+        self_name,
+        storage_fields,
+        PurityMode::Evaluation,
+    )
+}
+
+pub(super) fn function_is_comptime_pure<'db>(
+    db: &'db dyn Db,
+    function: &MonoFunction<'db>,
+    pure: &FxHashSet<String>,
+    self_name: &str,
+    storage_fields: &FxHashSet<String>,
+) -> bool {
+    function_is_pure_with(
+        db,
+        function,
+        pure,
+        self_name,
+        storage_fields,
+        PurityMode::Comptime,
+    )
+}
+
+fn function_is_pure_with<'db>(
+    db: &'db dyn Db,
+    function: &MonoFunction<'db>,
+    pure: &FxHashSet<String>,
+    self_name: &str,
+    storage_fields: &FxHashSet<String>,
+    mode: PurityMode,
+) -> bool {
     let mut locals = function
         .params
         .iter()
         .map(|param| param.name.clone())
         .collect::<FxHashSet<_>>();
-    stmts_are_pure(
+    PurityChecker {
         db,
-        &function.body,
         pure,
         self_name,
         storage_fields,
-        &mut locals,
-    )
-}
-
-fn stmts_are_pure<'db>(
-    db: &'db dyn Db,
-    stmts: &[MonoStmt<'db>],
-    pure: &FxHashSet<String>,
-    self_name: &str,
-    storage_fields: &FxHashSet<String>,
-    locals: &mut FxHashSet<String>,
-) -> bool {
-    for stmt in stmts {
-        if !stmt_is_pure(db, stmt, pure, self_name, storage_fields, locals) {
-            return false;
-        }
+        mode,
     }
-    true
+    .stmts(&function.body, &mut locals)
 }
 
-fn stmt_is_pure<'db>(
+struct PurityChecker<'a, 'db> {
     db: &'db dyn Db,
-    stmt: &MonoStmt<'db>,
-    pure: &FxHashSet<String>,
-    self_name: &str,
-    storage_fields: &FxHashSet<String>,
-    locals: &mut FxHashSet<String>,
-) -> bool {
-    match &stmt.kind {
-        MonoStmtKind::Let { id, init, .. } => {
-            if !init
-                .as_ref()
-                .is_none_or(|expr| expr_is_pure(expr, pure, self_name))
-            {
+    pure: &'a FxHashSet<String>,
+    self_name: &'a str,
+    storage_fields: &'a FxHashSet<String>,
+    mode: PurityMode,
+}
+
+impl<'db> PurityChecker<'_, 'db> {
+    fn stmts(&self, stmts: &[MonoStmt<'db>], locals: &mut FxHashSet<String>) -> bool {
+        for stmt in stmts {
+            if !self.stmt(stmt, locals) {
                 return false;
             }
-            locals.insert(id.name.clone());
-            true
         }
-        MonoStmtKind::Return(expr) => expr
-            .as_ref()
-            .is_none_or(|expr| expr_is_pure(expr, pure, self_name)),
-        MonoStmtKind::Expr(expr) => expr_is_pure(expr, pure, self_name),
-        MonoStmtKind::Assign { lhs, rhs, .. } => {
-            !lvalue_writes_storage(lhs, storage_fields, locals)
-                && expr_is_pure(lhs, pure, self_name)
-                && expr_is_pure(rhs, pure, self_name)
+        true
+    }
+
+    fn stmt(&self, stmt: &MonoStmt<'db>, locals: &mut FxHashSet<String>) -> bool {
+        match &stmt.kind {
+            MonoStmtKind::Let { id, init, .. } => {
+                if !init.as_ref().is_none_or(|expr| self.expr(expr)) {
+                    return false;
+                }
+                locals.insert(id.name.clone());
+                true
+            }
+            MonoStmtKind::Return(expr) => expr.as_ref().is_none_or(|expr| self.expr(expr)),
+            MonoStmtKind::Expr(expr) => self.expr(expr),
+            MonoStmtKind::Assign { lhs, rhs, .. } => {
+                !lvalue_writes_storage(lhs, self.storage_fields, locals)
+                    && self.expr(lhs)
+                    && self.expr(rhs)
+            }
+            MonoStmtKind::Match { scrutinees, arms } => {
+                scrutinees.iter().all(|expr| self.expr(expr))
+                    && arms.iter().all(|arm| {
+                        let mut arm_locals = locals.clone();
+                        for pat in &arm.pats {
+                            collect_pat_binders(pat, &mut arm_locals);
+                        }
+                        self.stmts(&arm.body, &mut arm_locals)
+                    })
+            }
+            MonoStmtKind::For {
+                init,
+                cond,
+                post,
+                body,
+            } => {
+                let mut loop_locals = locals.clone();
+                let mut post_locals = loop_locals.clone();
+                self.stmts(init, &mut loop_locals)
+                    && self.expr(cond)
+                    && self.stmts(post, &mut post_locals)
+                    && self.stmts(body, &mut loop_locals)
+            }
+            MonoStmtKind::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                let mut then_locals = locals.clone();
+                let mut else_locals = locals.clone();
+                self.expr(cond)
+                    && self.stmts(then_body, &mut then_locals)
+                    && else_body
+                        .as_ref()
+                        .is_none_or(|body| self.stmts(body, &mut else_locals))
+            }
+            MonoStmtKind::Block(body) => {
+                let mut block_locals = locals.clone();
+                self.stmts(body, &mut block_locals)
+            }
+            MonoStmtKind::Assembly(body) => match self.mode {
+                PurityMode::Evaluation => asm_is_interpretable(self.db, body),
+                PurityMode::Comptime => asm_is_comptime_pure(self.db, body),
+            },
+            MonoStmtKind::Break | MonoStmtKind::Continue => true,
+            MonoStmtKind::Error => false,
         }
-        MonoStmtKind::Match { scrutinees, arms } => {
-            scrutinees
-                .iter()
-                .all(|expr| expr_is_pure(expr, pure, self_name))
-                && arms.iter().all(|arm| {
-                    let mut arm_locals = locals.clone();
-                    for pat in &arm.pats {
-                        collect_pat_binders(pat, &mut arm_locals);
-                    }
-                    stmts_are_pure(
-                        db,
-                        &arm.body,
-                        pure,
-                        self_name,
-                        storage_fields,
-                        &mut arm_locals,
-                    )
-                })
-        }
-        MonoStmtKind::For {
-            init,
-            cond,
-            post,
-            body,
-        } => {
-            let mut loop_locals = locals.clone();
-            let mut post_locals = loop_locals.clone();
-            stmts_are_pure(db, init, pure, self_name, storage_fields, &mut loop_locals)
-                && expr_is_pure(cond, pure, self_name)
-                && stmts_are_pure(db, post, pure, self_name, storage_fields, &mut post_locals)
-                && stmts_are_pure(db, body, pure, self_name, storage_fields, &mut loop_locals)
-        }
-        MonoStmtKind::If {
-            cond,
-            then_body,
-            else_body,
-        } => {
-            let mut then_locals = locals.clone();
-            let mut else_locals = locals.clone();
-            expr_is_pure(cond, pure, self_name)
-                && stmts_are_pure(
-                    db,
-                    then_body,
-                    pure,
-                    self_name,
-                    storage_fields,
-                    &mut then_locals,
-                )
-                && else_body.as_ref().is_none_or(|body| {
-                    stmts_are_pure(db, body, pure, self_name, storage_fields, &mut else_locals)
-                })
-        }
-        MonoStmtKind::Block(body) => {
-            let mut block_locals = locals.clone();
-            stmts_are_pure(db, body, pure, self_name, storage_fields, &mut block_locals)
-        }
-        MonoStmtKind::Assembly(body) => asm_is_interpretable(db, body),
-        MonoStmtKind::Break | MonoStmtKind::Continue => true,
-        MonoStmtKind::Error => false,
+    }
+
+    fn expr(&self, expr: &MonoExpr<'db>) -> bool {
+        expr_is_pure_with_self(expr, self.pure, Some(self.self_name))
     }
 }
 
-fn expr_is_pure(expr: &MonoExpr<'_>, pure: &FxHashSet<String>, self_name: &str) -> bool {
+pub(super) fn expr_is_pure(expr: &MonoExpr<'_>, pure: &FxHashSet<String>) -> bool {
+    expr_is_pure_with_self(expr, pure, None)
+}
+
+fn expr_is_pure_with_self(
+    expr: &MonoExpr<'_>,
+    pure: &FxHashSet<String>,
+    self_name: Option<&str>,
+) -> bool {
     let mut visitor = ExprPurityVisitor {
         pure,
         self_name,
@@ -208,7 +259,7 @@ fn expr_is_pure(expr: &MonoExpr<'_>, pure: &FxHashSet<String>, self_name: &str) 
 
 struct ExprPurityVisitor<'pure> {
     pure: &'pure FxHashSet<String>,
-    self_name: &'pure str,
+    self_name: Option<&'pure str>,
     is_pure: bool,
 }
 
@@ -252,8 +303,8 @@ impl<'pure, 'db> Visitor<'db> for ExprPurityVisitor<'pure> {
     }
 }
 
-fn source_callee_is_pure(callee: &str, pure: &FxHashSet<String>, self_name: &str) -> bool {
-    callee == self_name || pure.contains(callee)
+fn source_callee_is_pure(callee: &str, pure: &FxHashSet<String>, self_name: Option<&str>) -> bool {
+    self_name == Some(callee) || pure.contains(callee)
 }
 
 pub(super) fn compute_write_effects<'db>(
@@ -550,9 +601,10 @@ mod tests {
     fn self_recursion_does_not_require_cloning_the_known_pure_set() {
         let pure = FxHashSet::from_iter(["known".to_owned()]);
 
-        assert!(source_callee_is_pure("candidate", &pure, "candidate"));
-        assert!(source_callee_is_pure("known", &pure, "candidate"));
-        assert!(!source_callee_is_pure("impure", &pure, "candidate"));
+        assert!(source_callee_is_pure("candidate", &pure, Some("candidate")));
+        assert!(source_callee_is_pure("known", &pure, Some("candidate")));
+        assert!(!source_callee_is_pure("impure", &pure, Some("candidate")));
+        assert!(!source_callee_is_pure("candidate", &pure, None));
         assert_eq!(pure, FxHashSet::from_iter(["known".to_owned()]));
     }
 }

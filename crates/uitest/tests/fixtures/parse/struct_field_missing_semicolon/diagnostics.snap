@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/struct_field_missing_semicolon/main.sol
+---
+error[SC0001]: parse error: unexpected `}`
+ --> /main/main.sol:1:24
+  |
+1 | struct Point { x: word }
+  |                        ^ unexpected token
+  |
+  = note: expecting `.`, `;`, or `<`
+  = note: while parsing type

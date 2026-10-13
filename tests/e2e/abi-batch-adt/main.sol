@@ -32,27 +32,19 @@ enum Signature { ECDSA(bytes32, bytes32), Contract(address) }
 enum Batch { Queue(Operation, Signature), Execute(uint256, memory<bytes>) }
 
 // Address added by an AddSigner op (address(0) for a RemoveSigner).
-function addedSigner(op: Operation) returns (address) {
-    match (op) {
-case Operation.AddSigner(a) {
-return a;
-}
-case Operation.RemoveSigner(_) {
-return address(0);
-}
-}
+function addedSigner(op : Operation) returns (address) {
+    match (op ) {
+      case Operation.AddSigner(a)    { return a;
+      } case Operation.RemoveSigner(_) { return address(0);
+    } }
 }
 
 // Verifying contract address of a Contract signature (address(0) for ECDSA).
-function contractVerifier(sig: Signature) returns (address) {
-    match (sig) {
-case Signature.Contract(a) {
-return a;
-}
-case Signature.ECDSA(_, _) {
-return address(0);
-}
-}
+function contractVerifier(sig : Signature) returns (address) {
+    match (sig ) {
+      case Signature.Contract(a) { return a;
+      } case Signature.ECDSA(_, _) { return address(0);
+    } }
 }
 
 contract BatchDecoder {
@@ -60,30 +52,22 @@ contract BatchDecoder {
 
   // From a Queue(AddSigner(a), Contract(c)) element, return (a, c): the signer
   // being added and the contract that verifies the queued action.
-  function queueSigner(items: calldata<array<Batch>>, i: uint256) public returns (address, address) {
+  function queueSigner(items : calldata<array<Batch>>, i : uint256) public returns ((address, address)) {
     let b : Batch = items[i];
-    match (b) {
-case Batch.Queue(op, sig) {
-return (addedSigner(op), contractVerifier(sig));
-}
-case Batch.Execute(_, _) {
-return (address(0), address(0));
-}
-}
+    match (b ) {
+      case Batch.Queue(op, sig) { return (addedSigner(op), contractVerifier(sig));
+      } case Batch.Execute(_, _)  { return (address(0), address(0));
+    } }
   }
 
   // The payload bytes carried by an Execute element.
-  function execPayload(items: calldata<array<Batch>>, i: uint256) public returns (memory<bytes>) {
+  function execPayload(items : calldata<array<Batch>>, i : uint256) public returns (memory<bytes>) {
     let b : Batch = items[i];
     let out : memory<bytes>;
-    match (b) {
-case Batch.Execute(_, payload) {
-out = payload;
-}
-case Batch.Queue(_, _) {
-revertEmpty();
-}
-}
+    match (b ) {
+      case Batch.Execute(_, payload) { out = payload;
+      } case Batch.Queue(_, _)         { revertEmpty();
+    } }
     return out;
   }
 }

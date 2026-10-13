@@ -10,7 +10,9 @@ mod abi;
 mod abi_json;
 mod desugar;
 mod dispatch;
+pub(crate) mod dispatch_abi;
 mod helpers;
+pub(crate) mod std_abi;
 
 pub use abi::{AbiParam, AbiSelector, AbiSignature, AbiType, abi_selector};
 pub use abi_json::contract_abi_json;

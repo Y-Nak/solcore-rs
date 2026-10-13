@@ -1,0 +1,6 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/ok_array_implicit/main.sol
+---
+no diagnostics

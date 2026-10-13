@@ -12,22 +12,8 @@ pub(super) struct ItemScopeBuilder<'db> {
     diagnostics: Vec<NameresDiagnostic>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TypeDeclFamily {
-    Alias,
-    Adt,
-    Class,
-    Contract,
-}
-
 enum DuplicatePolicy<'a> {
-    SingleSpan {
-        context: Option<&'a str>,
-    },
-    TypeFamilies {
-        family: TypeDeclFamily,
-        context: Option<&'a str>,
-    },
+    SingleSpan { context: Option<&'a str> },
     Silent,
 }
 
@@ -35,9 +21,6 @@ enum DuplicateIndex<'db> {
     SingleSpan {
         namespace: Namespace,
         names: FxHashMap<String, Span<'db>>,
-    },
-    TypeFamilies {
-        names: FxHashMap<String, Vec<(TypeDeclFamily, Span<'db>)>>,
     },
     Silent,
 }
@@ -53,15 +36,6 @@ impl<'db> ScopeTableBuilder<'db> {
             entries: Vec::new(),
             duplicate_index: DuplicateIndex::SingleSpan {
                 namespace,
-                names: FxHashMap::default(),
-            },
-        }
-    }
-
-    fn type_families() -> Self {
-        Self {
-            entries: Vec::new(),
-            duplicate_index: DuplicateIndex::TypeFamilies {
                 names: FxHashMap::default(),
             },
         }
@@ -123,25 +97,6 @@ impl<'db> ScopeTableBuilder<'db> {
                     names.insert(entry.name.clone(), entry.span);
                 }
             }
-            DuplicatePolicy::TypeFamilies { family, context } => {
-                let DuplicateIndex::TypeFamilies { names } = &mut self.duplicate_index else {
-                    unreachable!("type-family duplicate policy used with incompatible scope table")
-                };
-                let previous = names.entry(entry.name.clone()).or_default();
-                if let Some((_, previous_span)) = previous.iter().find(|(previous_family, _)| {
-                    !type_decl_families_can_share(*previous_family, family)
-                }) {
-                    diagnostics.push(duplicate_diagnostic(
-                        db,
-                        Namespace::Type,
-                        &entry.name,
-                        entry.span,
-                        *previous_span,
-                        context,
-                    ));
-                }
-                previous.push((family, entry.span));
-            }
             DuplicatePolicy::Silent => {}
         }
     }
@@ -152,7 +107,7 @@ impl<'db> ItemScopeBuilder<'db> {
         Self {
             db,
             module,
-            types: ScopeTableBuilder::type_families(),
+            types: ScopeTableBuilder::single_span(Namespace::Type),
             terms: ScopeTableBuilder::single_span(Namespace::Term),
             modules: ScopeTableBuilder::silent(),
             ctor_lists: Vec::new(),
@@ -197,7 +152,6 @@ impl<'db> ItemScopeBuilder<'db> {
         name: SpannedElem<'db, Ident<'db>>,
         resolution: Resolution<'db>,
         contract: Option<&mut ContractScopeBuilder<'db>>,
-        family: TypeDeclFamily,
     ) {
         let text = ident_text_str(self.db, &name).to_owned();
         if let Some(contract) = contract {
@@ -208,10 +162,7 @@ impl<'db> ItemScopeBuilder<'db> {
         self.types.push(
             self.db,
             &mut self.diagnostics,
-            DuplicatePolicy::TypeFamilies {
-                family,
-                context: None,
-            },
+            DuplicatePolicy::SingleSpan { context: None },
             ScopeEntry {
                 name: text,
                 span,
@@ -291,7 +242,6 @@ impl<'db> ItemScopeBuilder<'db> {
                 kind: DefResolutionKind::TypeAlias,
             },
             contract,
-            TypeDeclFamily::Alias,
         );
     }
 
@@ -306,7 +256,6 @@ impl<'db> ItemScopeBuilder<'db> {
                 kind: DefResolutionKind::Adt,
             },
             contract.as_deref_mut(),
-            TypeDeclFamily::Adt,
         );
         for (index, ctor) in def.ctors(self.db).iter().enumerate() {
             let index = CtorIndex::from_usize(index);
@@ -351,7 +300,6 @@ impl<'db> ItemScopeBuilder<'db> {
                 kind: DefResolutionKind::Class,
             },
             None,
-            TypeDeclFamily::Class,
         );
         for method in def.methods(self.db) {
             let method_name = ident_text_str(self.db, &method.name).to_owned();
@@ -376,7 +324,6 @@ impl<'db> ItemScopeBuilder<'db> {
                 kind: DefResolutionKind::Contract,
             },
             None,
-            TypeDeclFamily::Contract,
         );
         let mut contract =
             ContractScopeBuilder::new(self.db, def.def_id_value(self.db), contract_name);
@@ -441,14 +388,6 @@ impl<'db> ItemScopeBuilder<'db> {
             },
         );
     }
-}
-
-fn type_decl_families_can_share(left: TypeDeclFamily, right: TypeDeclFamily) -> bool {
-    matches!(
-        (left, right),
-        (TypeDeclFamily::Adt, TypeDeclFamily::Contract)
-            | (TypeDeclFamily::Contract, TypeDeclFamily::Adt)
-    )
 }
 
 struct ContractScopeBuilder<'db> {

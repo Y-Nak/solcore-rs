@@ -7,11 +7,15 @@ the canonical `.sol` syntax.
 Sources accepted by the reference frontend live under `ok/test/examples/`;
 reference failures and timeouts live under `fail/test/examples/`.
 
-The standard-library sources in `ok/std/` are the syntax-migrated 2f372bde
-snapshot. They are byte-identical to [`std/`](../../../../../std/); see
+The standard-library sources in `ok/std/` track the current `a7b7afb0`
+snapshot, independently of these historical examples/verdicts. They are byte-identical to [`std/`](../../../../../std/); see
 [`std/README.md`](../../../../../std/README.md) for the synchronization
 policy. The `test/imports/` and `known-diagnostic-gaps/` trees are Rust-specific
 regressions and are not part of the reference example snapshot.
+
+The current compatibility target and focused latest-upstream regressions are
+recorded in [`SEMANTIC_DIFFERENCES.md`](../../../../../SEMANTIC_DIFFERENCES.md).
+Do not relabel this historical verdict ledger as a run of the latest compiler.
 
 ## Reference verdicts
 

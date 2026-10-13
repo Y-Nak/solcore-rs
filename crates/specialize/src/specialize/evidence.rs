@@ -59,6 +59,10 @@ impl<'db> Driver<'db> {
                 Some(self.enqueue(key, depth + 1))
             }
             Evidence::Superclass { pred, child, .. } => {
+                if let Some(evidence) = self.superclass_instance_evidence(pred, &child) {
+                    return self
+                        .resolve_class_method_call(method, evidence, target_ty, call_span, depth);
+                }
                 if let Some(evidence) = self.solve_closed_pred(pred, Some(call_span))
                     && !matches!(evidence, Evidence::Superclass { .. })
                 {
@@ -121,6 +125,23 @@ impl<'db> Driver<'db> {
                 DerivedAbiKey {
                     adt,
                     family: DerivedAbiFamily::Attribs,
+                    word_reader: None,
+                    method: method.to_owned(),
+                    pred,
+                    target_ty,
+                    sub_evidence,
+                },
+                call_span,
+                depth,
+            ),
+            Evidence::Derived {
+                kind: DerivedClauseKind::AbiEncode { adt },
+                pred,
+                sub_evidence,
+            } => self.specialize_derived_abi(
+                DerivedAbiKey {
+                    adt,
+                    family: DerivedAbiFamily::Encode,
                     word_reader: None,
                     method: method.to_owned(),
                     pred,
@@ -203,6 +224,47 @@ impl<'db> Driver<'db> {
                 None
             }
             Evidence::Derived { .. } => None,
+        }
+    }
+
+    /// A superclass method belongs to its own instance, which can occur among
+    /// the selected child instance's prerequisites. For example, `Num<word>`
+    /// carries `Typedef<word, word>` evidence; `rep` is implemented there, not
+    /// by the `Num` instance itself.
+    fn superclass_instance_evidence(
+        &self,
+        pred: Pred<'db>,
+        evidence: &Evidence<'db>,
+    ) -> Option<Evidence<'db>> {
+        match evidence {
+            Evidence::Instance {
+                instance,
+                args,
+                sub_evidence,
+            } => {
+                let info = self.instances.get(instance)?;
+                let head = TySubst::from_args(args.clone()).apply_pred(self.db, info.head);
+                if head == pred {
+                    return Some(evidence.clone());
+                }
+                sub_evidence
+                    .iter()
+                    .find_map(|child| self.superclass_instance_evidence(pred, child))
+            }
+            Evidence::Derived {
+                pred: derived_pred,
+                sub_evidence,
+                ..
+            } => {
+                if *derived_pred == pred {
+                    return Some(evidence.clone());
+                }
+                sub_evidence
+                    .iter()
+                    .find_map(|child| self.superclass_instance_evidence(pred, child))
+            }
+            Evidence::Superclass { child, .. } => self.superclass_instance_evidence(pred, child),
+            Evidence::Builtin { .. } => None,
         }
     }
 

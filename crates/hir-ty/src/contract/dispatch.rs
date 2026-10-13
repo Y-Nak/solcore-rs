@@ -15,16 +15,20 @@ use super::{
         abi_selector, abi_type_contains_user_adt, contract_diag_unsupported_abi_type,
         method_signature_string,
     },
+    dispatch_abi::{MethodParts, constructor_abi_roots, method_abi_roots},
     helpers::{
         find_contract_by_def, function_type_vars, ident_text, lower_normalized_function,
         param_names, resolve_contract_item_types, type_var_bindings,
     },
+    std_abi::{AbiClass, StdAbiType},
 };
 use crate::{
     ClassId, ClauseOrigin, Db, DerivedClauseKind, Pred, PredKind, TraitEnvId, Ty, TyCtor, TyKind,
     TypeckDiagnostic, UserTyCtorKind,
-    solver::{Evidence, Solution, canonical_goal, solve_report, solver_answer_is_closed_over_goal},
-    support::canonical_std_adt_def,
+    solver::{
+        AbiEvidenceRole, Evidence, Solution, canonical_goal, solve_report,
+        solver_answer_is_closed_over_goal,
+    },
 };
 
 const MAX_DERIVED_ABI_EVIDENCE: usize = 1_024;
@@ -224,8 +228,8 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
             else {
                 return None;
             };
-            let class_name = canonical_abi_class_name(db, *class)?;
-            let generic_adt = if class_name == "Generic" {
+            let class = AbiClass::from_def(db, *class)?;
+            let generic_adt = if class == AbiClass::Generic {
                 match main.kind(db) {
                     TyKind::Named {
                         ctor: TyCtor::User(user),
@@ -236,7 +240,7 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
             } else {
                 None
             };
-            Some((*instance, class_name, generic_adt))
+            Some((*instance, class, generic_adt))
         })
         .collect::<Vec<_>>();
     if manual_evidence.is_empty() {
@@ -244,7 +248,7 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
     }
     let manual_instances = manual_evidence
         .iter()
-        .map(|(instance, class_name, _)| (*instance, *class_name))
+        .map(|(instance, class, _)| (*instance, *class))
         .collect::<FxHashMap<_, _>>();
     let classes = clauses
         .iter()
@@ -256,7 +260,7 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
             else {
                 return None;
             };
-            Some((canonical_abi_class_name(db, *class)?, *class))
+            Some((AbiClass::from_def(db, *class)?, *class))
         })
         .collect::<FxHashMap<_, _>>();
 
@@ -300,68 +304,57 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
                 exposed_tys.push(lowered.ret);
             }
             let args = crate::lower::product_ty(db, lowered.params.iter().copied());
-            let mut roots = Vec::new();
-            let mut push_root = |class_name, main, other_args| {
-                if let Some(class) = classes.get(class_name) {
-                    roots.push((
-                        class_name == "SigString",
-                        Pred::in_class(db, ClassId::User(*class), main, other_args),
-                    ));
-                }
-            };
-            let reader = if function.kind(db) == FuncKind::Function {
-                // Selector.compute signs the generated name and input product,
-                // while ExecMethod decodes inputs and encodes the return value.
-                push_root("SigString", args, Vec::new());
+            let roots = if function.kind(db) == FuncKind::Function {
                 let name = crate::contract_dispatch_name_type_name(
                     &contract_name,
                     &ident_text(db, &sig.name),
                 );
-                if let Some(name_ty) =
-                    prepared_module
-                        .items(db)
-                        .iter()
-                        .find_map(|item| match item {
-                            Item::AdtDef(adt)
-                                if ident_text(db, &adt.name_elem(db)) == name
-                                    && adt.def_id_value(db).fingerprint(db).as_deref()
-                                        == Some("solcore.generated.std_dispatch.name_type") =>
-                            {
-                                Some(Ty::named(
-                                    db,
-                                    TyCtor::User(crate::UserTyCtor {
-                                        def: adt.def_id_value(db),
-                                        kind: UserTyCtorKind::Adt,
-                                    }),
-                                    Vec::new(),
-                                ))
-                            }
-                            _ => None,
-                        })
-                {
-                    push_root("SigString", name_ty, Vec::new());
-                }
-                push_root("ABIAttribs", args, Vec::new());
-                push_root("ABIAttribs", lowered.ret, Vec::new());
-                push_root("ABIEncode", lowered.ret, Vec::new());
-                Some("CalldataWordReader")
+                let name_ty = prepared_module
+                    .items(db)
+                    .iter()
+                    .find_map(|item| match item {
+                        Item::AdtDef(adt)
+                            if ident_text(db, &adt.name_elem(db)) == name
+                                && adt.def_id_value(db).fingerprint(db).as_deref()
+                                    == Some("solcore.generated.std_dispatch.name_type") =>
+                        {
+                            Some(Ty::named(
+                                db,
+                                TyCtor::User(crate::UserTyCtor {
+                                    def: adt.def_id_value(db),
+                                    kind: UserTyCtorKind::Adt,
+                                }),
+                                Vec::new(),
+                            ))
+                        }
+                        _ => None,
+                    });
+                let payability = if sig.payable.is_some() {
+                    StdAbiType::Payable
+                } else {
+                    StdAbiType::NonPayable
+                };
+                method_abi_roots(
+                    db,
+                    &classes,
+                    MethodParts {
+                        name: name_ty.unwrap_or_else(|| Ty::unknown(db)),
+                        payability: payability
+                            .ty(db, Vec::new())
+                            .unwrap_or_else(|| Ty::unknown(db)),
+                        args,
+                        returns: lowered.ret,
+                        implementation: Ty::function(db, lowered.params.clone(), lowered.ret),
+                    },
+                )
             } else if !lowered.params.is_empty() {
-                // Constructor argument copying calls abi_decode with a memory
-                // reader. An empty constructor has no decoding obligation.
-                Some("MemoryWordReader")
+                // Empty constructors do not emit an abi_decode call.
+                constructor_abi_roots(db, &classes, args)
             } else {
-                None
+                Vec::new()
             };
-            if let Some(reader) = reader
-                && let Some(reader) = canonical_std_adt_ty(db, reader, Vec::new())
-                && let Some(decoder) = canonical_std_adt_ty(db, "ABIDecoder", vec![args, reader])
-            {
-                push_root("ABIDecode", decoder, vec![args]);
-            }
-            let mut selected_manual = FxHashSet::default();
-            let mut visited_derived = FxHashSet::default();
-            let mut exhausted_derived = None;
-            for (selector, goal) in roots {
+            let mut manual = ManualAbiEvidence::new(db, &manual_instances);
+            for (role, goal) in roots {
                 let report = solve_report(db, trait_env, canonical_goal(db, goal));
                 if report.exhausted {
                     continue;
@@ -369,18 +362,10 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
                 if let Solution::Unique { subst, evidence } = report.solution
                     && solver_answer_is_closed_over_goal(db, goal, trait_env, &subst, &evidence)
                 {
-                    collect_manual_abi_evidence(
-                        db,
-                        &evidence,
-                        &manual_instances,
-                        selector,
-                        &mut selected_manual,
-                        &mut visited_derived,
-                        &mut exhausted_derived,
-                    );
+                    manual.collect(&evidence, role);
                 }
             }
-            if let Some(pred) = exhausted_derived {
+            if let Some(pred) = manual.exhausted_derived {
                 diagnostics.push(
                     TypeckDiagnostic::SolverFuelExhausted {
                         span: LabelSpan::from_span(db, sig.span),
@@ -389,8 +374,8 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
                     .lower(),
                 );
             }
-            for (instance, class_name, generic_adt) in &manual_evidence {
-                if *class_name != "Generic" && !selected_manual.contains(instance) {
+            for (instance, class, generic_adt) in &manual_evidence {
+                if *class != AbiClass::Generic && !manual.selected.contains(instance) {
                     continue;
                 }
                 if generic_adt.is_some_and(|adt| {
@@ -400,6 +385,7 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
                 }) {
                     continue;
                 }
+                let class_name = class.name();
                 let subject = generic_adt.map_or_else(
                     || format!("visible manual `{class_name}` evidence"),
                     |adt| {
@@ -433,140 +419,87 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
     diagnostics
 }
 
-fn canonical_std_adt_ty<'db>(db: &'db dyn Db, name: &str, args: Vec<Ty<'db>>) -> Option<Ty<'db>> {
-    canonical_std_adt_def(db, name).map(|def| {
-        Ty::named(
-            db,
-            TyCtor::User(crate::UserTyCtor {
-                def,
-                kind: UserTyCtorKind::Adt,
-            }),
-            args,
-        )
-    })
+/// Follows selected dictionaries, including representation and superclass
+/// subproofs. Signature roots own SigString evidence for method selectors and
+/// variant tags; execution roots own encoding, decoding, and layout evidence.
+/// All roots of one declaration share the same visited set and proof budget.
+struct ManualAbiEvidence<'db, 'a> {
+    db: &'db dyn Db,
+    manual_instances: &'a FxHashMap<DefId<'db>, AbiClass>,
+    selected: FxHashSet<DefId<'db>>,
+    visited_derived: FxHashSet<(DerivedClauseKind<'db>, Pred<'db>)>,
+    exhausted_derived: Option<Pred<'db>>,
 }
 
-/// Follows selected dictionaries, including representation and superclass
-/// subproofs. Selector roots only own SigString evidence; execution roots own
-/// encoding, decoding, and layout evidence.
-fn collect_manual_abi_evidence<'db>(
-    db: &'db dyn Db,
-    evidence: &Evidence<'db>,
-    manual_instances: &FxHashMap<DefId<'db>, &'static str>,
-    selector: bool,
-    selected: &mut FxHashSet<DefId<'db>>,
-    visited_derived: &mut FxHashSet<(DerivedClauseKind<'db>, Pred<'db>)>,
-    exhausted_derived: &mut Option<Pred<'db>>,
-) {
-    match evidence {
-        Evidence::Instance {
-            instance,
-            sub_evidence,
-            ..
-        } => {
-            if let Some(class_name) = manual_instances.get(instance)
-                && if selector {
-                    *class_name == "SigString"
-                } else {
-                    matches!(*class_name, "ABIAttribs" | "ABIEncode" | "ABIDecode")
-                }
-            {
-                selected.insert(*instance);
-            }
-            for evidence in sub_evidence {
-                collect_manual_abi_evidence(
-                    db,
-                    evidence,
-                    manual_instances,
-                    selector,
-                    selected,
-                    visited_derived,
-                    exhausted_derived,
-                );
-            }
+impl<'db, 'a> ManualAbiEvidence<'db, 'a> {
+    fn new(db: &'db dyn Db, manual_instances: &'a FxHashMap<DefId<'db>, AbiClass>) -> Self {
+        Self {
+            db,
+            manual_instances,
+            selected: FxHashSet::default(),
+            visited_derived: FxHashSet::default(),
+            exhausted_derived: None,
         }
-        Evidence::Derived {
-            kind,
-            pred,
-            sub_evidence,
-        } => {
-            for evidence in sub_evidence {
-                collect_manual_abi_evidence(
-                    db,
-                    evidence,
-                    manual_instances,
-                    selector,
-                    selected,
-                    visited_derived,
-                    exhausted_derived,
-                );
+    }
+
+    fn collect(&mut self, evidence: &Evidence<'db>, role: AbiEvidenceRole) {
+        match evidence {
+            Evidence::Instance {
+                instance,
+                sub_evidence,
+                ..
+            } => {
+                if let Some(class) = self.manual_instances.get(instance)
+                    && class.evidence_role() == Some(role)
+                {
+                    self.selected.insert(*instance);
+                }
+                for evidence in sub_evidence {
+                    self.collect(evidence, role);
+                }
             }
-            // Derived ABI bodies resolve their representation dictionaries in
-            // the defining module. Bound that additional proof graph just like
-            // the solver bounds type-growing tables; cyclic source layouts
-            // retain their existing unsupported-ABI diagnostic.
-            if !selector
-                && matches!(
-                    kind,
-                    DerivedClauseKind::AbiAttribs { .. } | DerivedClauseKind::AbiDecode { .. }
-                )
-                && !visited_derived.contains(&(*kind, *pred))
-            {
-                if visited_derived.len() == MAX_DERIVED_ABI_EVIDENCE {
-                    exhausted_derived.get_or_insert(*pred);
-                } else {
-                    visited_derived.insert((*kind, *pred));
-                    match crate::solver::derived_abi_delegated_evidence(db, evidence) {
-                        Ok(Some(delegated)) => collect_manual_abi_evidence(
-                            db,
-                            &delegated,
-                            manual_instances,
-                            selector,
-                            selected,
-                            visited_derived,
-                            exhausted_derived,
-                        ),
-                        Err(pred) => {
-                            exhausted_derived.get_or_insert(pred);
+            Evidence::Derived {
+                kind,
+                pred,
+                sub_evidence,
+            } => {
+                for evidence in sub_evidence {
+                    self.collect(evidence, role);
+                }
+                // Derived ABI bodies resolve their representation dictionaries in
+                // the defining module. Bound that additional proof graph just like
+                // the solver bounds type-growing tables; cyclic source layouts
+                // retain their existing unsupported-ABI diagnostic.
+                if role == AbiEvidenceRole::Codec
+                    && matches!(
+                        kind,
+                        DerivedClauseKind::AbiAttribs { .. }
+                            | DerivedClauseKind::AbiEncode { .. }
+                            | DerivedClauseKind::AbiDecode { .. }
+                    )
+                    && !self.visited_derived.contains(&(*kind, *pred))
+                {
+                    if self.visited_derived.len() == MAX_DERIVED_ABI_EVIDENCE {
+                        self.exhausted_derived.get_or_insert(*pred);
+                    } else {
+                        self.visited_derived.insert((*kind, *pred));
+                        match crate::solver::derived_abi_delegated_evidence(self.db, evidence) {
+                            Ok(Some(dependencies)) => {
+                                for (role, dependency) in dependencies {
+                                    self.collect(&dependency, role);
+                                }
+                            }
+                            Err(pred) => {
+                                self.exhausted_derived.get_or_insert(pred);
+                            }
+                            Ok(None) => {}
                         }
-                        Ok(None) => {}
                     }
                 }
             }
+            Evidence::Superclass { child, .. } => self.collect(child, role),
+            Evidence::Builtin { .. } => {}
         }
-        Evidence::Superclass { child, .. } => {
-            collect_manual_abi_evidence(
-                db,
-                child,
-                manual_instances,
-                selector,
-                selected,
-                visited_derived,
-                exhausted_derived,
-            );
-        }
-        Evidence::Builtin { .. } => {}
-    }
-}
-
-fn canonical_abi_class_name(db: &dyn Db, class: DefId<'_>) -> Option<&'static str> {
-    let name = class.name(db)?;
-    let module = module_id_for_source_file(db, class.file(db))?;
-    if module.library(db) != &LibraryId::Std {
-        return None;
-    }
-    match (module.logical_path(db).as_slice(), name.as_str()) {
-        ([path], "Generic") if path == "Generic" => Some("Generic"),
-        ([path], "ABIAttribs" | "ABIEncode" | "ABIDecode") if path == "std" => {
-            match name.as_str() {
-                "ABIAttribs" => Some("ABIAttribs"),
-                "ABIEncode" => Some("ABIEncode"),
-                "ABIDecode" => Some("ABIDecode"),
-                _ => None,
-            }
-        }
-        ([path], "SigString") if path == "dispatch" => Some("SigString"),
-        _ => None,
     }
 }
 
@@ -599,7 +532,7 @@ fn visible_abi_adt_evidence<'db>(db: &'db dyn Db, module: Module<'db>) -> AbiAdt
                 else {
                     continue;
                 };
-                if canonical_abi_class_name(db, *class) != Some("Generic") {
+                if AbiClass::from_def(db, *class) != Some(AbiClass::Generic) {
                     continue;
                 }
                 if let TyKind::Named {

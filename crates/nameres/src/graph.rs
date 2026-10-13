@@ -33,12 +33,64 @@ pub fn module_imports<'db>(db: &'db dyn Db, file: SourceFile) -> ModuleImports<'
         }
     }
 
+    // Array syntax uses compiler-owned runtime helpers. Load their defining
+    // module and instance evidence without opening any source-level names.
+    if let Some(span) = array_literal_span(db, module)
+        && !import_refs
+            .iter()
+            .any(|path| path.external.is_none() && path_segments(db, path) == ["std"])
+    {
+        import_refs.push(path_ref_from_text(db, span, "std"));
+    }
+
     ModuleImports {
         imports,
         exports,
         import_refs,
         export_refs,
     }
+}
+
+fn array_literal_span<'db>(db: &'db dyn Db, module: Module<'db>) -> Option<Span<'db>> {
+    use hir::ast::function::{Expr, ExprKind};
+
+    fn expression<'db>(db: &'db dyn Db, expr: &Expr<'db>) -> Option<Span<'db>> {
+        match &expr.kind {
+            ExprKind::Array(_) => Some(expr.span),
+            ExprKind::Lambda { body, .. } => body_span(db, *body),
+            _ => None,
+        }
+    }
+    fn body_span<'db>(db: &'db dyn Db, body: FuncBody<'db>) -> Option<Span<'db>> {
+        body.exprs(db)
+            .iter()
+            .find_map(|(_, expr)| expression(db, expr))
+    }
+    fn function_span<'db>(db: &'db dyn Db, function: FunctionDef<'db>) -> Option<Span<'db>> {
+        function.body(db).and_then(|body| body_span(db, body))
+    }
+    module.items(db).iter().find_map(|item| match item {
+        Item::FunctionDef(function) => function_span(db, *function),
+        Item::InstanceDef(instance) => instance
+            .methods(db)
+            .iter()
+            .find_map(|f| function_span(db, *f)),
+        Item::ContractDef(contract) => contract
+            .fields(db)
+            .iter()
+            .find_map(|field| {
+                field
+                    .init()
+                    .and_then(|init| init.exprs.iter().find_map(|(_, expr)| expression(db, expr)))
+            })
+            .or_else(|| {
+                contract.items(db).iter().find_map(|item| match item {
+                    ContractItem::FunctionDef(function) => function_span(db, *function),
+                    _ => None,
+                })
+            }),
+        _ => None,
+    })
 }
 
 /// Builds the import/export reachability graph from `entry`.

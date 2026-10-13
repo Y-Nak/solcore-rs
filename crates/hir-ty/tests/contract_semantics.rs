@@ -29,6 +29,7 @@ use solcore_hir_ty::{
 #[derive(Default, Clone)]
 struct TestDb {
     storage: salsa::Storage<Self>,
+    module_tree: Option<ModuleTree>,
     module_fs_snapshot: Option<ModuleFsSnapshot>,
     module_file_snapshot: Option<ModuleFileSnapshot>,
     module_files: FxHashMap<ModuleKey, SourceFile>,
@@ -77,12 +78,14 @@ impl parser::Db for TestDb {}
 #[salsa::db]
 impl nameres::Db for TestDb {
     fn module_tree(&self) -> ModuleTree {
-        ModuleTree::new(
-            self,
-            PathBuf::from("/main"),
-            PathBuf::from("/std"),
-            BTreeMap::new(),
-        )
+        self.module_tree.unwrap_or_else(|| {
+            ModuleTree::new(
+                self,
+                PathBuf::from("/main"),
+                PathBuf::from("/std"),
+                BTreeMap::new(),
+            )
+        })
     }
 
     fn module_fs_snapshot(&self) -> ModuleFsSnapshot {
@@ -272,6 +275,63 @@ fn diagnostics_for_module(db: &TestDb, key: &ModuleKey) -> Vec<Diagnostic> {
         .iter()
         .map(|diagnostic| diagnostic.lower(db))
         .collect()
+}
+
+#[test]
+fn canonical_dispatch_under_main_root_preserves_manual_abi_diagnostics() {
+    let source = include_str!(
+        "../../uitest/tests/fixtures/typeck/visible_manual_std_abi_instances/main.sol"
+    )
+    .replace("import * from std.dispatch;", "import * from dispatch;");
+    let mut db = TestDb::default();
+    db.module_tree = Some(ModuleTree::new(
+        &db,
+        PathBuf::from("/std"),
+        PathBuf::from("/std"),
+        BTreeMap::new(),
+    ));
+    let entry = ModuleKey {
+        library: LibraryId::Main,
+        logical_path: vec!["main".to_owned()],
+    };
+    insert_module_source(&mut db, entry.clone(), "/std/main.sol", &source);
+    insert_real_std_modules(&mut db);
+    // The same canonical dispatch source is reached through the main root,
+    // while its std imports retain their standard-library identities.
+    let dispatch_path = vec!["dispatch".to_owned()];
+    let dispatch = db
+        .module_files
+        .remove(&ModuleKey {
+            library: LibraryId::Std,
+            logical_path: dispatch_path.clone(),
+        })
+        .expect("canonical dispatch source");
+    db.module_files.insert(
+        ModuleKey {
+            library: LibraryId::Main,
+            logical_path: dispatch_path,
+        },
+        dispatch,
+    );
+    db.sync_inputs();
+
+    let module = module_id_from_key(&db, &entry);
+    let resolution_diagnostics = nameres::reachable_diagnostics(&db, module);
+    assert!(
+        resolution_diagnostics.is_empty(),
+        "{resolution_diagnostics:?}"
+    );
+    let diagnostics = diagnostics_for_module(&db, &entry);
+    for class in ["ABIAttribs", "ABIEncode", "ABIDecode"] {
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_deref() == Some("SC0231")
+                    && diagnostic.message.contains(&format!("manual `{class}`"))
+            }),
+            "missing {class} diagnostic: {diagnostics:?}"
+        );
+    }
+    assert_eq!(diagnostics.len(), 3, "{diagnostics:?}");
 }
 
 #[test]

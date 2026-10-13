@@ -1,0 +1,7 @@
+---
+source: crates/test-utils/src/lib.rs
+assertion_line: 409
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/ok_comptime_numeric_materialization/main.sol
+---
+no diagnostics

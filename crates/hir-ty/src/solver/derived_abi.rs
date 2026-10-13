@@ -1,6 +1,13 @@
 use super::derived_generic::AdtDeriveInfo;
 use super::*;
 
+/// Distinguishes selector and variant-tag dictionaries from codec dictionaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum AbiEvidenceRole {
+    Signature,
+    Codec,
+}
+
 /// Definitions needed to synthesize the ABI instances backed by a compiler-
 /// owned `Generic` representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
@@ -9,6 +16,9 @@ pub(super) struct DerivedAbiClauseSource<'db> {
     pub marker: DefId<'db>,
     /// `ABIAttribs` class.
     pub abi_attribs: DefId<'db>,
+    /// Optional codec context for variant-aware multi-constructor instances.
+    pub abi_encode: Option<DefId<'db>>,
+    pub sig_string: Option<DefId<'db>>,
     /// `ABIDecode` class.
     pub abi_decode: DefId<'db>,
     /// `WordReader` class.
@@ -70,6 +80,8 @@ fn abi_clause_source_from_lookup<'db>(
     Some(DerivedAbiClauseSource {
         marker,
         abi_attribs,
+        abi_encode: lookup("ABIEncode"),
+        sig_string: lookup("SigString"),
         abi_decode,
         word_reader,
         abi_decoder,
@@ -130,14 +142,14 @@ fn adt_named<'db>(db: &'db dyn Db, def: DefId<'db>, name: &str) -> Option<()> {
         .then_some(())
 }
 
-/// Solves the representation obligation used by a selected derived ABI method.
-/// Its declared subproofs describe type-parameter dictionaries; the method body
-/// additionally delegates to the Generic representation in the ADT's defining
-/// environment, with those dictionaries replayed for any used local givens.
+/// Solves the dictionaries actually used by a selected derived ABI method.
+/// Product codecs delegate to their Generic representation; variant codecs use
+/// each constructor's product, layout, and signature dictionaries separately.
+/// Local givens are replayed using the selected type-parameter dictionaries.
 pub(crate) fn derived_abi_delegated_evidence<'db>(
     db: &'db dyn Db,
     evidence: &Evidence<'db>,
-) -> Result<Option<Evidence<'db>>, Pred<'db>> {
+) -> Result<Option<Vec<(AbiEvidenceRole, Evidence<'db>)>>, Pred<'db>> {
     let mut exhausted = None;
     let evidence = try_derived_abi_delegated_evidence(db, evidence, &mut exhausted);
     match exhausted {
@@ -150,7 +162,7 @@ fn try_derived_abi_delegated_evidence<'db>(
     db: &'db dyn Db,
     evidence: &Evidence<'db>,
     exhausted: &mut Option<Pred<'db>>,
-) -> Option<Evidence<'db>> {
+) -> Option<Vec<(AbiEvidenceRole, Evidence<'db>)>> {
     let Evidence::Derived {
         kind,
         pred,
@@ -163,7 +175,11 @@ fn try_derived_abi_delegated_evidence<'db>(
         return None;
     };
     let (adt, decoded, decoder, reader, word_reader) = match kind {
-        DerivedClauseKind::AbiAttribs { adt } if args.is_empty() => (*adt, *main, None, None, None),
+        DerivedClauseKind::AbiAttribs { adt } | DerivedClauseKind::AbiEncode { adt }
+            if args.is_empty() =>
+        {
+            (*adt, *main, None, None, None)
+        }
         DerivedClauseKind::AbiDecode { adt, word_reader } => {
             let [decoded] = args.as_slice() else {
                 return None;
@@ -244,40 +260,111 @@ fn try_derived_abi_delegated_evidence<'db>(
                 reader,
                 Vec::new(),
             ));
-            givens.extend(
-                ty_args
-                    .iter()
-                    .map(|ty| Pred::in_class(db, *class, decoder(*ty), vec![*ty])),
-            );
+            let source = visible_abi_clause_source(db, &imported)?;
+            let variants = sub_evidence.len() == 1 + ty_args.len() * 3;
+            for ty in ty_args {
+                givens.push(Pred::in_class(db, *class, decoder(*ty), vec![*ty]));
+                if variants && !ty_args.is_empty() {
+                    givens.push(Pred::in_class(
+                        db,
+                        ClassId::User(source.sig_string?),
+                        *ty,
+                        Vec::new(),
+                    ));
+                    givens.push(Pred::in_class(
+                        db,
+                        ClassId::User(source.abi_attribs),
+                        *ty,
+                        Vec::new(),
+                    ));
+                }
+            }
             Pred::in_class(db, *class, decoder(rep), vec![rep])
         } else {
-            givens.extend(
-                ty_args
-                    .iter()
-                    .map(|ty| Pred::in_class(db, *class, *ty, Vec::new())),
-            );
+            let source = visible_abi_clause_source(db, &imported)?;
+            for ty in ty_args {
+                if matches!(kind, DerivedClauseKind::AbiEncode { .. }) {
+                    for class in [source.abi_attribs, source.abi_encode?, source.sig_string?] {
+                        givens.push(Pred::in_class(db, ClassId::User(class), *ty, Vec::new()));
+                    }
+                } else {
+                    givens.push(Pred::in_class(db, *class, *ty, Vec::new()));
+                }
+            }
             Pred::in_class(db, *class, rep, Vec::new())
         };
     if givens.len() != sub_evidence.len() {
         return None;
     }
+    let source = visible_abi_clause_source(db, &imported)?;
+    let definition = parse_file_to_hir(db, adt.file(db)).module(db);
+    let info = local_adt_infos(db, definition)
+        .into_iter()
+        .find(|info| info.adt.def_id_value(db) == adt)?;
+    let variant_codec = info.adt.ctors(db).len() >= 2 && source.abi_encode.is_some();
+    let mut goals = Vec::new();
+    if variant_codec {
+        let plan = derived_generic_plan(db, definition, info.adt)?;
+        let mut fields = MatchSubst::default();
+        fields.merge(
+            db,
+            &Substitution {
+                values: ty_args
+                    .iter()
+                    .enumerate()
+                    .map(|(index, ty)| (index as u32, *ty))
+                    .collect(),
+            },
+        );
+        for arm in &plan.from_arms {
+            let product = fields.apply_ty(db, arm.product_rep);
+            goals.push((
+                AbiEvidenceRole::Codec,
+                Pred::in_class(db, ClassId::User(source.abi_attribs), product, vec![]),
+            ));
+            if !matches!(kind, DerivedClauseKind::AbiAttribs { .. }) {
+                let codec = if let (Some(decoder), Some(reader)) = (decoder, reader) {
+                    Pred::in_class(
+                        db,
+                        *class,
+                        Ty::named(db, decoder, vec![product, reader]),
+                        vec![product],
+                    )
+                } else {
+                    Pred::in_class(db, *class, product, vec![])
+                };
+                goals.push((AbiEvidenceRole::Codec, codec));
+                if let Some(signature) = source.sig_string {
+                    goals.push((
+                        AbiEvidenceRole::Signature,
+                        Pred::in_class(db, ClassId::User(signature), product, vec![]),
+                    ));
+                }
+            }
+        }
+    } else {
+        goals.push((AbiEvidenceRole::Codec, delegated));
+    }
     let env = trait_env_with_givens(db, base, givens.clone());
-    let report = solve_report(db, env, canonical_goal(db, delegated));
-    if report.exhausted {
-        *exhausted = Some(delegated);
-        return None;
-    }
-    let Solution::Unique { subst, evidence } = report.solution else {
-        return None;
-    };
-    if !solver_answer_is_closed_over_goal(db, delegated, env, &subst, &evidence) {
-        return None;
-    }
     let bindings = givens
         .into_iter()
         .zip(sub_evidence.iter().cloned())
         .collect::<Vec<_>>();
-    Some(replay_abi_evidence_bindings(evidence, &bindings))
+    let mut dependencies = Vec::new();
+    for (role, goal) in goals {
+        let report = solve_report(db, env, canonical_goal(db, goal));
+        if report.exhausted {
+            *exhausted = Some(goal);
+            return None;
+        }
+        let Solution::Unique { subst, evidence } = report.solution else {
+            continue;
+        };
+        if solver_answer_is_closed_over_goal(db, goal, env, &subst, &evidence) {
+            dependencies.push((role, replay_abi_evidence_bindings(evidence, &bindings)));
+        }
+    }
+    Some(dependencies)
 }
 
 fn replay_abi_evidence_bindings<'db>(
@@ -359,6 +446,28 @@ pub(super) fn push_derived_abi_clauses<'db>(
         origin: ClauseOrigin::Derived(DerivedClauseKind::AbiAttribs { adt }),
     });
 
+    // Missing SigString must fail codec specialization, never select legacy 0/1 tags.
+    let variant_codec = info.adt.ctors(db).len() >= 2 && source.abi_encode.is_some();
+    if variant_codec {
+        let encode = source.abi_encode.unwrap();
+        let contexts = [Some(source.abi_attribs), Some(encode), source.sig_string]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        clauses.push(ProgramClause {
+            binder_count: info.type_vars.len() as u32,
+            head: Pred::in_class(db, ClassId::User(encode), main, Vec::new()),
+            conditions: params
+                .iter()
+                .flat_map(|param| {
+                    contexts
+                        .iter()
+                        .map(|class| Pred::in_class(db, ClassId::User(*class), *param, Vec::new()))
+                })
+                .collect(),
+            origin: ClauseOrigin::Derived(DerivedClauseKind::AbiEncode { adt }),
+        });
+    }
     let reader = Ty::bound(db, info.type_vars.len() as u32);
     let decoder = |decoded| {
         Ty::named(
@@ -377,13 +486,20 @@ pub(super) fn push_derived_abi_clauses<'db>(
         reader,
         Vec::new(),
     ));
-    conditions.extend(params.iter().map(|param| {
-        Pred::in_class(
+    conditions.extend(params.iter().flat_map(|param| {
+        let mut preds = vec![Pred::in_class(
             db,
             ClassId::User(source.abi_decode),
             decoder(*param),
             vec![*param],
-        )
+        )];
+        if variant_codec && let Some(sig_string) = source.sig_string {
+            preds.extend(
+                [sig_string, source.abi_attribs]
+                    .map(|class| Pred::in_class(db, ClassId::User(class), *param, Vec::new())),
+            );
+        }
+        preds
     }));
     clauses.push(ProgramClause {
         binder_count: info.type_vars.len() as u32 + 1,

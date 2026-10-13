@@ -27,12 +27,8 @@ function p256verify(hash: bytes32, r: bytes32, s: bytes32, qx: bytes32, qy: byte
     let ret = staticcall(gas(), 0x100, ptr, 160, 0, 32);
     require(ret != 0, Error(0x1fb6bf04)); // P256VerifyCallFailed()
     // NOTE: we are doing the inverse check here for safety, so not using tobool()
-    match (mload(0)) {
-case 1 {
-return true;
-}
-default {
-return false;
-}
-}
+    match (mload(0) ) {
+        case 1 { return true;
+        } default { return false;
+    } }
 }

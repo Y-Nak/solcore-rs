@@ -389,6 +389,8 @@ pub(crate) struct ParsedAdtCtor<'src> {
     pub(crate) name: SpannedStr<'src>,
     /// Field types.
     pub(crate) fields: Vec<ParsedTy<'src>>,
+    /// Ordered source struct fields; absent for enum constructors.
+    pub(crate) field_names: Option<Vec<SpannedStr<'src>>>,
 }
 
 /// Parsed method signature declared by a class.

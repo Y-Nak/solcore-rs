@@ -3,22 +3,15 @@ import * from std.dispatch;
 import * from std.Generic;
 import * from std.ABIGeneric;
 
-// Roundtrip tests for sum ABI coding: `roundtrip(x) -> x` makes the dispatcher
-// DECODE the argument from calldata and then ENCODE it straight back into the
-// return data. So the returned bytes must equal the input argument payload
-// (the calldata after the 4-byte selector) — i.e. encode ∘ decode = identity.
-//
-// This pins encode and decode as exact inverses for BOTH:
-//   * static sums  (inline [tag][branch], no offset word), and
-//   * dynamic sums (offset word in the head, [tag][branch] inline in the tail,
-//     one offset word per nested dynamic level).
-//
-// The dynamic direction is what the sum(f,g):ABIEncode fix restores: before it,
-// encoding a decoded dynamic sum dropped everything but the tag, so the return
-// bytes could not match the input.
+// ABI wire roundtrips use one keccak256("Constructor(field signatures)") tag.
+// Dynamic ADTs have a single offset to [tag][fields]; three variants do not
+// introduce a second discriminant or offset. Static ADTs reserve the largest
+// payload plus exactly one tag word. Unknown variant tags must revert.
 enum D2 { L(uint256), R(memory<bytes>) }                // dynamic (shallow)
-enum D3 { X(uint256), Y(uint256), Z(memory<bytes>) }   // dynamic (deeply nested)
+enum D3 { X(uint256), Y(uint256), Z(memory<bytes>) }   // dynamic, three variants
 enum S2 { P(uint256), Q(uint256) }                      // static
+
+enum S3 { A, B(uint256), C(uint256, uint256, uint256) }
 
 contract SumRoundtrip {
   constructor() {}
@@ -28,11 +21,12 @@ contract SumRoundtrip {
     return x;
   }
 
-  // dynamic, deeply right-nested: each nested dynamic level round-trips its own
-  // offset word.
+  // Three variants still use one wire tag and one dynamic offset.
   function rtD3(x: D3) public returns (D3) {
     return x;
   }
+
+  function rtS3(x: S3) public returns (S3) { return x; }
 
   // static control: inline layout must round-trip unchanged.
   function rtS2(x: S2) public returns (S2) {

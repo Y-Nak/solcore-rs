@@ -206,6 +206,70 @@ pub(super) fn instantiate_clause<'db>(
     }
 }
 
+/// Instantiates a clause's conditions for a matching goal without solving them.
+/// Goal variables remain rigid; only the clause's fresh binders may be matched.
+pub(crate) fn clause_conditions_for_goal<'db>(
+    db: &'db dyn Db,
+    clause: &ProgramClause<'db>,
+    goal: Pred<'db>,
+) -> Option<Vec<Pred<'db>>> {
+    let rigid_goal = FxHashSet::default();
+    let instantiated = instantiate_clause(db, clause, goal, &rigid_goal);
+    let subst = match_head(
+        db,
+        instantiated.head,
+        goal,
+        &instantiated.binder_vars,
+        &rigid_goal,
+    )?;
+    Some(
+        instantiated
+            .conditions
+            .iter()
+            .map(|condition| subst.apply_pred(db, *condition))
+            .collect(),
+    )
+}
+
+/// Instantiates a scheme's predicates for a matching type, keeping variables in
+/// the requested type rigid and freshening every scheme binder before matching.
+pub(crate) fn scheme_conditions_for_type<'db>(
+    db: &'db dyn Db,
+    scheme: TyScheme<'db>,
+    goal: Ty<'db>,
+) -> Option<Vec<Pred<'db>>> {
+    let body = scheme.body(db);
+    let mut max = None;
+    collect_max_ty_var(db, goal, &mut max);
+    collect_max_ty_var(db, body.ty(db), &mut max);
+    for pred in body.preds(db) {
+        collect_max_pred_var(db, *pred, &mut max);
+    }
+    let base = match max {
+        Some(index) => index.checked_add(1)?,
+        None => 0,
+    };
+    let binder_count = scheme.binder_count(db);
+    let end = base.checked_add(binder_count)?;
+    let mut rewriter = ClauseInstantiator {
+        db,
+        binder_count,
+        base,
+    };
+    let pattern = rewriter.ty(body.ty(db));
+    let pattern_vars = (base..end).collect();
+    let mut subst = MatchSubst::default();
+    if !match_ty(db, pattern, goal, &mut subst, &pattern_vars) {
+        return None;
+    }
+    Some(
+        body.preds(db)
+            .iter()
+            .map(|pred| subst.apply_pred(db, rewriter.pred(*pred)))
+            .collect(),
+    )
+}
+
 struct ClauseInstantiator<'db> {
     db: &'db dyn Db,
     binder_count: u32,

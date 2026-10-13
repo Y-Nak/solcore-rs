@@ -10,24 +10,29 @@ use parser::parse_file_to_hir;
 
 use crate::{Db, Ty, TyCtor, UserTyCtor, UserTyCtorKind};
 
-pub(crate) fn canonical_std_adt_defs<'db>(db: &'db dyn Db, name: &str) -> Vec<DefId<'db>> {
+pub(crate) fn canonical_std_module_ids<'db>(
+    db: &'db dyn Db,
+    name: &str,
+) -> impl Iterator<Item = ModuleId<'db>> {
     let std_module = module_id_from_key(
         db,
         &nameres::ModuleKey {
             library: LibraryId::Std,
-            logical_path: vec!["std".to_owned()],
+            logical_path: vec![name.to_owned()],
         },
     );
     let tree = db.module_tree();
-    let main_std_module = module_key_for_path(
+    let main_module = module_key_for_path(
         LibraryId::Main,
         tree.main_root(db),
-        &tree.std_root(db).join("std.sol"),
+        &tree.std_root(db).join(format!("{name}.sol")),
     )
     .map(|key| module_id_from_key(db, &key));
+    std::iter::once(std_module).chain(main_module)
+}
 
-    let mut defs = std::iter::once(std_module)
-        .chain(main_std_module)
+pub(crate) fn canonical_std_adt_defs<'db>(db: &'db dyn Db, name: &str) -> Vec<DefId<'db>> {
+    let mut defs = canonical_std_module_ids(db, "std")
         .filter_map(|module| {
             let file = db.module_file(module)?;
             parse_file_to_hir(db, file)
@@ -124,6 +129,17 @@ pub(crate) fn module_for_def_via_tree<'db>(
 }
 
 pub fn is_canonical_std_def_named(db: &dyn Db, def: DefId<'_>, name: &str) -> bool {
+    is_canonical_std_module_def_named(db, def, "std", name)
+}
+
+/// Recognizes a definition from a canonical std file even when overlapping roots
+/// make that file reachable through the main library.
+pub fn is_canonical_std_module_def_named(
+    db: &dyn Db,
+    def: DefId<'_>,
+    module_name: &str,
+    name: &str,
+) -> bool {
     if def.name(db).as_deref() != Some(name) {
         return false;
     }
@@ -132,10 +148,11 @@ pub fn is_canonical_std_def_named(db: &dyn Db, def: DefId<'_>, name: &str) -> bo
     let tree = db.module_tree();
     let is_std_root_file = hir::url_to_file_path(file.url(db))
         .and_then(|path| module_key_for_path(LibraryId::Std, tree.std_root(db), &path))
-        .is_some_and(|key| key.logical_path.as_slice() == ["std"]);
+        .is_some_and(|key| key.logical_path.as_slice() == [module_name]);
 
     is_std_root_file
         || module_id_for_source_file(db, file).is_some_and(|module| {
-            module.library(db) == &LibraryId::Std && module.logical_path(db).as_slice() == ["std"]
+            module.library(db) == &LibraryId::Std
+                && module.logical_path(db).as_slice() == [module_name]
         })
 }

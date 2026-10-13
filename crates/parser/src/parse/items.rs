@@ -575,6 +575,7 @@ where
             leading_comments: Vec::new(),
             name,
             fields,
+            field_names: None,
         })
         .boxed()
 }
@@ -770,11 +771,53 @@ where
         })
         .boxed();
 
-    enum_kw_parser()
+    let enum_payload = enum_kw_parser()
         .ignore_then(ident_parser())
         .then(optional_generic_params_parser())
         .then(ctors)
-        .map(|((name, (ty_params, _)), ctors)| (name, ty_params, ctors))
+        .map(|((name, (ty_params, _)), ctors)| (name, ty_params, ctors));
+
+    let struct_field = ident_parser()
+        .then_ignore(just(Token::Colon))
+        .then(type_parser())
+        .then_ignore(just(Token::Semi));
+    let struct_payload = struct_kw_parser()
+        .ignore_then(ident_parser())
+        .then(optional_generic_params_parser())
+        .then(
+            struct_field
+                .repeated()
+                .collect::<Vec<_>>()
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+        )
+        .map_with(|((name, (ty_params, _)), fields), e| {
+            let (field_names, fields) = fields.into_iter().unzip();
+            (
+                name,
+                ty_params,
+                vec![ParsedAdtCtor {
+                    span: e.span(),
+                    introducer: None,
+                    leading_comments: Vec::new(),
+                    name,
+                    fields,
+                    field_names: Some(field_names),
+                }],
+            )
+        })
+        .validate(|payload, _, emitter| {
+            let mut seen = std::collections::HashSet::new();
+            for (name, span) in payload.2[0].field_names.as_ref().unwrap() {
+                if !seen.insert(*name) {
+                    emitter.emit(Rich::custom(
+                        *span,
+                        format!("duplicate struct field `{name}`"),
+                    ));
+                }
+            }
+            payload
+        });
+    enum_payload.or(struct_payload)
 }
 
 fn adt_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserErr<'src>>
@@ -980,6 +1023,7 @@ where
             | Token::Type | Token::RBrace => (),
         },
         enum_kw_parser().ignored(),
+        struct_kw_parser().ignored(),
     ));
     let recovery = any()
         .and_is(item_start.not())

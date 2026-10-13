@@ -781,7 +781,11 @@ impl<'db> InferCtx<'db> {
             if elems.len() == 1 {
                 return Some(vec![expected]);
             }
-            match product_elems(&mut self.engine, expected) {
+            match self.tuple_expected_elems(
+                expected,
+                elems.len(),
+                body.exprs(self.db).get(expr).span,
+            ) {
                 Some(expected_elems) if expected_elems.len() == elems.len() => Some(expected_elems),
                 Some(expected_elems) => {
                     self.emit_expr_error(
@@ -835,7 +839,11 @@ impl<'db> InferCtx<'db> {
             if elems.len() == 1 {
                 return Some(vec![expected]);
             }
-            if let Some(expected_elems) = product_elems(&mut self.engine, expected.clone()) {
+            if let Some(expected_elems) = self.tuple_expected_elems(
+                expected.clone(),
+                elems.len(),
+                body.pats(self.db).get(pat).span,
+            ) {
                 if expected_elems.len() != elems.len() {
                     self.emit_pat_error(
                         body,
@@ -890,6 +898,30 @@ impl<'db> InferCtx<'db> {
             self.unify_pat(body, pat, expected, ty.clone());
         }
         ty
+    }
+
+    fn tuple_expected_elems(
+        &mut self,
+        expected: InferTy<'db>,
+        arity: usize,
+        span: Span<'db>,
+    ) -> Option<Vec<InferTy<'db>>> {
+        let mut elems = product_elems_for_arity_by(expected, arity, |ty| {
+            let ty = self.engine.resolve(ty);
+            self.normalize_aliases(ty)
+        })?;
+        // A polymorphic product tail is still open, rather than evidence that
+        // the tuple has fewer fields. For example, `f<a>(x: (word, a))` accepts
+        // `(x, y, z)` by inferring `a = (typeof(y), typeof(z))`.
+        if elems.len() < arity && matches!(elems.last(), Some(InferTy::Var(_))) {
+            let tail = elems.pop().expect("open tuple tail");
+            let fields = (elems.len()..arity)
+                .map(|_| self.engine.fresh_var())
+                .collect::<Vec<_>>();
+            self.unify_span(span, tail, product_infer_ty(fields.clone()));
+            elems.extend(fields);
+        }
+        Some(elems)
     }
 
     fn infer_ctor_pat(

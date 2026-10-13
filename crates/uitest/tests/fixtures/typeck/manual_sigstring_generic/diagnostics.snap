@@ -18,7 +18,7 @@ error[SC0218]: Overlapping impls are not supported
   ::: /std/dispatch.sol:49
    |
 49 |
-50 | impl SigString<uint256> { function sigStr(x: Proxy<uint256>) returns (string) { "uint256" }}
+50 | impl SigString<uint256> { function sigStr(x:Proxy<uint256>) returns (string) { return "uint256"; }}
    |      ------------------ previous overlapping impl
-51 | impl SigString<bytes32> { function sigStr(x: Proxy<bytes32>) returns (string) { "bytes32" }}
+51 | impl SigString<bytes32> { function sigStr(x:Proxy<bytes32>) returns (string) { return "bytes32"; }}
    |

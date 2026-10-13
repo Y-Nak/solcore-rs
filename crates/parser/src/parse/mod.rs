@@ -217,6 +217,9 @@ fn attach_adt_constructor_comments<'src>(
     ctors: &mut [ParsedAdtCtor<'src>],
 ) {
     for ctor in ctors {
+        if ctor.field_names.is_some() {
+            continue;
+        }
         let introducer = ctor
             .introducer
             .expect("ADT parser must retain each constructor introducer");

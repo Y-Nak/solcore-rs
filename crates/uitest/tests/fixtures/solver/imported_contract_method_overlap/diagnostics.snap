@@ -1,0 +1,22 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/imported_contract_method_overlap/main.sol
+---
+error[SC0218]: Overlapping impls are not supported
+               impl:
+               word: Marker
+               overlaps with:
+               word: Marker
+  --> /main/main.sol:19:6
+   |
+14 |
+15 | impl Marker<word> {
+   |      ------------ previous overlapping impl
+16 |   function mark(x: word) returns (word) { return 1; }
+17 | }
+18 |
+19 | impl Marker<word> {
+   |      ^^^^^^^^^^^^ overlapping impl
+20 |   function mark(x: word) returns (word) { return 2; }
+   |

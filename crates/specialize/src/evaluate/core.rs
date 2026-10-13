@@ -17,8 +17,8 @@ use super::{
     CEnv, TypeReg, VEnv, YulState,
     assigned::{AssignedNames, invalidate_assigned},
     effects::{
-        compute_pure_funs, compute_write_effects, expr_write_effects_from_call_summaries,
-        intrinsic_is_pure, storage_field_names,
+        compute_comptime_pure_funs, compute_pure_funs, compute_write_effects, expr_is_pure,
+        expr_write_effects_from_call_summaries, intrinsic_is_pure, storage_field_names,
     },
     erasure::{
         display_backend_symbol, display_mono_function_name, erase_comptime_ty,
@@ -113,6 +113,7 @@ pub(super) struct Evaluator<'db> {
     pub(super) db: &'db dyn Db,
     functions: FxHashMap<String, MonoFunction<'db>>,
     pure_funs: FxHashSet<String>,
+    comptime_pure_funs: FxHashSet<String>,
     write_effects: FxHashMap<String, AssignedNames>,
     pub(super) diagnostics: Vec<SpecializeDiagnostic<'db>>,
     inline_stack: Vec<InlineFrame<'db>>,
@@ -186,11 +187,13 @@ impl<'db> Evaluator<'db> {
             .collect::<FxHashMap<_, _>>();
         let storage_fields = storage_field_names(db, module);
         let pure_funs = compute_pure_funs(db, &functions, &storage_fields);
+        let comptime_pure_funs = compute_comptime_pure_funs(db, &functions, &storage_fields);
         let write_effects = compute_write_effects(&functions, &storage_fields);
         Self {
             db,
             functions,
             pure_funs,
+            comptime_pure_funs,
             write_effects,
             diagnostics: Vec::new(),
             inline_stack: Vec::new(),
@@ -696,9 +699,8 @@ impl<'db> Evaluator<'db> {
                 )
             }
             MonoStmtKind::Assembly(body) => {
-                let mut subst = venv_to_yul_subst(self.db, &env);
+                let subst = venv_to_yul_subst(self.db, &env);
                 let written = yul_written_names(self.db, &body);
-                subst.retain(|name, _| !written.contains(name));
                 let body = subst_yul_block(self.db, &subst, body);
                 let state = venv_to_yul_state(&env);
                 if let Some(state) = self.eval_yul_block(state, &body) {
@@ -711,11 +713,18 @@ impl<'db> Evaluator<'db> {
                         }],
                     )
                 } else {
-                    let (mut env, mut comptime_env) =
-                        self.preserve_comptime_known_env(env, comptime_env);
-                    for name in written {
-                        env.remove(&name);
-                        comptime_env.remove(&name);
+                    // Residual assembly may change memory, so earlier folded
+                    // writes cannot justify a later comptime load.
+                    self.memory.clear();
+                    // Inline Yul can assign enclosing locals only through its
+                    // lexical writes. Keep other known locals, including erased
+                    // comptime numbers, but invalidate storage facts because
+                    // arbitrary assembly may execute sstore or an external call.
+                    let mut env = env;
+                    let mut comptime_env = comptime_env;
+                    for name in written.iter().chain(self.storage_fields.iter()) {
+                        env.remove(name);
+                        comptime_env.remove(name);
                     }
                     (
                         env,
@@ -829,13 +838,16 @@ impl<'db> Evaluator<'db> {
     }
 
     fn mask_assigned_env(
-        &self,
+        &mut self,
         env: VEnv<'db>,
         comptime_env: CEnv,
         assigned: &AssignedNames,
     ) -> (VEnv<'db>, CEnv) {
         match assigned {
-            AssignedNames::All => self.preserve_comptime_known_env(env, comptime_env),
+            AssignedNames::All => {
+                self.memory.clear();
+                self.preserve_comptime_known_env(env, comptime_env)
+            }
             AssignedNames::Names(_) => (
                 remove_assigned(env, assigned),
                 remove_comptime_assigned(comptime_env, assigned),
@@ -844,12 +856,13 @@ impl<'db> Evaluator<'db> {
     }
 
     fn invalidate_assigned_effects(
-        &self,
+        &mut self,
         assigned: &AssignedNames,
         env: &mut VEnv<'db>,
         comptime_env: &mut CEnv,
     ) {
         if matches!(assigned, AssignedNames::All) {
+            self.memory.clear();
             let old_env = std::mem::take(env);
             let old_comptime_env = std::mem::take(comptime_env);
             let (kept_env, kept_comptime_env) =
@@ -969,11 +982,23 @@ impl<'db> Evaluator<'db> {
         let span = expr.span;
         let ty = expr.ty;
         match expr.kind {
-            MonoExprKind::Var(id) => env.get(&id.name).cloned().unwrap_or(MonoExpr {
-                span,
-                ty,
-                kind: MonoExprKind::Var(id),
-            }),
+            MonoExprKind::Var(id) => env
+                .get(&id.name)
+                .cloned()
+                .map(|value| {
+                    // An erased comptime binding still supplies its concrete
+                    // value at a runtime use, just like a folded comptime call.
+                    if self.comptime_mode {
+                        value
+                    } else {
+                        materialize_comptime_value(self.db, value)
+                    }
+                })
+                .unwrap_or(MonoExpr {
+                    span,
+                    ty,
+                    kind: MonoExprKind::Var(id),
+                }),
             MonoExprKind::Lit(_) | MonoExprKind::Error => MonoExpr {
                 span,
                 ty,
@@ -1042,17 +1067,38 @@ impl<'db> Evaluator<'db> {
                     },
                 }
             }
-            MonoExprKind::Con { ctor, args } => MonoExpr {
-                span,
-                ty,
-                kind: MonoExprKind::Con {
-                    ctor,
-                    args: args
-                        .into_iter()
-                        .map(|arg| self.eval_expr(env, comptime_env, arg))
-                        .collect(),
-                },
-            },
+            MonoExprKind::Con { mut ctor, args } => {
+                let args = args
+                    .into_iter()
+                    .map(|arg| self.eval_expr(env, comptime_env, arg))
+                    .collect::<Vec<_>>();
+                // A materialized argument also loses its source comptime
+                // marker in the constructor signature. Keep unknown arguments
+                // and the result type intact for the erasure checks.
+                if !self.comptime_mode
+                    && let TyKind::Function { params, ret } = ctor.ty.ty().kind(self.db)
+                    && params.len() == args.len()
+                {
+                    let params = params
+                        .iter()
+                        .zip(&args)
+                        .map(|(param, arg)| {
+                            let runtime = erase_comptime_ty(self.db, *param);
+                            if self.expr_is_known_value(arg) && arg.ty.ty() == runtime {
+                                runtime
+                            } else {
+                                *param
+                            }
+                        })
+                        .collect();
+                    ctor.ty = MonoTy::new_unchecked(hir_ty::Ty::function(self.db, params, *ret));
+                }
+                MonoExpr {
+                    span,
+                    ty,
+                    kind: MonoExprKind::Con { ctor, args },
+                }
+            }
             MonoExprKind::ClosureDispatch { callee, args } => {
                 let callee = self.eval_expr(env, comptime_env, *callee);
                 let args = args
@@ -1637,6 +1683,14 @@ impl<'db> Evaluator<'db> {
         span: Span<'db>,
     ) -> Option<MonoExpr<'db>> {
         let function = self.functions.get(name)?.clone();
+        // Substituting a callee body must not discard or duplicate evaluation
+        // of an effectful argument, even when that parameter is unused.
+        // Write summaries alone do not account for aborting or allocating builtins.
+        if args.iter().any(|arg| {
+            !self.expr_write_effects(arg).is_empty() || !expr_is_pure(arg, &self.comptime_pure_funs)
+        }) {
+            return None;
+        }
         if !self.function_can_inline(name, &function) {
             return None;
         }
@@ -1765,6 +1819,9 @@ impl<'db> Evaluator<'db> {
 
             if self.pure_funs.contains(&function.name) {
                 self.pure_funs.insert(name.clone());
+            }
+            if self.comptime_pure_funs.contains(&function.name) {
+                self.comptime_pure_funs.insert(name.clone());
             }
             self.write_effects.insert(
                 name.clone(),
@@ -2294,7 +2351,7 @@ impl<'db> Evaluator<'db> {
                 let callee_is_comptime = match origin {
                     MonoCallOrigin::Builtin(intrinsic) => intrinsic_is_pure(*intrinsic),
                     MonoCallOrigin::Source(_) | MonoCallOrigin::ByName => {
-                        self.pure_funs.contains(&callee.name)
+                        self.comptime_pure_funs.contains(&callee.name)
                     }
                 };
                 callee_is_comptime

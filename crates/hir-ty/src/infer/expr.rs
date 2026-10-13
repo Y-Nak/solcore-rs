@@ -62,7 +62,9 @@ impl<'db> InferCtx<'db> {
                 args,
                 expected.clone(),
             ),
-            ExprKind::Proxy { ty, .. } => self.infer_proxy_expr(*ty, expected.clone()),
+            ExprKind::Proxy { ty, .. } => {
+                self.infer_proxy_expr(body, expr_id, *ty, expected.clone())
+            }
             ExprKind::Lambda {
                 params,
                 ret,
@@ -143,24 +145,30 @@ impl<'db> InferCtx<'db> {
                 }
             }
             ExprKind::Field { base, .. } => {
-                if !self.is_namespace_expr(body, *base) {
-                    self.infer_expr(body, *base);
-                }
+                let receiver =
+                    (!self.is_namespace_expr(body, *base)).then(|| self.infer_expr(body, *base));
                 let resolution = self.expr_resolutions.get(&(body, expr_id)).cloned();
-                let resolution = if let Some(resolution) = resolution {
-                    resolution
+                if resolution.is_none()
+                    && let Some(receiver) = receiver
+                    && let Some(field_ty) = self.infer_struct_field(body, expr_id, *base, receiver)
+                {
+                    field_ty
                 } else {
-                    self.emit_expr_error(
-                        body,
-                        expr_id,
-                        TypeckDiagnostic::UnknownField {
-                            span: self.field_label_span(body, expr_id),
-                            field: self.field_name(body, expr_id),
-                        },
-                    );
-                    hir_nameres::Resolution::Err
-                };
-                self.infer_resolution(body, expr_id, resolution)
+                    let resolution = if let Some(resolution) = resolution {
+                        resolution
+                    } else {
+                        self.emit_expr_error(
+                            body,
+                            expr_id,
+                            TypeckDiagnostic::UnknownField {
+                                span: self.field_label_span(body, expr_id),
+                                field: self.field_name(body, expr_id),
+                            },
+                        );
+                        hir_nameres::Resolution::Err
+                    };
+                    self.infer_resolution(body, expr_id, resolution)
+                }
             }
             ExprKind::TypeAnnot { expr, ty } => {
                 let annot = self.lower_type_ref(*ty);
@@ -211,6 +219,62 @@ impl<'db> InferCtx<'db> {
         ty
     }
 
+    fn infer_struct_field(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        base: Id<Expr<'db>>,
+        receiver: InferTy<'db>,
+    ) -> Option<InferTy<'db>> {
+        let loaded_receiver = receiver.clone();
+        // CanStore's output is chosen by the solver after expression inference.
+        // A storage struct projection needs the declared product shape now.
+        let receiver = if let Some(hir_nameres::Resolution::Field(field)) =
+            self.expr_resolutions.get(&(body, base)).cloned()
+        {
+            self.instantiate_field(field, ObligationSource::Scheme)
+        } else {
+            receiver
+        };
+        let receiver = self.engine.resolve(receiver);
+        let receiver = self.normalize_aliases(receiver);
+        let InferTy::Named {
+            ctor:
+                TyCtor::User(UserTyCtor {
+                    def,
+                    kind: UserTyCtorKind::Adt,
+                }),
+            ..
+        } = &receiver
+        else {
+            return None;
+        };
+        let info = self.lookup_adt_info(*def)?;
+        let ctor = info.adt.ctors(self.db).first()?;
+        if def.file(self.db) != self.module.def_id_value(self.db).file(self.db) {
+            // A projection exposes the product representation just like a
+            // constructor pattern. Respect opaque exports, including aliases
+            // and qualified imports, by comparing constructor identities.
+            if !self.is_imported_adt_ctor_visible(*def, hir_nameres::CtorIndex::from_usize(0)) {
+                return None;
+            }
+        }
+        let field = self.field_name(body, expr);
+        let index = ctor
+            .field_names
+            .as_ref()?
+            .iter()
+            .position(|name| (*name.atom()).text(self.db) == field)?;
+        self.unify_expr(body, base, loaded_receiver, receiver.clone());
+        let scheme = self.lookup_adt_ctor_scheme(*def, hir_nameres::CtorIndex::from_usize(0))?;
+        let instantiated = self.engine.instantiate_scheme(scheme);
+        let InferTy::Function { params, ret } = self.accept_instantiated(instantiated) else {
+            return None;
+        };
+        self.unify_expr(body, expr, receiver, *ret);
+        params.get(index).cloned()
+    }
+
     fn infer_array_expr(
         &mut self,
         body: FuncBody<'db>,
@@ -232,41 +296,146 @@ impl<'db> InferCtx<'db> {
     /// definition would make otherwise identical types nominally distinct.
     fn infer_proxy_expr(
         &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
         ty: TypeRef<'db>,
         expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
         let inner = self.lower_type_ref(ty);
         if let Some(expected) = expected {
-            let resolved = self.engine.resolve(expected.clone());
-            if let InferTy::Named { ctor, args } = &resolved
+            let expected = self.normalize_aliases(expected);
+            let resolved = self.engine.resolve(expected);
+            if let InferTy::Named {
+                ctor: TyCtor::User(user),
+                args,
+            } = &resolved
                 && args.len() == 1
-                && matches!(
-                    ctor,
-                    TyCtor::User(user)
-                        if user.def.name(self.db).as_deref() == Some("Proxy")
-                )
+                && user.def.name(self.db).as_deref() == Some("Proxy")
             {
+                if !self.validate_proxy_constructor(body, expr, user.def, ty) {
+                    return InferTy::Error;
+                }
                 self.unify_span(ty.span(self.db), args[0].clone(), inner);
                 return resolved;
             }
         }
 
-        crate::support::canonical_std_adt_defs(self.db, "Proxy")
-            .into_iter()
-            .find(|def| {
-                self.entry_module.is_some_and(|entry| {
-                    crate::support::module_for_def_via_graph(self.db, entry, *def).is_some()
+        let local = match self.expr_resolutions.get(&(body, expr)) {
+            Some(hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Adt,
+            }) => Some(*def),
+            _ => None,
+        };
+        let proxy = local.or_else(|| {
+            crate::support::canonical_std_adt_defs(self.db, "Proxy")
+                .into_iter()
+                .find(|def| {
+                    self.entry_module.is_some_and(|entry| {
+                        crate::support::module_for_def_via_graph(self.db, entry, *def).is_some()
+                    })
                 })
+        });
+        proxy
+            .map(|def| {
+                if !self.validate_proxy_constructor(body, expr, def, ty) {
+                    return InferTy::Error;
+                }
+                InferTy::Named {
+                    ctor: TyCtor::User(UserTyCtor {
+                        def,
+                        kind: UserTyCtorKind::Adt,
+                    }),
+                    args: vec![inner],
+                }
             })
-            .or_else(|| crate::support::canonical_std_adt_def(self.db, "Proxy"))
-            .map(|def| InferTy::Named {
-                ctor: TyCtor::User(UserTyCtor {
-                    def,
-                    kind: UserTyCtorKind::Adt,
-                }),
-                args: vec![inner],
+            .unwrap_or_else(|| {
+                self.emit_error_with_poison(
+                    TypeckDiagnostic::UndefinedTypeConstructor {
+                        span: self.expr_label_span(body, expr),
+                        name: "Proxy".to_owned(),
+                    },
+                    [PoisonTarget::Expr(body, expr)],
+                );
+                InferTy::Error
             })
-            .unwrap_or_else(|| self.engine.fresh_var())
+    }
+
+    fn validate_proxy_constructor(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        def: DefId<'db>,
+        inner: TypeRef<'db>,
+    ) -> bool {
+        let info = self.lookup_adt_info(def);
+        let span = self.expr_label_span(body, expr);
+        // `@T` can use the canonical witness from a loaded std module even
+        // when a selective import does not open Proxy's constructor. Custom
+        // witnesses still obey their defining module's constructor visibility.
+        let canonical_proxy =
+            crate::support::canonical_std_adt_defs(self.db, "Proxy").contains(&def);
+        if !canonical_proxy && def.file(self.db) != self.module.def_id_value(self.db).file(self.db)
+        {
+            let visible = info.as_ref().is_some_and(|info| {
+                info.adt
+                    .ctors(self.db)
+                    .iter()
+                    .enumerate()
+                    .any(|(index, ctor)| {
+                        ident_text(self.db, &ctor.name) == "Proxy"
+                            && self.is_imported_adt_ctor_visible(
+                                def,
+                                hir_nameres::CtorIndex::from_usize(index),
+                            )
+                    })
+            });
+            if !visible {
+                self.emit_error_with_poison(
+                    TypeckDiagnostic::MissingProxyConstructor { span },
+                    [PoisonTarget::Expr(body, expr)],
+                );
+                return false;
+            }
+        }
+        let diagnostic = if let Some(info) = info {
+            let arity = info.adt.ty_param_elems(self.db).len();
+            if arity != 1 {
+                Some(TypeckDiagnostic::TypeConstructorArity {
+                    span,
+                    constructor: "Proxy".to_owned(),
+                    ty: format!(
+                        "Proxy<{}>",
+                        crate::display::display_type_ref_source(self.db, inner)
+                    ),
+                    expected: arity,
+                    actual: 1,
+                })
+            } else if let Some(ctor) = info
+                .adt
+                .ctors(self.db)
+                .iter()
+                .find(|ctor| ident_text(self.db, &ctor.name) == "Proxy")
+            {
+                (ctor.field_count != 0).then(|| TypeckDiagnostic::WrongArity {
+                    span,
+                    context: "constructor Proxy.Proxy".to_owned(),
+                    expected: ctor.field_count,
+                    actual: 0,
+                    callee: None,
+                })
+            } else {
+                Some(TypeckDiagnostic::MissingProxyConstructor { span })
+            }
+        } else {
+            Some(TypeckDiagnostic::MissingProxyConstructor { span })
+        };
+        if let Some(diagnostic) = diagnostic {
+            self.emit_error_with_poison(diagnostic, [PoisonTarget::Expr(body, expr)]);
+            false
+        } else {
+            true
+        }
     }
 
     fn report_numeric_if_branch_mismatch(
@@ -1074,7 +1243,7 @@ impl<'db> InferCtx<'db> {
         }
     }
 
-    fn infer_bin_op(
+    pub(super) fn infer_bin_op(
         &mut self,
         body: FuncBody<'db>,
         expr: Id<Expr<'db>>,
@@ -1437,7 +1606,13 @@ impl<'db> InferCtx<'db> {
         method: &str,
     ) -> Option<(DefId<'db>, String)> {
         let qualified = format!("{class_name}.{method}");
-        if let Some(module_id) = module_id_for_hir_module(self.db, self.module) {
+        if let Some(module_id) = module_id_for_hir_module(self.db, self.module).or_else(|| {
+            module_for_def(
+                self.db,
+                self.entry_module?,
+                self.module.def_id_value(self.db),
+            )
+        }) {
             let env = nameres::module_import_surface(self.db, module_id);
             let local = env
                 .item_scope
@@ -1498,7 +1673,13 @@ impl<'db> InferCtx<'db> {
     }
 
     fn lookup_operator_function(&self, name: &str) -> Option<hir_nameres::Resolution<'db>> {
-        if let Some(module_id) = module_id_for_hir_module(self.db, self.module) {
+        if let Some(module_id) = module_id_for_hir_module(self.db, self.module).or_else(|| {
+            module_for_def(
+                self.db,
+                self.entry_module?,
+                self.module.def_id_value(self.db),
+            )
+        }) {
             let env = nameres::module_import_surface(self.db, module_id);
             let local = env
                 .item_scope

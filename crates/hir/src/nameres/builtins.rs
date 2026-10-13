@@ -54,7 +54,7 @@ fn edit_distance(left: &str, right: &str) -> usize {
 
 pub(super) fn builtin_type_or_class<'db>(name: &str) -> Option<Resolution<'db>> {
     let kind = match name {
-        "word" | "Word" => BuiltinKind::Type(BuiltinType::Word),
+        "word" => BuiltinKind::Type(BuiltinType::Word),
         "bool" => BuiltinKind::Type(BuiltinType::Bool),
         "()" => BuiltinKind::Type(BuiltinType::Unit),
         "pair" => BuiltinKind::Type(BuiltinType::Pair),

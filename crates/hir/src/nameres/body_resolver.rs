@@ -162,7 +162,12 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 };
                 self.map.record_expr(body, expr_id, resolution);
             }
-            ExprKind::Proxy { ty, .. } => self.ty(*ty),
+            ExprKind::Proxy { ty, .. } => {
+                self.ty(*ty);
+                if let Some(resolution) = self.lookup_type("Proxy") {
+                    self.map.record_expr(body, expr_id, resolution);
+                }
+            }
             ExprKind::Lambda {
                 params,
                 ret,
@@ -482,9 +487,9 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             return;
         }
 
-        // Qualified class/module/type interpretations keep priority over
-        // receiver-style calls. UFCS is only a fallback for a bare value
-        // receiver whose dotted callee otherwise has no meaning.
+        // An unshadowed class/module/type path keeps priority over UFCS.
+        // A local receiver remains a value even when its name also denotes
+        // an imported module or a type.
         if let Some(resolution) = self.resolve_field_expr(body, base, field) {
             let access_path = expr_path(self.db, body, expr_id).map(|segments| segments.join("."));
             self.expr_as_qualifier(body, base, access_path.as_deref());
@@ -589,6 +594,12 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         field: &SpannedElem<'db, Ident<'db>>,
     ) -> Option<Resolution<'db>> {
         let path = expr_path(self.db, body, base)?;
+        if path
+            .first()
+            .is_some_and(|first| self.lookup_local(first).is_some())
+        {
+            return None;
+        }
         let qualifier = path.join(".");
         let field_text = ident_text_str(self.db, field);
         let qualified = qualify(&qualifier, field_text);
@@ -907,8 +918,8 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         let Some(first) = path.first() else {
             return false;
         };
-        if path.len() == 1
-            && (self.lookup_local(first).is_some() || self.lookup_field(first).is_some())
+        if self.lookup_local(first).is_some()
+            || (path.len() == 1 && self.lookup_field(first).is_some())
         {
             return false;
         }

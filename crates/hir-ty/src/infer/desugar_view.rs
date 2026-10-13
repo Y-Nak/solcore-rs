@@ -76,11 +76,23 @@ pub(super) fn unit_infer_ty<'db>() -> InferTy<'db> {
     }
 }
 
-pub(super) fn product_elems<'db>(
-    engine: &mut InferTable<'db>,
+/// Split a product at the source tuple's field boundaries. Its final field can
+/// itself be a product: `(x, tail)` and `(x, (y, z))` both have two source fields,
+/// even when their type is the same right-nested product as `(x, y, z)`.
+pub(super) fn product_elems_for_arity_by<'db, F>(
     ty: InferTy<'db>,
-) -> Option<Vec<InferTy<'db>>> {
-    product_elems_by(ty, |ty| engine.resolve(ty))
+    arity: usize,
+    resolve: F,
+) -> Option<Vec<InferTy<'db>>>
+where
+    F: FnMut(InferTy<'db>) -> InferTy<'db>,
+{
+    let mut elems = product_elems_by(ty, resolve)?;
+    if arity > 0 && elems.len() > arity {
+        let tail = elems.split_off(arity - 1);
+        elems.push(product_infer_ty(tail));
+    }
+    Some(elems)
 }
 
 pub(super) fn product_elems_by<'db, F>(

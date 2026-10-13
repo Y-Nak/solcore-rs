@@ -1,0 +1,6 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/ok_proxy_selective_std/main.sol
+---
+no diagnostics

@@ -40,25 +40,25 @@ enum Fallback<payability, args, rets, fn> { Fallback(Proxy<payability>, Proxy<ar
 // --- Method Selectors ---
 
 trait ABIString<ty> { // deprecated
-    function append(head: word, tail: word, prx: Proxy<ty>) returns (word) ;
+    function append(head : word, tail : word, prx : Proxy<ty>) returns (word);
 }
 
-trait SigString<t> { function sigStr(x: Proxy<t>) returns (string) ; }
+trait SigString<t> { function sigStr(x:Proxy<t>) returns (string); }
 
-function sigStr<t>(p: Proxy<t>) returns (string) where t: SigString { SigString.sigStr(p) }
+function sigStr<t>(p:Proxy<t>) returns (string)  where t: SigString { return SigString.sigStr(p); }
 
-impl SigString<uint256> { function sigStr(x: Proxy<uint256>) returns (string) { "uint256" }}
-impl SigString<bytes32> { function sigStr(x: Proxy<bytes32>) returns (string) { "bytes32" }}
-impl SigString<bytes4> { function sigStr(x: Proxy<bytes4>) returns (string) { "bytes4" }}
-impl SigString<address> { function sigStr(x: Proxy<address>) returns (string) { "address" }}
-impl SigString<bool> { function sigStr(x: Proxy<bool>) returns (string) { "bool" }}
-impl SigString<memory<string>> { function sigStr(x: Proxy<memory<string>>) returns (string) { "string" }}
-impl SigString<memory<bytes>> { function sigStr(x: Proxy<memory<bytes>>) returns (string) { "bytes" }}
-impl SigString<()> { function sigStr(x: Proxy<()>) returns (string) { "" } }
+impl SigString<uint256> { function sigStr(x:Proxy<uint256>) returns (string) { return "uint256"; }}
+impl SigString<bytes32> { function sigStr(x:Proxy<bytes32>) returns (string) { return "bytes32"; }}
+impl SigString<bytes4> { function sigStr(x:Proxy<bytes4>) returns (string) { return "bytes4"; }}
+impl SigString<address> { function sigStr(x:Proxy<address>) returns (string) { return "address"; }}
+impl SigString<bool> { function sigStr(x:Proxy<bool>) returns (string) { return "bool"; }}
+impl SigString<memory<string>> { function sigStr(x:Proxy<memory<string>>) returns (string) { return "string"; }}
+impl SigString<memory<bytes>> { function sigStr(x:Proxy<memory<bytes>>) returns (string) { return "bytes"; }}
+impl SigString<()> { function sigStr(x:Proxy<()>) returns (string) { return ""; } }
 
 impl<a, b> SigString<(a, b)> where a: SigString, b: SigString {
-  function sigStr(x: Proxy<(a, b)>) returns (string) {
-    SigString.sigStr( @a ) +  "," + SigString.sigStr( @b )
+  function sigStr(x:Proxy<(a, b)>) returns (string) {
+    return SigString.sigStr( @a ) +  "," + SigString.sigStr( @b );
   }
 }
 
@@ -70,8 +70,8 @@ impl<a, b> SigString<(a, b)> where a: SigString, b: SigString {
 // makes ADT-typed parameters produce a deterministic selector; refine here if a
 // specific on-the-wire sum convention is needed.
 impl<f, g> SigString<sum<f, g>> where f: SigString, g: SigString {
-  function sigStr(x: Proxy<sum<f, g>>) returns (string) {
-    "sum(" + SigString.sigStr( @f ) + "," + SigString.sigStr( @g ) + ")"
+  function sigStr(x:Proxy<sum<f, g>>) returns (string) {
+    return "sum(" + SigString.sigStr( @f ) + "," + SigString.sigStr( @g ) + ")";
   }
 }
 
@@ -80,37 +80,37 @@ impl<f, g> SigString<sum<f, g>> where f: SigString, g: SigString {
 // sum type reads `sum(l,r)[]`. Location is transparent to the ABI, so this keys
 // on the calldata form the dispatch decodes from.
 impl<t> SigString<calldata<array<t>>> where t: SigString {
-  function sigStr(x: Proxy<calldata<array<t>>>) returns (string) {
-    SigString.sigStr( @t ) + "[]"
+  function sigStr(x:Proxy<calldata<array<t>>>) returns (string) {
+    return SigString.sigStr( @t ) + "[]";
   }
 }
 
 // Any data type inherits its ABI signature from its Generic representation, the
 // same way ABIAttribs / ABIEncode bridge through Generic in std.ABIGeneric. This
 // lets the dispatch take ADT-typed parameters (e.g. a Signature) without a
-// hand-written SigString impl per type.
+// hand-written SigString instance per type.
 default impl<a, rep> SigString<a> where a: Generic<rep>, rep: SigString {
-  function sigStr(x: Proxy<a>) returns (string) {
-    SigString.sigStr( @rep )
+  function sigStr(x:Proxy<a>) returns (string) {
+    return SigString.sigStr( @rep );
   }
 }
 
 impl<name, f, args, rets, payability> SigString<Method<name, payability, args, rets, f>> where f: invokable<args, rets>, name: SigString, args: SigString, rets: SigString {
-  function sigStr(x: Proxy<Method<name, payability, args, rets, f>>) returns (string) {
-    sigStr(@name)  + "(" + sigStr(@args) + ")" 
+  function sigStr(x:Proxy<Method<name, payability, args, rets, f>>) returns (string) {
+    return sigStr(@name)  + "(" + sigStr(@args) + ")";
   }
 }
 
 
 trait Selector<ty> {
-    function compute(prx: Proxy<ty>) returns (bytes4) ;
+    function compute(prx : Proxy<ty>) returns (bytes4);
 }
 
 // Computes the selector hash for a given method
-// This trait has a single impl, which keeps downstream definitions simpler.
+// this is a class with a single instance since it made some of the downstream definitions a bit cleaner to define
 // NOTE: for efficiency purposes this leaves dirty data past the end of the free memory pointer
 impl<name, payability, args, rets, fn> Selector<Method<name, payability, args, rets, fn>> where name: SigString, args: SigString {
-    function compute(prx: Proxy<Method<name, payability, args, rets, fn>>) returns (bytes4) {
+    function compute(prx : Proxy<Method<name, payability, args, rets, fn>>) returns (bytes4) {
         // let hash : word = keccakLit(sigStr(prx));
         let hash = keccakLit(sigStr(@name)  + "(" + sigStr(@args) + ")");
         return bytes4(shr(224, hash));
@@ -121,52 +121,49 @@ impl<name, payability, args, rets, fn> Selector<Method<name, payability, args, r
 
 // Describes how to execute a given method / fallback
 trait ExecMethod<ty> {
-  function exec(x: ty) ;
+  function exec(x: ty) returns (());
 }
 
 // If fn matches the provided args/ret types, then we can execute any non-payable method
 impl<name, args, rets, fn> ExecMethod<Method<name, NonPayable, args, rets, fn>> where fn: invokable<args, rets>, args: ABIAttribs, rets: ABIAttribs, ABIDecoder<args, CalldataWordReader>: ABIDecode<args>, rets: ABIEncode {
-  function exec(m: Method<name, NonPayable, args, rets, fn>) {
-    match (m) {
-case Method(pnm,ppayability,pargs,prets,fn) {
-// non-payable methods must reject any callvalue before running
+  function exec(m : Method<name, NonPayable, args, rets, fn>) returns (()) {
+    match (m ) {
+      case Method(pnm,ppayability,pargs,prets,fn) {
+        // non-payable methods must reject any callvalue before running
         MethodLevelCallvalueCheck.checkCallvalue(@NonPayable);
         do_exec(pargs, prets, fn);
-}
-}
+    } }
   }
 }
 
 // If fn matches the provided args/ret types, then we can execute any payable method
 // payable methods skip the callvalue check entirely
 impl<name, args, rets, fn> ExecMethod<Method<name, Payable, args, rets, fn>> where fn: invokable<args, rets>, args: ABIAttribs, rets: ABIAttribs, ABIDecoder<args, CalldataWordReader>: ABIDecode<args>, rets: ABIEncode {
-  function exec(m: Method<name, Payable, args, rets, fn>) {
-    match (m) {
-case Method(pnm,ppayability,pargs,prets,fn) {
-do_exec(pargs, prets, fn);
-}
-}
+  function exec(m : Method<name, Payable, args, rets, fn>) returns (()) {
+    match (m ) {
+      case Method(pnm,ppayability,pargs,prets,fn) {
+        do_exec(pargs, prets, fn);
+    } }
   }
 }
 
-// Fallbacks have no ABI-decoded inputs or outputs, so the impl is
+// Fallbacks have no ABI-decoded inputs or outputs, so the instance is
 // specialised to args = rets = () and bypasses the calldata length check
 // and ABI decode/encode entirely.
 impl<payability, fn> ExecMethod<Fallback<payability, (), (), fn>> where fn: invokable<(), ()>, payability: MethodLevelCallvalueCheck {
-  function exec(fb: Fallback<payability, (), (), fn>) {
-    match (fb) {
-case Fallback(ppayability, pargs, prets, fn) {
-MethodLevelCallvalueCheck.checkCallvalue(@payability);
+  function exec(fb : Fallback<payability, (), (), fn>) returns (()) {
+    match (fb ) {
+      case Fallback(ppayability, pargs, prets, fn) {
+        MethodLevelCallvalueCheck.checkCallvalue(@payability);
         fn(());
         assembly {
           stop()
         }
-}
-}
+    } }
   }
 }
 
-function do_exec<args, rets, fn>(pargs: Proxy<args>, prets: Proxy<rets>, fn: fn) where fn: invokable<args, rets>, args: ABIAttribs, rets: ABIAttribs, ABIDecoder<args, CalldataWordReader>: ABIDecode<args>, rets: ABIEncode {
+function do_exec<args, rets, fn>(pargs : Proxy<args>, prets : Proxy<rets>, fn : fn) returns (())  where fn: invokable<args, rets>, args: ABIAttribs, rets: ABIAttribs, ABIDecoder<args, CalldataWordReader>: ABIDecode<args>, rets: ABIEncode {
     // check we have enough calldata for the head of args
     require(calldatasize() >= (ABIAttribs.headSize(pargs) + 4), Error(0x08638556)); // ABIInputTruncated()
 
@@ -191,49 +188,40 @@ function do_exec<args, rets, fn>(pargs: Proxy<args>, prets: Proxy<rets>, fn: fn)
 
 // For a given tuple of methods this executes the method specified by the first four bytes of calldata
 trait RunDispatch<ty> {
-  function go(methods: ty) ;
+  function go(methods : ty) returns (());
 }
 
 // We can dispatch to a single executable method with a known selector
 impl<name, payability, args, rets, fn> RunDispatch<Method<name, payability, args, rets, fn>> where Method<name, payability, args, rets, fn>: ExecMethod, Method<name, payability, args, rets, fn>: Selector {
-  function go(method: Method<name, payability, args, rets, fn>) {
-    match (selector_matches(@Method<name, payability, args, rets, fn>)) {
-case true {
-ExecMethod.exec(method);
-}
-case false {
-return ();
-}
-}
+  function go(method : Method<name, payability, args, rets, fn>) returns (()) {
+    match (selector_matches(@Method<name, payability, args, rets, fn>) ) {
+      case true { ExecMethod.exec(method);
+      } case false { return;
+    } }
   }
 }
 
 // Base case: a contract with no methods has nothing to dispatch to
 impl RunDispatch<()> {
-  function go(methods: ()) { }
+  function go(methods : ()) returns (()) { }
 }
 
-// Recursive impl.
+// Recursive instance
 impl<n, m> RunDispatch<(n, m)> where n: ExecMethod, n: Selector, m: RunDispatch {
-  function go(methods: (n, m)) {
-    match (methods) {
-case (method_n, rest) {
-match (selector_matches(@n)) {
-case true {
-ExecMethod.exec(method_n);
-}
-case false {
-RunDispatch.go(rest);
-}
-}
-}
-}
+  function go(methods : (n, m)) returns (()) {
+    match (methods ) {
+      case (method_n, rest) {
+        match (selector_matches(@n) ) {
+          case true { ExecMethod.exec(method_n);
+          } case false { RunDispatch.go(rest);
+        } }
+    } }
   }
 }
 
 // TODO: we only wanna do the calldataload once
 // Given evidence of a type with a known selector, we can check if it matches the selector in the first four bytes of calldata
-function selector_matches<ty>(prx: Proxy<ty>) returns (bool) where ty: Selector {
+function selector_matches<ty>(prx : Proxy<ty>) returns (bool)  where ty: Selector {
   let candidate = Typedef.rep(Selector.compute(prx));
   let selector = shr(224, calldataload(0));
   return selector == candidate;
@@ -245,16 +233,16 @@ enum Payable {}
 enum NonPayable {}
 
 trait MethodLevelCallvalueCheck<ty> {
-    function checkCallvalue(pty: Proxy<ty>) ;
+    function checkCallvalue(pty : Proxy<ty>) returns (());
 }
 
 // no callvalue check for Payable methods
 impl MethodLevelCallvalueCheck<Payable> {
-    function checkCallvalue(prx: Proxy<Payable>) { }
+    function checkCallvalue(prx : Proxy<Payable>) returns (()) { }
 }
 // NonPayable methods revert if passed value
 impl MethodLevelCallvalueCheck<NonPayable> {
-    function checkCallvalue(prx: Proxy<NonPayable>) {
+    function checkCallvalue(prx : Proxy<NonPayable>) returns (()) {
         let NonPayableReceivedValue = Error(0xb5988ea3);
         require(callvalue() == 0, NonPayableReceivedValue);
    }
@@ -264,15 +252,16 @@ impl MethodLevelCallvalueCheck<NonPayable> {
 
 // Describes how to execute a given contract
 trait RunContract<c> {
-  function exec(v: c) ;
+  function exec(v : c) returns (());
 }
 
 // If we have a dispatch for the contracts methods, and we know how to execute it's fallback, then we can define an entrypoint
 impl<methods, fb> RunContract<Contract<methods, fb>> where methods: RunDispatch, fb: ExecMethod {
-  function exec(c: Contract<methods, fb>) {
-    match (c) {
-case Contract(ms, fb) {
-// TODO: if all methods are non payable then we should life the callvalue check here
+  function exec(c : Contract<methods, fb>) returns (()) {
+    match (c ) {
+      case Contract(ms, fb) {
+
+        // TODO: if all methods are non payable then we should life the callvalue check here
 
         // set free memory pointer to the output of memoryguard
         // https://docs.soliditylang.org/en/v0.8.30/yul.html#memoryguard
@@ -288,13 +277,12 @@ case Contract(ms, fb) {
         // fallthrough to fallback -- this will be reached upon short input
         //                            or no matching selector
         ExecMethod.exec(fb);
-}
-}
+    } }
   }
 }
 
 // This is the default fallback used if none is defined.
-function fallback_default_implementation() {
+function fallback_default_implementation() returns (()) {
   let NoSelectorMatchedWithoutFallback = Error(0x4924aef0);
   revertWithError(NoSelectorMatchedWithoutFallback);
 }

@@ -1,6 +1,48 @@
 use super::*;
 
 impl<'db> InferCtx<'db> {
+    pub(super) fn infer_struct_field_assign(
+        &mut self,
+        body: FuncBody<'db>,
+        op: AssignOp,
+        lhs: Id<Expr<'db>>,
+        rhs: Id<Expr<'db>>,
+    ) -> bool {
+        let ExprKind::Field { base, .. } = body.exprs(self.db).get(lhs).kind else {
+            return false;
+        };
+        // Namespace-qualified contract fields still use the ordinary field path.
+        if self.expr_resolutions.contains_key(&(body, lhs)) {
+            return false;
+        }
+        let field_ty = self.infer_expr(body, lhs);
+        if let Some(op) = op.binary_op() {
+            self.infer_bin_op(body, lhs, lhs, op, rhs, Some(field_ty));
+        } else {
+            self.infer_expr_expected(body, rhs, Some(field_ty));
+        }
+        if !self.is_contract_field_assign_target_expr(body, base) {
+            self.emit_expr_error(
+                body,
+                lhs,
+                TypeckDiagnostic::Mismatch {
+                    span: self.expr_label_span(body, lhs),
+                    expected: "struct field of a contract storage variable".to_owned(),
+                    actual: "non-storage struct field assignment".to_owned(),
+                },
+            );
+            return true;
+        }
+        if let Some(hir_nameres::Resolution::Field(field)) =
+            self.expr_resolutions.get(&(body, base)).cloned()
+            && let Some(storage_ty) = self.infer_storage_ref_expr(body, base, false)
+        {
+            let value_ty = self.instantiate_field(field, ObligationSource::Scheme);
+            self.push_assign_obligation(storage_ty, value_ty, ObligationSource::Scheme);
+        }
+        true
+    }
+
     pub(super) fn infer_storage_index_read(
         &mut self,
         body: FuncBody<'db>,
