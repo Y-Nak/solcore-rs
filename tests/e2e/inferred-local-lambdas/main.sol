@@ -5,6 +5,12 @@ type W = word;
 
 function forwardValue<a>(x: a) returns (a) { return x; }
 
+function applyBound<f>(callable: f, x: uint256) returns (uint256)
+    where f: invokable<uint256, uint256> {
+  assembly { sstore(100, 1) }
+  return invokable.invoke(callable, x);
+}
+
 function genericIdentity<a>(x: a) returns (a) {
   let f = lam (y: a) -> a { return y; };
   return f(x);
@@ -63,6 +69,17 @@ contract InferredLocalLambdas {
     let f = lam (y: uint256) -> uint256 { return y + x; };
     let g = forwardValue(f);
     return g(uint256(2));
+  }
+
+  // #[(40) -> 43]
+  // #[(3) -> 6]
+  function genericBoundCallable(x: uint256) public returns (uint256) {
+    assembly { sstore(100, 0) }
+    let f = lam (y: uint256) -> uint256 { return y + x; };
+    let result = applyBound(f, uint256(2));
+    let effect: word;
+    assembly { effect := sload(100) }
+    return result + uint256(effect);
   }
   // #[(42) -> 42]
   function aliased(x: uint256) public returns (uint256) {
