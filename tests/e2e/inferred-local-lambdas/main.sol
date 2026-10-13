@@ -3,6 +3,8 @@ import * from std.dispatch;
 
 type W = word;
 
+function forwardValue<a>(x: a) returns (a) { return x; }
+
 function genericIdentity<a>(x: a) returns (a) {
   let f = lam (y: a) -> a { return y; };
   return f(x);
@@ -53,6 +55,14 @@ contract InferredLocalLambdas {
   // #[(42) -> 42]
   function generic(x: uint256) public returns (uint256) {
     return genericIdentity(x);
+  }
+
+  // #[(40) -> 42]
+  // #[(3) -> 5]
+  function genericCallable(x: uint256) public returns (uint256) {
+    let f = lam (y: uint256) -> uint256 { return y + x; };
+    let g = forwardValue(f);
+    return g(uint256(2));
   }
   // #[(42) -> 42]
   function aliased(x: uint256) public returns (uint256) {
