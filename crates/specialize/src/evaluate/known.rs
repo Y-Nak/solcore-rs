@@ -124,12 +124,12 @@ pub(super) fn bool_expr<'db>(value: bool, ty: MonoTy<'db>, span: Span<'db>) -> M
     }
 }
 
-pub(super) fn match_arms_with<'db, F>(
+pub(super) fn match_arms_with<'a, 'db, F>(
     env: &VEnv<'db>,
     scrutinees: &[MonoExpr<'db>],
-    arms: &[MonoArm<'db>],
+    arms: &'a [MonoArm<'db>],
     is_known: F,
-) -> Option<(VEnv<'db>, Vec<MonoStmt<'db>>)>
+) -> Option<(VEnv<'db>, &'a MonoArm<'db>)>
 where
     F: Fn(&MonoExpr<'db>) -> bool + Copy,
 {
@@ -141,7 +141,7 @@ where
         for (pat, value) in arm.pats.iter().zip(scrutinees) {
             env = match_pat(env, pat, value, is_known)?;
         }
-        Some((env, arm.body.clone()))
+        Some((env, arm))
     })
 }
 

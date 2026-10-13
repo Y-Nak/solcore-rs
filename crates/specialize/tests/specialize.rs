@@ -4381,12 +4381,17 @@ fn main_return_expr<'a, 'db>(output: &'a SpecializeOutput<'db>) -> Option<&'a Mo
         let MonoItem::Function(function) = item else {
             return None;
         };
-        main_names.contains(&function.name).then(|| {
-            function.body.iter().find_map(|stmt| match &stmt.kind {
-                MonoStmtKind::Return(Some(expr)) => Some(expr),
-                _ => None,
-            })
-        })?
+        main_names
+            .contains(&function.name)
+            .then(|| return_expr_in_stmts(&function.body))?
+    })
+}
+
+fn return_expr_in_stmts<'a, 'db>(stmts: &'a [MonoStmt<'db>]) -> Option<&'a MonoExpr<'db>> {
+    stmts.iter().find_map(|stmt| match &stmt.kind {
+        MonoStmtKind::Return(Some(expr)) => Some(expr),
+        MonoStmtKind::Block(body) => return_expr_in_stmts(body),
+        _ => None,
     })
 }
 
