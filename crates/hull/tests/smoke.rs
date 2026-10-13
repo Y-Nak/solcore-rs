@@ -1367,19 +1367,19 @@ contract C {
         ],
     );
     assert!(!main.contains("return sload(0)"), "{main}\n{hull}");
-        assert_contains_in_order(
-                "short-circuit and lowering",
-                main,
-                &["if<", "flag then", "inr<", "else", "inl<"],
-        );
-        assert!(!main.contains("std_and_"), "{main}\n{hull}");
+    assert_contains_in_order(
+        "short-circuit and lowering",
+        main,
+        &["if<", "flag then", "inr<", "else", "inl<"],
+    );
+    assert!(!main.contains("std_and_"), "{main}\n{hull}");
 }
 
 #[test]
 fn audit_std_and_match_binders_do_not_shadow_arguments() {
-        let hull = pretty_src_hull_with_std(
-                "std_and_match_binders",
-                r#"
+    let hull = pretty_src_hull_with_std(
+        "std_and_match_binders",
+        r#"
 import * from std;
 
 contract C {
@@ -1392,8 +1392,8 @@ contract C {
     function main() public returns (bool) { return test(tobool(x)); }
 }
 "#,
-        );
-        let and = hull_function(&hull, "std_and_");
+    );
+    let and = hull_function(&hull, "std_and_");
     assert_contains_in_order(
         "match binder shadowing",
         and,
