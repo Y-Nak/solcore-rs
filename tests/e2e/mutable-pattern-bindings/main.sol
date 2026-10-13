@@ -1,6 +1,37 @@
 import * from std;
 import * from std.dispatch;
 
+function knownIfBinding() returns (word) {
+  let x: word = 1;
+  if (true) { let x: word = 2; }
+  return x;
+}
+
+function comptimePatternWrite() returns (comptime<word>) {
+  let values: (word, word) = (40, 2);
+  match (values) { case (a, b) { a = b; return a; } }
+}
+
+function comptimeAssemblyPatternWrite() returns (comptime<word>) {
+  let values: (word, word) = (40, 2);
+  match (values) {
+    case (a, b) { assembly { a := add(a, b) } return a; }
+  }
+}
+
+function addPatternPair(values: (word, word)) returns (word) {
+  match (values) {
+    case (a, b) {
+      let f: function(word) returns (word) = lam (x: word) -> word {
+        let result: word;
+        assembly { result := add(x, b) }
+        return result;
+      };
+      return f(a);
+    }
+  }
+}
+
 contract MutablePatternBindings {
   count: uint256;
 
@@ -133,6 +164,113 @@ contract MutablePatternBindings {
     let values: (word, word) = (0, 0);
     match (values) { case (x, count) { changeCount(); } }
     return count;
+  }
+
+  // #[() -> 42]
+  function blockStorageShadow() public returns (uint256) {
+    count = uint256(1);
+    { let count: word = 99; changeCount(); }
+    return count;
+  }
+
+  // #[() -> 7]
+  function localFieldNameShadow() public returns (uint256) {
+    let count: word = 7;
+    { let count: word = 99; changeCount(); }
+    return uint256(count);
+  }
+
+  // #[() -> 2]
+  function knownIfRebinding() public returns (uint256) {
+    let x: word = 1;
+    if (true) { let x: word = 2; }
+    return uint256(x);
+  }
+
+  // #[() -> 42]
+  function knownIfDeclaration() public returns (uint256) {
+    if (true) { let x: word = 42; }
+    let answer: comptime<word> = x;
+    return uint256(answer);
+  }
+
+  // #[() -> 2]
+  function pureIfRebinding() public returns (uint256) {
+    return uint256(knownIfBinding());
+  }
+
+  // #[(1) -> 2]
+  // #[(0) -> 3]
+  function runtimeIfRebinding(flag: uint256) public returns (uint256) {
+    let x: word = 1;
+    if (flag == uint256(1)) { let x: word = 2; }
+    else { x = 3; }
+    return uint256(x);
+  }
+
+  // #[() -> 2]
+  function comptimeWrite() public returns (uint256) {
+    return uint256(comptimePatternWrite());
+  }
+
+  // #[() -> 42]
+  function comptimeAssemblyWrite() public returns (uint256) {
+    return uint256(comptimeAssemblyPatternWrite());
+  }
+
+  // #[(40, 2) -> 42]
+  // #[(3, 7) -> 10]
+  function patternAssemblyCapture(x: uint256, y: uint256) public returns (uint256) {
+    return uint256(addPatternPair((Typedef.rep(x), Typedef.rep(y))));
+  }
+
+  // #[() -> 83]
+  function patternCaptureWrite() public returns (uint256) {
+    let values: (word, word) = (0, 41);
+    match (values) {
+      case (a, b) {
+        let f: function() returns (word) = lam () -> word {
+          assembly { b := add(b, 1) sstore(100, b) }
+          return b;
+        };
+        let result: word = f();
+        assembly { result := add(result, b) }
+        return uint256(result);
+      }
+    }
+  }
+
+  // #[() -> 1]
+  function nestedIfScope() public returns (uint256) {
+    let x: word = 1;
+    { if (true) { let x: word = 2; } }
+    let answer: comptime<word> = x;
+    return uint256(answer);
+  }
+
+  // #[() -> 42]
+  function nestedIfWriteBeforeShadow() public returns (uint256) {
+    let x: word = 1;
+    { if (true) { x = 42; let x: word = 99; } }
+    let answer: comptime<word> = x;
+    return uint256(answer);
+  }
+
+  // #[(1) -> 1]
+  // #[(0) -> 1]
+  function runtimeNestedIfScope(flag: uint256) public returns (uint256) {
+    let x: word = 1;
+    { if (flag == uint256(1)) { let x: word = 2; } }
+    let answer: comptime<word> = x;
+    return uint256(answer);
+  }
+
+  // #[(1) -> 42]
+  // #[(0) -> 1]
+  function runtimeNestedIfWriteBeforeShadow(flag: uint256) public returns (uint256) {
+    let x: word = 1;
+    { if (flag == uint256(1)) { x = 42; let x: word = 99; } }
+    return uint256(x);
   }
 
 }
