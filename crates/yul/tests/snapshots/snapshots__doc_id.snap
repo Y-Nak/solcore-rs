@@ -96,60 +96,76 @@ object "IdDocDeploy" {
         leave
       }
       function usr$Typedef_rep_d6e4e5fa6$memory_dda73d3aeLbytes_dc4f6af34J_word(src$x_29) -> gen$result_30 {
-        let src$w_31
-        src$w_31 := src$x_29
-        gen$result_30 := src$w_31
-        leave
+        {
+          let src$w_31
+          src$w_31 := src$x_29
+          gen$result_30 := src$w_31
+          leave
+        }
       }
       function usr$Typedef_rep_d6e4e5fa6$memory_dda73d3aeLstring_d2d06d9f7J_word(src$x_32) -> gen$result_33 {
-        let src$w_34
-        src$w_34 := src$x_32
-        gen$result_33 := src$w_34
-        leave
+        {
+          let src$w_34
+          src$w_34 := src$x_32
+          gen$result_33 := src$w_34
+          leave
+        }
       }
       function usr$Typedef_rep_d87df7559$uint256_d2edb4603_word(src$x_35) -> gen$result_36 {
-        let src$w_37
-        src$w_37 := src$x_35
-        gen$result_36 := src$w_37
-        leave
+        {
+          let src$w_37
+          src$w_37 := src$x_35
+          gen$result_36 := src$w_37
+          leave
+        }
       }
       function usr$Typedef_rep_df279797b$calldata_d8debf069Lbytes_dc4f6af34J_word(src$x_38) -> gen$result_39 {
-        let src$w_40
-        src$w_40 := src$x_38
-        gen$result_39 := src$w_40
-        leave
+        {
+          let src$w_40
+          src$w_40 := src$x_38
+          gen$result_39 := src$w_40
+          leave
+        }
       }
       function usr$WordReader_advance_dbba4aaa0_pcb6af4462cd5d163$ABIDecoder_da57c46d1Luint256_d2edb4603_CalldataWordReader_d3137e4ffJ(src$decoder_41, src$offset_42) -> gen$result_43 {
-        let src$ptr_44
-        src$ptr_44 := src$decoder_41
-        let _v16
-        _v16 := usr$WordReader_advance_ddbeacc0b$CalldataWordReader_d3137e4ff(src$ptr_44, src$offset_42)
-        gen$result_43 := _v16
-        leave
+        {
+          let src$ptr_44
+          src$ptr_44 := src$decoder_41
+          let _v16
+          _v16 := usr$WordReader_advance_ddbeacc0b$CalldataWordReader_d3137e4ff(src$ptr_44, src$offset_42)
+          gen$result_43 := _v16
+          leave
+        }
       }
       function usr$WordReader_advance_ddbeacc0b$CalldataWordReader_d3137e4ff(src$reader_45, src$offset_46) -> gen$result_47 {
-        let src$ptr_48
-        src$ptr_48 := src$reader_45
-        let _v17
-        _v17 := usr$Add_add_d2e932f0d$word(src$ptr_48, src$offset_46)
-        gen$result_47 := _v17
-        leave
+        {
+          let src$ptr_48
+          src$ptr_48 := src$reader_45
+          let _v17
+          _v17 := usr$Add_add_d2e932f0d$word(src$ptr_48, src$offset_46)
+          gen$result_47 := _v17
+          leave
+        }
       }
       function usr$WordReader_read_dad71a7e5_pcb6af4462cd5d163$ABIDecoder_da57c46d1Luint256_d2edb4603_CalldataWordReader_d3137e4ffJ(src$decoder_49) -> gen$result_50 {
-        let src$ptr_51
-        src$ptr_51 := src$decoder_49
-        let _v18
-        _v18 := usr$WordReader_read_df18f24f1$CalldataWordReader_d3137e4ff(src$ptr_51)
-        gen$result_50 := _v18
-        leave
+        {
+          let src$ptr_51
+          src$ptr_51 := src$decoder_49
+          let _v18
+          _v18 := usr$WordReader_read_df18f24f1$CalldataWordReader_d3137e4ff(src$ptr_51)
+          gen$result_50 := _v18
+          leave
+        }
       }
       function usr$WordReader_read_df18f24f1$CalldataWordReader_d3137e4ff(src$reader_52) -> gen$result_53 {
-        let src$ptr_54
-        src$ptr_54 := src$reader_52
-        let _v19
-        _v19 := usr$opcodes_calldataload_d37992dc7(src$ptr_54)
-        gen$result_53 := _v19
-        leave
+        {
+          let src$ptr_54
+          src$ptr_54 := src$reader_52
+          let _v19
+          _v19 := usr$opcodes_calldataload_d37992dc7(src$ptr_54)
+          gen$result_53 := _v19
+          leave
+        }
       }
       function usr$dispatch_selector_matches_de46e52b9$Method_dcbe49e39LDispatchNameTy_IdDoc_id_d5611abab_NonPayable_da3e44601_uint256_d2edb4603_uint256_d2edb4603_fnLuint256_d2edb4603JRuint256_d2edb4603JJ() -> _v20 {
         let src$candidate_55
@@ -171,99 +187,113 @@ object "IdDocDeploy" {
       }
       function usr$doc_id_IdDoc_main_d45c46589() {
         {
-          mstore(0x40, memoryguard(128))
-          let _v24
-          let _v25
-          _v25 := usr$opcodes_calldatasize_dee48adc5()
-          let _v26
-          _v26 := usr$std_ge_df0bec9f4$word(_v25, 4)
-          _v24 := _v26
-          switch _v24
-            case false {
-              /* false */
-            }
-            case true {
-              {
-                /* true */
+          {
+            mstore(0x40, memoryguard(128))
+            let _v24
+            let _v25
+            _v25 := usr$opcodes_calldatasize_dee48adc5()
+            let _v26
+            _v26 := usr$std_ge_df0bec9f4$word(_v25, 4)
+            _v24 := _v26
+            switch _v24
+              case false {
+                /* false */
                 {
-                  let _v27
-                  let _v28
-                  _v28 := usr$dispatch_selector_matches_de46e52b9$Method_dcbe49e39LDispatchNameTy_IdDoc_id_d5611abab_NonPayable_da3e44601_uint256_d2edb4603_uint256_d2edb4603_fnLuint256_d2edb4603JRuint256_d2edb4603JJ()
-                  _v27 := _v28
-                  switch _v27
-                    case false {
-                      /* false */
-                    }
-                    case true {
-                      {
-                        /* true */
-                        {
-                          {
-                            let _v29
-                            let _v30
-                            let _v31
-                            _v29 := false
-                            _v30 := 0xb5988ea3
-                            let _v32
-                            _v32 := usr$opcodes_callvalue_d4847a28f()
-                            let _v33
-                            _v33 := usr$Eq_eq_d6d5d59e2$word(_v32, 0)
-                            usr$std_require_d22809541(_v33, _v29, _v30, _v31)
-                          }
-                          {
-                            let _v34
-                            _v34 := usr$opcodes_calldatasize_dee48adc5()
-                            let _v35
-                            _v35 := usr$std_ge_df0bec9f4$word(_v34, 36)
-                            usr$std_require_d22809541(_v35, false, 0x08638556, 911)
-                            let src$ptr_59
-                            src$ptr_59 := 4
-                            let src$args_60
-                            let _v36
-                            _v36 := usr$std_abi_decode_debc005b9$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(src$ptr_59)
-                            src$args_60 := _v36
-                            let src$rets_61
-                            let _v37
-                            _v37 := usr$doc_id_IdDoc_id_df22a7aef(src$args_60)
-                            src$rets_61 := _v37
-                            let src$ptr_62
-                            let _v38
-                            _v38 := usr$std_abi_encode_d3b55212b$uint256_d2edb4603(src$rets_61)
-                            src$ptr_62 := _v38
-                            let _v39
-                            _v39 := usr$MemoryPointer_ptr_dbc7e9939$memory_dda73d3aeLbytes_dc4f6af34J(src$ptr_62)
-                            let _v40
-                            _v40 := usr$MemorySize_len_da518cdbc$memory_dda73d3aeLbytes_dc4f6af34J(src$ptr_62)
-                            usr$opcodes_return__d05fa185f(_v39, _v40)
-                          }
-                        }
-                      }
-                    }
                 }
               }
-            }
-          {
+              case true {
+                {
+                  /* true */
+                  {
+                    {
+                      let _v27
+                      let _v28
+                      _v28 := usr$dispatch_selector_matches_de46e52b9$Method_dcbe49e39LDispatchNameTy_IdDoc_id_d5611abab_NonPayable_da3e44601_uint256_d2edb4603_uint256_d2edb4603_fnLuint256_d2edb4603JRuint256_d2edb4603JJ()
+                      _v27 := _v28
+                      switch _v27
+                        case false {
+                          /* false */
+                          {
+                          }
+                        }
+                        case true {
+                          {
+                            /* true */
+                            {
+                              {
+                                {
+                                  {
+                                    let _v29
+                                    let _v30
+                                    let _v31
+                                    _v29 := false
+                                    _v30 := 0xb5988ea3
+                                    let _v32
+                                    _v32 := usr$opcodes_callvalue_d4847a28f()
+                                    let _v33
+                                    _v33 := usr$Eq_eq_d6d5d59e2$word(_v32, 0)
+                                    usr$std_require_d22809541(_v33, _v29, _v30, _v31)
+                                  }
+                                  {
+                                    let _v34
+                                    _v34 := usr$opcodes_calldatasize_dee48adc5()
+                                    let _v35
+                                    _v35 := usr$std_ge_df0bec9f4$word(_v34, 36)
+                                    usr$std_require_d22809541(_v35, false, 0x08638556, 911)
+                                    let src$ptr_59
+                                    src$ptr_59 := 4
+                                    let src$args_60
+                                    let _v36
+                                    _v36 := usr$std_abi_decode_debc005b9$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(src$ptr_59)
+                                    src$args_60 := _v36
+                                    let src$rets_61
+                                    let _v37
+                                    _v37 := usr$doc_id_IdDoc_id_df22a7aef(src$args_60)
+                                    src$rets_61 := _v37
+                                    let src$ptr_62
+                                    let _v38
+                                    _v38 := usr$std_abi_encode_d3b55212b$uint256_d2edb4603(src$rets_61)
+                                    src$ptr_62 := _v38
+                                    let _v39
+                                    _v39 := usr$MemoryPointer_ptr_dbc7e9939$memory_dda73d3aeLbytes_dc4f6af34J(src$ptr_62)
+                                    let _v40
+                                    _v40 := usr$MemorySize_len_da518cdbc$memory_dda73d3aeLbytes_dc4f6af34J(src$ptr_62)
+                                    usr$opcodes_return__d05fa185f(_v39, _v40)
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                    }
+                  }
+                }
+              }
             {
-              let _v41
-              let _v42
-              let _v43
-              _v41 := false
-              _v42 := 0xb5988ea3
-              let _v44
-              _v44 := usr$opcodes_callvalue_d4847a28f()
-              let _v45
-              _v45 := usr$Eq_eq_d6d5d59e2$word(_v44, 0)
-              usr$std_require_d22809541(_v45, _v41, _v42, _v43)
+              {
+                {
+                  let _v41
+                  let _v42
+                  let _v43
+                  _v41 := false
+                  _v42 := 0xb5988ea3
+                  let _v44
+                  _v44 := usr$opcodes_callvalue_d4847a28f()
+                  let _v45
+                  _v45 := usr$Eq_eq_d6d5d59e2$word(_v44, 0)
+                  usr$std_require_d22809541(_v45, _v41, _v42, _v43)
+                }
+                {
+                  let _v46
+                  let _v47
+                  let _v48
+                  _v46 := false
+                  _v47 := 0x4924aef0
+                  usr$std_revertWithError_d94ee902a(_v46, _v47, _v48)
+                }
+                stop()
+              }
             }
-            {
-              let _v46
-              let _v47
-              let _v48
-              _v46 := false
-              _v47 := 0x4924aef0
-              usr$std_revertWithError_d94ee902a(_v46, _v47, _v48)
-            }
-            stop()
           }
         }
         leave
@@ -363,14 +393,18 @@ object "IdDocDeploy" {
         switch _v62
           case false {
             /* false */
-            _v63 := true
-            leave
+            {
+              _v63 := true
+              leave
+            }
           }
           case true {
             {
               /* true */
-              _v63 := false
-              leave
+              {
+                _v63 := false
+                leave
+              }
             }
           }
       }
@@ -382,11 +416,15 @@ object "IdDocDeploy" {
         switch _v68
           case false {
             /* false */
+            {
+            }
           }
           case true {
             {
               /* true */
-              usr$std_revertWithError_d94ee902a(_v65, _v66, _v67)
+              {
+                usr$std_revertWithError_d94ee902a(_v65, _v66, _v67)
+              }
             }
           }
       }
@@ -394,31 +432,37 @@ object "IdDocDeploy" {
         switch _v70
           case false {
             /* Error */
-            let src$selector_96
-            src$selector_96 := _v71
-            usr$opcodes_mstore_d7415bc7e(0, src$selector_96)
-            usr$opcodes_revert__df9f680cd(28, 4)
+            {
+              let src$selector_96
+              src$selector_96 := _v71
+              usr$opcodes_mstore_d7415bc7e(0, src$selector_96)
+              usr$opcodes_revert__df9f680cd(28, 4)
+            }
           }
           case true {
             switch _v71
               case false {
                 /* Empty */
-                usr$opcodes_revert__df9f680cd(0, 0)
+                {
+                  usr$opcodes_revert__df9f680cd(0, 0)
+                }
               }
               case true {
                 {
                   /* Msg */
-                  let src$msg_97
-                  src$msg_97 := _v72
-                  let src$msg__98
-                  let _v73
-                  _v73 := usr$Typedef_rep_d6e4e5fa6$memory_dda73d3aeLstring_d2d06d9f7J_word(src$msg_97)
-                  src$msg__98 := _v73
-                  let _v74
-                  _v74 := usr$Add_add_d2e932f0d$word(src$msg__98, 32)
-                  let _v75
-                  _v75 := usr$opcodes_mload_d8413229c(src$msg__98)
-                  usr$opcodes_revert__df9f680cd(_v74, _v75)
+                  {
+                    let src$msg_97
+                    src$msg_97 := _v72
+                    let src$msg__98
+                    let _v73
+                    _v73 := usr$Typedef_rep_d6e4e5fa6$memory_dda73d3aeLstring_d2d06d9f7J_word(src$msg_97)
+                    src$msg__98 := _v73
+                    let _v74
+                    _v74 := usr$Add_add_d2e932f0d$word(src$msg__98, 32)
+                    let _v75
+                    _v75 := usr$opcodes_mload_d8413229c(src$msg__98)
+                    usr$opcodes_revert__df9f680cd(_v74, _v75)
+                  }
                 }
               }
           }
