@@ -1121,13 +1121,14 @@ impl<'db> Evaluator<'db> {
                 let lhs = self.eval_expr(env, comptime_env, *lhs);
                 if matches!(op, BinOp::And | BinOp::Or) {
                     let Some(lhs_value) = known_bool(self.db, &lhs) else {
+                        let rhs = self.eval_expr(env, comptime_env, *rhs);
                         return MonoExpr {
                             span,
                             ty,
                             kind: MonoExprKind::BinOp {
                                 lhs: Box::new(lhs),
                                 op,
-                                rhs,
+                                rhs: Box::new(rhs),
                             },
                         };
                     };
