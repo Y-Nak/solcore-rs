@@ -917,7 +917,7 @@ contract Batch {
 }
 
 #[test]
-fn calldata_tuple_array_json_preserves_components_and_runtime_sigstring_shape() {
+fn calldata_tuple_array_uses_canonical_signature_and_json_components() {
     let (mut db, key) = db_with_main(
         r#"
 import * from std;
@@ -936,8 +936,9 @@ contract Tuples {
     let surface = contract_dispatch_surface(&db, module, contract);
     let method = &surface.methods[0];
 
-    // std.dispatch appends [] to the comma-joined pair SigString.
-    assert_eq!(method.signature, "first(uint256,address[])");
+    // A tuple array is one ABI type, with parentheses around its element.
+    assert_eq!(method.signature, "first((uint256,address)[])");
+    assert_eq!(method.selector.to_hex(), "0x01de5ccf");
     assert_eq!(method.inputs[0].ty.to_string(), "tuple[]");
     assert_eq!(method.inputs[0].components.len(), 2);
     assert_eq!(method.inputs[0].components[0].ty.to_string(), "uint256");

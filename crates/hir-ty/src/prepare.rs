@@ -769,12 +769,23 @@ fn constructor_copy_yul<'db>(
         vec![codesize, yul_ident_expr(db, span, "programSize")],
     );
     let free_ptr = yul_call(db, span, "mload", vec![yul_number(span, "64")]);
-    let new_free_ptr = yul_call(
+    // Constructor arguments use the same length-prefixed memory<bytes>
+    // representation as abi_encode and every other memory byte buffer.
+    let payload_ptr = yul_call(
         db,
         span,
         "add",
         vec![
             yul_ident_expr(db, span, "memoryDataOffset"),
+            yul_number(span, "32"),
+        ],
+    );
+    let new_free_ptr = yul_call(
+        db,
+        span,
+        "add",
+        vec![
+            yul_ident_expr(db, span, "payloadOffset"),
             yul_ident_expr(db, span, "argSize"),
         ],
     );
@@ -789,8 +800,17 @@ fn constructor_copy_yul<'db>(
         span,
         "codecopy",
         vec![
-            yul_ident_expr(db, span, "memoryDataOffset"),
+            yul_ident_expr(db, span, "payloadOffset"),
             yul_ident_expr(db, span, "programSize"),
+            yul_ident_expr(db, span, "argSize"),
+        ],
+    );
+    let store_length = yul_call(
+        db,
+        span,
+        "mstore",
+        vec![
+            yul_ident_expr(db, span, "memoryDataOffset"),
             yul_ident_expr(db, span, "argSize"),
         ],
     );
@@ -798,7 +818,9 @@ fn constructor_copy_yul<'db>(
         yul_let(db, span, "programSize", Some(program_size)),
         yul_let(db, span, "argSize", Some(arg_size)),
         yul_assign(db, span, "memoryDataOffset", free_ptr),
+        yul_let(db, span, "payloadOffset", Some(payload_ptr)),
         yul_expr_stmt(span, update_free_ptr),
+        yul_expr_stmt(span, store_length),
         yul_expr_stmt(span, copy),
     ]
 }

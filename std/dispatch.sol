@@ -4,6 +4,7 @@ import * from std.Generic;
 
 export {
     ABIString,
+    ABITypeString,
     Contract(*),
     ExecMethod,
     Fallback(*),
@@ -104,6 +105,25 @@ impl<a, b> SigString<(a, b)> where a: SigString, b: SigString {
     }
 }
 
+// SigString describes a comma-separated product (method arguments and generic
+// fields). A type used within another type, such as an array element, needs
+// tuple parentheses so `(A,B)[]` cannot collapse into `A,B[]`.
+trait ABITypeString<t> {
+    function typeStr(x: Proxy<t>) returns (string);
+}
+
+default impl<t> ABITypeString<t> where t: SigString {
+    function typeStr(x: Proxy<t>) returns (string) {
+        return SigString.sigStr(x);
+    }
+}
+
+impl<a, b> ABITypeString<(a, b)> where a: SigString, b: SigString {
+    function typeStr(x: Proxy<(a, b)>) returns (string) {
+        return "(" + SigString.sigStr(x) + ")";
+    }
+}
+
 // A tagged union (the SOP form of an ADT with several constructors). There is no
 // standard ABI type for sums, so this signature is structural: the branch
 // signatures wrapped in a `sum(l,r)` constructor. The explicit `sum(...)` wrapper
@@ -121,9 +141,9 @@ impl<f, g> SigString<sum<f, g>> where f: SigString, g: SigString {
 // The element carries its own (structural, for ADTs) signature, so an array of a
 // sum type reads `sum(l,r)[]`. Location is transparent to the ABI, so this keys
 // on the calldata form the dispatch decodes from.
-impl<t> SigString<calldata<array<t>>> where t: SigString {
+impl<t> SigString<calldata<array<t>>> where t: ABITypeString {
     function sigStr(x: Proxy<calldata<array<t>>>) returns (string) {
-        return SigString.sigStr(@t) + "[]";
+        return ABITypeString.typeStr(@t) + "[]";
     }
 }
 
@@ -210,8 +230,6 @@ impl<payability, fn> ExecMethod<Fallback<payability, (), (), fn>> where fn: invo
 function do_exec<args, rets, fn>(pargs: Proxy<args>, prets: Proxy<rets>, fn: fn) returns (()) where fn: invokable<args, rets>, args: ABIAttribs, rets: ABIAttribs, ABIDecoder<args, CalldataWordReader>: ABIDecode<args>, rets: ABIEncode {
     // check we have enough calldata for the head of args
     require(calldatasize() >= (ABIAttribs.headSize(pargs) + 4), Error(0x08638556)); // ABIInputTruncated()
-
-    // TODO: calldatasize checks for dynamic types
 
     // abi decode args from calldata
     let ptr: calldata<bytes> = calldata(4);

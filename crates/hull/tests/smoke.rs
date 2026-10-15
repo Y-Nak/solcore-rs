@@ -508,7 +508,15 @@ contract C {
     assert!(!outer.contains("minimumSize"), "{hull}");
     assert!(!outer.contains("BoundedMemoryWordReader"), "{hull}");
     assert!(
-        outer.contains("codecopy(memoryDataOffset, programSize, argSize)"),
+        outer.contains("mstore(memoryDataOffset, argSize)"),
+        "{hull}"
+    );
+    assert!(
+        outer.contains("payloadOffset := add(memoryDataOffset, 32)"),
+        "{hull}"
+    );
+    assert!(
+        outer.contains("codecopy(payloadOffset, programSize, argSize)"),
         "{hull}"
     );
     assert!(

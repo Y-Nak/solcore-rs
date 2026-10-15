@@ -3016,7 +3016,7 @@ enum Choice {Left(uint256) , Right(address)}
 contract C {
   function main() returns (word) {
     let buf = allocate_zeroed_memory(64);
-    let rdr : MemoryWordReader = MemoryWordReader(buf);
+    let rdr : MemoryWordReader = MemoryWordReader(buf, buf + 64);
     let dec : ABIDecoder<Choice, MemoryWordReader> =
         ABIDecoder(rdr) ;
     let value : Choice = decode(dec, 0);

@@ -172,7 +172,7 @@ fn signature_type_string<'db>(
             if let Some(element) = canonical_calldata_array_element(db, user, args)? {
                 return Ok(format!(
                     "{}[]",
-                    generic_sig_string(db, element, adt_stack, abi_evidence,)?
+                    abi_type_sig_string(db, element, adt_stack, abi_evidence)?
                 ));
             }
             if let Some(name) = canonical_location_abi_name(db, user, args)? {
@@ -465,7 +465,7 @@ fn generic_sig_string<'db>(
             if let Some(element) = canonical_calldata_array_element(db, user, args)? {
                 return Ok(format!(
                     "{}[]",
-                    generic_sig_string(db, element, adt_stack, abi_evidence,)?
+                    abi_type_sig_string(db, element, adt_stack, abi_evidence)?
                 ));
             }
             if let Some(name) = canonical_location_abi_name(db, user, args)? {
@@ -476,6 +476,25 @@ fn generic_sig_string<'db>(
         }
         TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => Err(ty.display(db)),
         TyKind::Named { .. } | TyKind::Function { .. } | TyKind::Comptime(_) => Err(ty.display(db)),
+    }
+}
+
+/// Mirrors `ABITypeString`: a product used as one ABI type has parentheses,
+/// whereas `SigString` renders its fields as an argument list.
+fn abi_type_sig_string<'db>(
+    db: &'db dyn Db,
+    ty: Ty<'db>,
+    adt_stack: &mut AbiAdtStack<'db>,
+    abi_evidence: &AbiAdtEvidence<'db>,
+) -> Result<String, String> {
+    let signature = generic_sig_string(db, ty, adt_stack, abi_evidence)?;
+    match ty.kind(db) {
+        TyKind::Tuple(_) => Ok(format!("({signature})")),
+        TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
+            args,
+        } if args.len() == 2 => Ok(format!("({signature})")),
+        _ => Ok(signature),
     }
 }
 
