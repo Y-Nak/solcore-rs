@@ -98,7 +98,12 @@ pub(crate) fn module_fs_snapshot_for_roots<'a>(
     let mut existing_files = BTreeSet::new();
     let mut sibling_stems = BTreeMap::<PathBuf, BTreeSet<String>>::new();
     for root in roots {
-        collect_module_fs_snapshot(root, &mut existing_files, &mut sibling_stems);
+        collect_module_fs_snapshot(
+            root,
+            &mut existing_files,
+            &mut sibling_stems,
+            &mut BTreeSet::new(),
+        );
     }
     let sibling_stems = sibling_stems
         .into_iter()
@@ -111,8 +116,19 @@ fn collect_module_fs_snapshot(
     dir: &Path,
     existing_files: &mut BTreeSet<PathBuf>,
     sibling_stems: &mut BTreeMap<PathBuf, BTreeSet<String>>,
+    ancestors: &mut BTreeSet<PathBuf>,
 ) {
+    // Preserve distinct logical import paths through directory symlinks while
+    // refusing to revisit a physical ancestor. A global visited set would make
+    // an otherwise valid alias disappear depending on directory iteration order.
+    let Ok(identity) = fs::canonicalize(dir) else {
+        return;
+    };
+    if !ancestors.insert(identity.clone()) {
+        return;
+    }
     let Ok(entries) = fs::read_dir(dir) else {
+        ancestors.remove(&identity);
         return;
     };
     for entry in entries.flatten() {
@@ -129,9 +145,10 @@ fn collect_module_fs_snapshot(
             }
         }
         if path.is_dir() {
-            collect_module_fs_snapshot(&path, existing_files, sibling_stems);
+            collect_module_fs_snapshot(&path, existing_files, sibling_stems, ancestors);
         }
     }
+    ancestors.remove(&identity);
 }
 
 /// Converts a possibly relative path to a lexically normalized absolute path
@@ -177,6 +194,47 @@ fn repo_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn module_discovery_preserves_aliases_but_stops_directory_cycles() {
+        use std::os::unix::fs::symlink;
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = env::temp_dir().join(format!(
+            "solcore-module-links-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(root.join("lib")).unwrap();
+        fs::write(root.join("main.sol"), "").unwrap();
+        fs::write(root.join("lib/leaf.sol"), "").unwrap();
+        symlink(".", root.join("a")).unwrap();
+        symlink(".", root.join("b")).unwrap();
+        symlink("..", root.join("lib/parent")).unwrap();
+        symlink("lib", root.join("alias")).unwrap();
+        symlink("main.sol", root.join("file.sol")).unwrap();
+
+        let mut files = BTreeSet::new();
+        let mut siblings = BTreeMap::new();
+        let mut ancestors = BTreeSet::new();
+        collect_module_fs_snapshot(&root, &mut files, &mut siblings, &mut ancestors);
+        assert_eq!(
+            files,
+            ["main.sol", "file.sol", "lib/leaf.sol", "alias/leaf.sol"]
+                .map(|path| root.join(path))
+                .into_iter()
+                .collect()
+        );
+        assert_eq!(
+            siblings[&root.join("alias")],
+            BTreeSet::from(["leaf".to_owned()])
+        );
+        assert!(ancestors.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn lexical_normalization_removes_dot_and_parent_components() {
