@@ -73,6 +73,11 @@ The native and browser language servers use the same formatter for document
 formatting, respecting the editor's indentation and final-newline preferences.
 Documents with syntax errors are left unchanged in the editor.
 
+The existing CI tests also require Solcore test fixtures, E2E sources, fuzz
+seeds, playground examples, and the standard library to be formatted. Only
+unparseable fixtures in the designated syntax-error test directories are exempt.
+Run this check locally with `cargo test -p solcore-parser --test formatting --locked`.
+
 Before `--write` replaces any file, every input is read and formatted, and all
 changed results are staged in the destination directories. Individual files
 are replaced atomically with their permissions preserved. Symlinks and

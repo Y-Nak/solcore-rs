@@ -1,3 +1,5 @@
+use std::{fs, path::Path};
+
 use dir_test::{Fixture, dir_test};
 use proptest::prelude::*;
 use solcore_parser::format::{FormatOptions, format_source};
@@ -138,6 +140,78 @@ fn formatting_standard_library(fixture: Fixture<&str>) {
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/../../tests/e2e", glob: "**/*.sol")]
 fn formatting_e2e_sources(fixture: Fixture<&str>) {
     assert_stable(fixture.content());
+}
+
+#[test]
+fn repository_fixtures_are_formatted() {
+    // Match the diagnostic fixture runner's stack for deep parser regressions.
+    let result = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(check_repository_fixture_formatting)
+        .expect("spawn fixture formatting check")
+        .join();
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn check_repository_fixture_formatting() {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let mut directories = vec![
+        workspace.join("std"),
+        workspace.join("tests/e2e"),
+        workspace.join("fuzz/corpus"),
+        workspace.join("playground/src/examples"),
+    ];
+    for entry in fs::read_dir(workspace.join("crates")).unwrap() {
+        let tests = entry.unwrap().path().join("tests");
+        if tests.is_dir() {
+            directories.push(tests);
+        }
+    }
+
+    // Discover files at runtime so newly added fixtures are checked even when
+    // Cargo reuses a test binary compiled before those files existed.
+    let mut files = Vec::new();
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(&directory).unwrap() {
+            let entry = entry.unwrap();
+            let kind = entry.file_type().unwrap();
+            let path = entry.path();
+            if kind.is_dir() {
+                directories.push(path);
+            } else if kind.is_file() && path.extension().is_some_and(|ext| ext == "sol") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    assert!(!files.is_empty(), "no Solcore fixtures found");
+
+    let syntax_error_roots = [
+        workspace.join("crates/parser/tests/fixtures/corpus/fail"),
+        workspace.join("crates/uitest/tests/fixtures/parse"),
+    ];
+    for path in files {
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+        match format_source(&source, &FormatOptions::default()) {
+            Ok(formatted) => assert!(
+                source == formatted,
+                "{} needs formatting; run: cargo run -p solcore-fmt -- --write \"{}\"",
+                path.display(),
+                path.display()
+            ),
+            // Do not exempt whole negative-test directories: their parseable
+            // fixtures must be formatted too.
+            Err(_) if syntax_error_roots.iter().any(|root| path.starts_with(root)) => {}
+            Err(error) => panic!("cannot format {}: {error}", path.display()),
+        }
+    }
 }
 
 proptest! {
