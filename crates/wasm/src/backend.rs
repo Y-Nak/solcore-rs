@@ -40,7 +40,7 @@ pub(crate) fn compile_program(
     program: &hull::Program<'_>,
 ) -> Result<Vec<ObjectCode>, String> {
     match backend {
-        Backend::Sonatina => compile_with_sonatina(db, program),
+        Backend::Sonatina => compile_with_sonatina(db, program, None),
         Backend::Solc => {
             if program.objects.is_empty() {
                 let yul = yul::render_hull_program(db, program)
@@ -62,8 +62,8 @@ pub(crate) fn compile_program(
 }
 
 /// Compiles a single-contract program whose runtime code returns the value
-/// of `entry`. Sonatina adds that wrapper itself when the runtime object has
-/// no statements, so callers clear the runtime statements for both backends.
+/// of the explicitly named `entry`. Callers clear the runtime statements so
+/// both backends invoke that function exactly once.
 pub(crate) fn compile_returning_entry(
     backend: Backend,
     db: &AnalysisHost,
@@ -71,7 +71,7 @@ pub(crate) fn compile_returning_entry(
     entry: &str,
 ) -> Result<ObjectCode, String> {
     let mut objects = match backend {
-        Backend::Sonatina => compile_with_sonatina(db, program)?,
+        Backend::Sonatina => compile_with_sonatina(db, program, Some(entry))?,
         Backend::Solc => {
             let yul = yul::render_hull_program_returning_runtime_entry(db, program, entry)
                 .map_err(|error| format!("Yul translation failed: {error}"))?;
@@ -87,9 +87,13 @@ pub(crate) fn compile_returning_entry(
 fn compile_with_sonatina(
     db: &AnalysisHost,
     program: &hull::Program<'_>,
+    returning_entry: Option<&str>,
 ) -> Result<Vec<ObjectCode>, String> {
-    let module = sonatina::translate_hull_program(db, program)
-        .map_err(|error| format!("Sonatina translation failed: {error}"))?;
+    let module = match returning_entry {
+        Some(entry) => sonatina::translate_hull_program_returning_runtime_entry(db, program, entry),
+        None => sonatina::translate_hull_program(db, program),
+    }
+    .map_err(|error| format!("Sonatina translation failed: {error}"))?;
     let artifacts = EvmCompile::new(module)
         .with_opt_level(OptLevel::O0)
         .compile()

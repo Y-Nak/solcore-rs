@@ -42,6 +42,19 @@ pub fn translate_hull_program<'db>(
     lower::translate_hull_program(db, program)
 }
 
+/// Lowers a single-contract program with a wrapper that calls the named runtime
+/// entry and returns its scalar result as 32 bytes of EVM return data.
+///
+/// The wrapper follows the runtime object's own statements. Callers that want
+/// only the named function to run should clear those statements first.
+pub fn translate_hull_program_returning_runtime_entry<'db>(
+    db: &'db dyn HirDb,
+    program: &HullProgram<'db>,
+    entry: &str,
+) -> Result<Module, TranslationError> {
+    lower::translate_hull_program_returning_runtime_entry(db, program, entry)
+}
+
 /// Lowers and prints a checked Hull program as textual Sonatina IR.
 pub fn render_hull_program<'db>(
     db: &'db dyn HirDb,

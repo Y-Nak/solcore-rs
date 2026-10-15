@@ -1,5 +1,6 @@
 ---
 source: crates/sonatina/tests/lowering.rs
+assertion_line: 729
 expression: ir
 ---
 target = "evm-ethereum-osaka"
@@ -44,7 +45,7 @@ func private %solcore_fn_12_object0_2einit_37_main_5fStorageContract_5f_5fstart_
 func public %solcore_entry_12_object0_2einit() {
     block0:
         call %solcore_fn_12_object0_2einit_37_main_5fStorageContract_5f_5fstart_5fd31013ee5;
-        return;
+        evm_stop;
 }
 
 func private %solcore_fn_19_object0_2einner0_2einit_35_main_5fStorageContract_5fmain_5fdd00fb0b6() -> i256 {
@@ -63,7 +64,7 @@ func private %solcore_fn_19_object0_2einner0_2einit_37_main_5fStorageContract_5f
 func public %solcore_entry_19_object0_2einner0_2einit() {
     block0:
         v0.i256 = call %solcore_fn_19_object0_2einner0_2einit_35_main_5fStorageContract_5fmain_5fdd00fb0b6;
-        return;
+        evm_stop;
 }
 
 

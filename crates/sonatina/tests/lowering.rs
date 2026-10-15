@@ -16,7 +16,9 @@ use hull::{
 };
 use nameres::{Db as _, ModuleTree, module_id_from_key};
 use parser::parse_file_to_hir;
-use solcore_sonatina::{render_hull_program, translate_hull_program};
+use solcore_sonatina::{
+    render_hull_program, translate_hull_program, translate_hull_program_returning_runtime_entry,
+};
 use solcore_test_utils::{
     FrontendTestDb, define_frontend_test_db, load_main_source, load_reachable_modules,
     load_reachable_modules_with_file_urls, module_fs_snapshot_for_roots, repo_root_from_manifest,
@@ -378,6 +380,152 @@ fn lowers_direct_nary_injections_matches_and_terminal_builtins() {
     assert!(ir.matches("enum.make").count() >= 2, "{ir}");
     assert!(ir.contains("enum.is_variant"), "{ir}");
     assert!(ir.contains("evm_stop;"), "{ir}");
+}
+
+#[test]
+fn object_less_entry_uses_declared_identity_instead_of_main_name_prefix() {
+    let (module, ir) = lower_source(
+        r#"
+function main_a() returns (word) {
+  let x: word;
+  assembly { x := calldatasize() }
+  return x;
+}
+function main() returns (word) { return primAddWord(main_a(), 42); }
+"#,
+    );
+    let entry = ir
+        .split("func public %solcore_entry_12_root_2eruntime")
+        .nth(1)
+        .expect("object-less entry");
+    assert!(entry.contains("main_5fmain_5fd"), "{ir}");
+    assert!(!entry.contains("main_5fmain_5fa_5fd"), "{ir}");
+
+    if solcore_test_utils::e2e::e2e_enabled() {
+        use solcore_test_utils::e2e::{encode_hex, parse_e2e_scenario, with_evm_harness};
+        use sonatina_codegen::{EvmCompile, OptLevel};
+
+        let artifacts = EvmCompile::new(module)
+            .with_opt_level(OptLevel::O2)
+            .compile()
+            .expect("compile object-less entry");
+        let creation = artifacts[0]
+            .sections
+            .iter()
+            .find(|(name, _)| name.0.as_str() == "init")
+            .expect("entry init section");
+        let vector = parse_e2e_scenario(
+            "OutputDeploy",
+            [
+                r#"#[scenario("entry_identity")]"#,
+                "#[deploy(0x) -> success(0x000000000000000000000000000000000000000000000000000000000000002a)]",
+            ],
+        )
+        .expect("valid entry execution scenario")
+        .expect("entry execution scenario");
+        with_evm_harness(|harness| {
+            if let Some(harness) = harness {
+                harness.execute_raw_vector(&encode_hex(&creation.1.bytes), &vector)?;
+            }
+            Ok(())
+        })
+        .expect("declared entry returns 42");
+    }
+}
+
+#[test]
+fn missing_or_ambiguous_declared_entry_is_rejected() {
+    let db = TestDb::default();
+    let span = test_span(&db);
+    for entries in [
+        vec!["missing".into()],
+        vec!["first".into(), "second".into()],
+    ] {
+        let program = Program {
+            span,
+            entry_points: entries,
+            functions: Vec::new(),
+            objects: Vec::new(),
+        };
+        assert!(translate_hull_program(&db, &program).is_err());
+    }
+}
+
+#[test]
+fn runtime_return_wrapper_uses_an_explicit_checked_entry() {
+    let db = TestDb::default();
+    let span = test_span(&db);
+    let function = |name: &str, value: &str| Function {
+        span,
+        name: name.into(),
+        args: Vec::new(),
+        ret: Ty::word(span),
+        body: vec![Stmt {
+            span,
+            kind: StmtKind::Return(Expr::word(span, value)),
+        }],
+    };
+    let mut program = Program {
+        span,
+        entry_points: Vec::new(),
+        functions: Vec::new(),
+        objects: vec![Object {
+            span,
+            name: "ContractDeploy".into(),
+            code: CodeBlock {
+                span,
+                stmts: Vec::new(),
+                functions: Vec::new(),
+            },
+            inners: vec![Object {
+                span,
+                name: "Contract".into(),
+                code: CodeBlock {
+                    span,
+                    stmts: Vec::new(),
+                    functions: vec![function("main", "7"), function("selected", "42")],
+                },
+                inners: Vec::new(),
+            }],
+        }],
+    };
+    let ordinary_ir = render_hull_program(&db, &program).expect("ordinary empty runtime");
+    let ordinary_entry = ordinary_ir
+        .split("func public %solcore_entry_19_object0_2einner0_2einit")
+        .nth(1)
+        .expect("ordinary runtime entry")
+        .split("\n}")
+        .next()
+        .unwrap();
+    assert!(ordinary_entry.contains("evm_stop"), "{ordinary_ir}");
+    assert!(!ordinary_entry.contains("call "), "{ordinary_ir}");
+    let module = translate_hull_program_returning_runtime_entry(&db, &program, "selected")
+        .expect("explicit runtime entry");
+    let ir = ModuleWriter::new(&module).dump_string();
+    let runtime_entry = ir
+        .split("func public %solcore_entry_19_object0_2einner0_2einit")
+        .nth(1)
+        .expect("runtime entry")
+        .split("\n}")
+        .next()
+        .unwrap();
+    assert!(runtime_entry.contains("8_selected"), "{ir}");
+    assert!(!runtime_entry.contains("4_main"), "{ir}");
+    assert!(runtime_entry.contains("evm_return"), "{ir}");
+
+    assert!(translate_hull_program_returning_runtime_entry(&db, &program, "missing").is_err());
+    program.objects[0].inners[0].code.functions[1]
+        .args
+        .push(Arg {
+            span,
+            name: "arg".into(),
+            ty: Ty::word(span),
+        });
+    assert!(translate_hull_program_returning_runtime_entry(&db, &program, "selected").is_err());
+    program.objects[0].inners.clear();
+    assert!(translate_hull_program_returning_runtime_entry(&db, &program, "selected").is_err());
+    program.objects.clear();
+    assert!(translate_hull_program_returning_runtime_entry(&db, &program, "selected").is_err());
 }
 
 #[test]

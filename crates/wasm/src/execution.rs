@@ -149,7 +149,7 @@ fn prepare(
             return Err("Run requires a main function with no arguments.".to_owned());
         }
         let callee = callee.clone();
-        select_entry(&mut runtime.code.functions, &callee)?;
+        validate_entry(&runtime.code.functions, &callee)?;
         // A contract's main is a raw runtime entry, not an ABI-dispatched method.
         // Ordinary object code discards its language-level return. For Run, the
         // backend wraps the entry so its value is returned to the playground.
@@ -160,7 +160,7 @@ fn prepare(
             return Err("Run requires exactly one no-argument main function.".to_owned());
         };
         let entry = entry.clone();
-        select_entry(&mut program.functions, &entry)?;
+        validate_entry(&program.functions, &entry)?;
     }
 
     let db = workspace.db();
@@ -182,12 +182,11 @@ fn prepare(
     Ok((bytes.into(), contract))
 }
 
-fn select_entry(functions: &mut [hull::Function<'_>], entry: &hull::Name) -> Result<(), String> {
-    let index = functions
+fn validate_entry(functions: &[hull::Function<'_>], entry: &hull::Name) -> Result<(), String> {
+    let function = functions
         .iter()
-        .position(|function| &function.name == entry)
+        .find(|function| &function.name == entry)
         .ok_or("Run could not find the main function.")?;
-    let function = &functions[index];
     if !function.args.is_empty() {
         return Err("Run requires a main function with no arguments.".to_owned());
     }
@@ -197,9 +196,6 @@ fn select_entry(functions: &mut [hull::Function<'_>], entry: &hull::Name) -> Res
                 .to_owned(),
         );
     }
-    // Sonatina discovers entries by scanning function names. Put the validated
-    // entry first so a helper containing "_main_" cannot win. Yul ignores order.
-    functions.swap(0, index);
     Ok(())
 }
 
@@ -368,6 +364,30 @@ function main() returns (word) {
     fn default_contract_example_returns_42() {
         let result = run_source(
             "import * from std; import * from std.dispatch; contract Answer { function main() public returns (uint256) { return uint256(42); } }",
+        );
+        assert_eq!(result.status, RunStatus::Success, "{result:?}");
+        assert_eq!(result.return_word.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn contract_runtime_entry_is_independent_of_helper_names_and_order() {
+        let result = run_source(
+            r#"
+import * from std;
+import * from std.dispatch;
+contract Answer {
+    function a_main_helper() returns (word) {
+        let value: word;
+        assembly { value := calldatasize() }
+        return value;
+    }
+    function main() public returns (uint256) {
+        let value = a_main_helper();
+        assembly { value := add(value, 42) }
+        return uint256(value);
+    }
+}
+"#,
         );
         assert_eq!(result.status, RunStatus::Success, "{result:?}");
         assert_eq!(result.return_word.as_deref(), Some("42"));

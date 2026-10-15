@@ -54,6 +54,30 @@ pub(super) fn translate_hull_program<'db>(
     Translator::new(db).translate(program)
 }
 
+pub(super) fn translate_hull_program_returning_runtime_entry<'db>(
+    db: &'db dyn HirDb,
+    program: &HullProgram<'db>,
+    entry: &str,
+) -> Result<Module, TranslationError> {
+    let [object] = program.objects.as_slice() else {
+        return Err(TranslationError::new(format!(
+            "a runtime entry wrapper requires exactly one top-level object, found {}",
+            program.objects.len()
+        )));
+    };
+    if object.inners.len() != 1 {
+        return Err(TranslationError::new(format!(
+            "object `{}` must have exactly one runtime object",
+            object.name
+        )));
+    }
+    let mut translator = Translator::new(db);
+    translator
+        .returning_entries
+        .insert("object0.inner0.init".to_owned(), entry.to_owned());
+    translator.translate(program)
+}
+
 fn evm_isa() -> Evm {
     Evm::new(TargetTriple::new(
         Architecture::Evm,
@@ -105,6 +129,7 @@ struct Translator<'db> {
     functions: HashMap<String, FuncRef>,
     function_returns: HashMap<String, HullTy<'db>>,
     entries: HashMap<String, FuncRef>,
+    returning_entries: HashMap<String, String>,
     section_objects: HashMap<String, String>,
     next_type: usize,
     next_yul_function: usize,
@@ -123,6 +148,7 @@ impl<'db> Translator<'db> {
             functions: HashMap::new(),
             function_returns: HashMap::new(),
             entries: HashMap::new(),
+            returning_entries: HashMap::new(),
             section_objects: HashMap::new(),
             next_type: 0,
             next_yul_function: 0,
@@ -135,10 +161,42 @@ impl<'db> Translator<'db> {
 
     fn translate(mut self, program: &HullProgram<'db>) -> Result<Module, TranslationError> {
         if program.objects.is_empty() {
+            let entry_function = match program.entry_points.as_slice() {
+                [] => None,
+                [entry] => {
+                    let function = program
+                        .functions
+                        .iter()
+                        .find(|function| function.name == *entry)
+                        .ok_or_else(|| {
+                            TranslationError::new(format!(
+                                "object-less Hull entry `{entry}` has no function body"
+                            ))
+                        })?;
+                    if !function.args.is_empty() {
+                        return Err(TranslationError::new(format!(
+                            "object-less Hull entry `{entry}` must not take arguments"
+                        )));
+                    }
+                    Some(function)
+                }
+                entries => {
+                    return Err(TranslationError::new(format!(
+                        "object-less Hull program must have at most one entry point, found {}",
+                        entries.len()
+                    )));
+                }
+            };
             self.section_objects
                 .insert("root.runtime".to_owned(), "Output".to_owned());
             self.declare_code("root.runtime", &program.functions, &[], program.span)?;
-            self.lower_code("root.runtime", &program.functions, &[], program.span)?;
+            self.lower_code(
+                "root.runtime",
+                &program.functions,
+                &[],
+                program.span,
+                entry_function,
+            )?;
             let entry = self.entry("root.runtime")?;
             let mut object = ObjectBuilder::new("OutputDeploy");
             object.section("init").entry(entry);
@@ -192,11 +250,35 @@ impl<'db> Translator<'db> {
         object: &HullObject<'db>,
         scope: &str,
     ) -> Result<(), TranslationError> {
+        let section = format!("{scope}.init");
+        let entry_function = if let Some(entry) = self.returning_entries.get(&section) {
+            let function = object
+                .code
+                .functions
+                .iter()
+                .find(|function| function.name.as_str() == entry)
+                .ok_or_else(|| {
+                    TranslationError::new(format!(
+                        "runtime entry `{entry}` has no function body in object `{}`",
+                        object.name
+                    ))
+                })?;
+            if !function.args.is_empty() || !self.lower_ty(&function.ret)?.is_integral() {
+                return Err(TranslationError::new(format!(
+                    "runtime entry `{}` must take no arguments and return a scalar word",
+                    function.name
+                )));
+            }
+            Some(function)
+        } else {
+            None
+        };
         self.lower_code(
-            &format!("{scope}.init"),
+            &section,
             &object.code.functions,
             &object.code.stmts,
             object.code.span,
+            entry_function,
         )?;
         for (index, inner) in object.inners.iter().enumerate() {
             self.lower_object_code(inner, &format!("{scope}.inner{index}"))?;
@@ -296,11 +378,12 @@ impl<'db> Translator<'db> {
         functions: &[HullFunction<'db>],
         stmts: &[hull::Stmt<'db>],
         span: hir::span::Span<'db>,
+        entry_function: Option<&HullFunction<'db>>,
     ) -> Result<(), TranslationError> {
         for function in functions {
             self.lower_function(scope, function)?;
         }
-        self.lower_entry(scope, functions, stmts, span)
+        self.lower_entry(scope, stmts, span, entry_function)
     }
 
     fn entry(&self, scope: &str) -> Result<FuncRef, TranslationError> {
@@ -405,29 +488,21 @@ impl<'db> Translator<'db> {
     fn lower_entry(
         &mut self,
         scope: &str,
-        functions: &[HullFunction<'db>],
         stmts: &[hull::Stmt<'db>],
         span: hir::span::Span<'db>,
+        entry_function: Option<&HullFunction<'db>>,
     ) -> Result<(), TranslationError> {
         let func_ref = self.entry(scope)?;
         let unit = HullTy::unit(span);
         let mut lowerer = FunctionLowerer::new(self, scope, func_ref, unit);
         let mut terminated = lowerer.lower_stmts(stmts)?;
-        if !terminated
-            && stmts.is_empty()
-            && let Some(main) = functions.iter().find(|function| {
-                function.args.is_empty()
-                    && (function.name.as_str() == "main"
-                        || function.name.as_str().starts_with("main_")
-                        || function.name.as_str().contains("_main_"))
-            })
-        {
+        if !terminated && let Some(main) = entry_function {
             let callee = lowerer
                 .module
                 .functions
                 .get(&key(scope, main.name.as_str()))
                 .copied()
-                .ok_or_else(|| TranslationError::new("missing main declaration"))?;
+                .ok_or_else(|| TranslationError::new("missing entry declaration"))?;
             let ret = lowerer.module.lower_ty(&main.ret)?;
             let call = Call::new(lowerer.module.inst_set(), callee, SmallVec::new());
             if ret == Type::Unit {
@@ -452,7 +527,14 @@ impl<'db> Translator<'db> {
                 }
             }
         }
-        lowerer.finish(terminated)
+        if !terminated {
+            // Object sections are entered by the EVM, not an internal call.
+            // Falling through must halt rather than pop a return address.
+            lowerer
+                .fb
+                .insert_inst_no_result(EvmStop::new(lowerer.module.inst_set()));
+        }
+        lowerer.finish(true)
     }
 }
 
