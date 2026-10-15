@@ -1,15 +1,27 @@
 import * from std;
 import * from std.dispatch;
 
-function secondUnit(first: (), value: word) returns (word) { return value; }
-function secondString(first: memory<string>, value: word) returns (word) { return value; }
+function secondUnit(first: (), value: word) returns (word) {
+    return value;
+}
+function secondString(first: memory<string>, value: word) returns (word) {
+    return value;
+}
 
-function abortWrapped() returns (()) { return revertLit("wrapped"); }
+function abortWrapped() returns (()) {
+    return revertLit("wrapped");
+}
 
 function twiceAddress(value: memory<string>) returns (word) {
-    match (value) { case memory(first) {
-        match (value) { case memory(second) { return first + second; } }
-    } }
+    match (value) {
+        case memory(first) {
+            match (value) {
+                case memory(second) {
+                    return first + second;
+                }
+            }
+        }
+    }
 }
 
 // #[scenario("ignored_builtin_effects")]
@@ -31,23 +43,31 @@ contract IgnoredBuiltinEffects {
 
     function ignoredString() public returns (uint256, uint256) {
         let before: word;
-        assembly { before := mload(0x40) }
+        assembly {
+            before := mload(0x40)
+        }
         // Even unused materialization must allocate exactly once.
         let result: word = secondString(Str.fromString("allocated"), 7);
         let after: word;
-        assembly { after := mload(0x40) }
+        assembly {
+            after := mload(0x40)
+        }
         return (uint256(result), uint256(after - before));
     }
 
     function reusedString() public returns (uint256, uint256) {
         let before: word;
-        assembly { before := mload(0x40) }
+        assembly {
+            before := mload(0x40)
+        }
         // Both parameter uses refer to one allocation. Keep a known
         // numeric binding live across the memory effect as well.
         let offset: word = 7;
         let result: word = twiceAddress(Str.fromString("allocated")) + offset;
         let after: word;
-        assembly { after := mload(0x40) }
+        assembly {
+            after := mload(0x40)
+        }
         return (uint256(result - 2 * before), uint256(after - before));
     }
 }

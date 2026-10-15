@@ -1,6 +1,6 @@
 import * from std;
 import * from std.dispatch;
-import {mstore} from std.opcodes;
+import { mstore } from std.opcodes;
 
 // Exercise both storage encodings and the final partial word when overwriting
 // longer values. Dirty input padding must not survive the round trip.

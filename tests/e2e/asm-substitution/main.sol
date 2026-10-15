@@ -18,11 +18,11 @@ contract C {
     // folded the second statement to `add(0, 1)` and returned 1; the correct
     // result is 6.
     function asmFlow() public returns (uint256) {
-        let x : word = 0;
-        let y : word = 0;
+        let x: word = 0;
+        let y: word = 0;
         assembly {
-          x := add(5, sload(1))
-          y := add(x, 1)
+            x := add(5, sload(1))
+            y := add(x, 1)
         }
         return uint256(y);
     }
@@ -34,11 +34,15 @@ contract C {
     // three iterations is 3.  The asm-local counter `j` (no outer counterpart)
     // exercises the loop without any name collision.
     function asmLoopFlow() public returns (uint256) {
-        let s : word = 0;
+        let s: word = 0;
         assembly {
-          for { let j := 0 } lt(j, 3) { j := add(j, 1) } {
-            s := add(s, 1)
-          }
+            for {
+                let j := 0
+            } lt(j, 3) {
+                j := add(j, 1)
+            } {
+                s := add(s, 1)
+            }
         }
         return uint256(s);
     }

@@ -1,6 +1,6 @@
 import * from std;
 import * from std.dispatch;
-import {serveTable} from table;
+import { serveTable } from table;
 
 // #[scenario("C")]
 // constructor()
@@ -9,12 +9,12 @@ import {serveTable} from table;
 // #[raw(0x85bb7d69, label = "answer(): manual dispatch reached through the fallback") -> success(0x000000000000000000000000000000000000000000000000000000000000002a)]
 // #[raw(0xdeadc0de, label = "unknown selector: manual dispatch misses and fallback reverts") -> revert(0x756e6b6e6f776e2073656c6563746f72)]
 contract C {
-  function hello() public returns (uint256) {
-    return uint256(7);
-  }
+    function hello() public returns (uint256) {
+        return uint256(7);
+    }
 
-  fallback() {
-    serveTable();
-    revertLit("unknown selector");
-  }
+    fallback() {
+        serveTable();
+        revertLit("unknown selector");
+    }
 }

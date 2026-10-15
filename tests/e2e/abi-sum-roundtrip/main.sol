@@ -7,11 +7,25 @@ import * from std.ABIGeneric;
 // Dynamic ADTs have a single offset to [tag][fields]; three variants do not
 // introduce a second discriminant or offset. Static ADTs reserve the largest
 // payload plus exactly one tag word. Unknown variant tags must revert.
-enum D2 { L(uint256), R(memory<bytes>) }                // dynamic (shallow)
-enum D3 { X(uint256), Y(uint256), Z(memory<bytes>) }   // dynamic, three variants
-enum S2 { P(uint256), Q(uint256) }                      // static
+enum D2 {
+    L(uint256),
+    R(memory<bytes>)
+} // dynamic (shallow)
+enum D3 {
+    X(uint256),
+    Y(uint256),
+    Z(memory<bytes>)
+} // dynamic, three variants
+enum S2 {
+    P(uint256),
+    Q(uint256)
+} // static
 
-enum S3 { A, B(uint256), C(uint256, uint256, uint256) }
+enum S3 {
+    A,
+    B(uint256),
+    C(uint256, uint256, uint256)
+}
 
 // #[scenario("abi_sum_roundtrip")]
 // constructor()
@@ -29,22 +43,24 @@ enum S3 { A, B(uint256), C(uint256, uint256, uint256) }
 // #[raw(0xe096e642dac0eb072b57ac96a847516d39a99149b3657c3b1be4ded156db4e7a9bbcdfb8000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000, label = "rtS3(B): one tag and widest payload, 128 bytes") -> success(0xdac0eb072b57ac96a847516d39a99149b3657c3b1be4ded156db4e7a9bbcdfb8000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)]
 // #[raw(0xe096e642ea87a7f4677703a612efa9cdef33a46edabd7a1e7e091ee7fad13a9784eb6805000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000003, label = "rtS3(C): one tag and widest payload, 128 bytes") -> success(0xea87a7f4677703a612efa9cdef33a46edabd7a1e7e091ee7fad13a9784eb6805000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000003)]
 contract SumRoundtrip {
-  constructor() {}
+    constructor() {}
 
-  // dynamic, shallow: decode a sum(uint256, bytes) then re-encode it.
-  function rtD2(x: D2) public returns (D2) {
-    return x;
-  }
+    // dynamic, shallow: decode a sum(uint256, bytes) then re-encode it.
+    function rtD2(x: D2) public returns (D2) {
+        return x;
+    }
 
-  // Three variants still use one wire tag and one dynamic offset.
-  function rtD3(x: D3) public returns (D3) {
-    return x;
-  }
+    // Three variants still use one wire tag and one dynamic offset.
+    function rtD3(x: D3) public returns (D3) {
+        return x;
+    }
 
-  function rtS3(x: S3) public returns (S3) { return x; }
+    function rtS3(x: S3) public returns (S3) {
+        return x;
+    }
 
-  // static control: inline layout must round-trip unchanged.
-  function rtS2(x: S2) public returns (S2) {
-    return x;
-  }
+    // static control: inline layout must round-trip unchanged.
+    function rtS2(x: S2) public returns (S2) {
+        return x;
+    }
 }

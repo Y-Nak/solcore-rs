@@ -34,42 +34,42 @@ import * from std.dispatch;
 // #[raw(0xd82cf7900000000000000000000000000000000000000000000000000000000000000003, label = "getA(3) - 0, not the abandoned 93") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
 // #[raw(0xd82cf7900000000000000000000000000000000000000000000000000000000000000004, label = "getA(4) - 0, not the abandoned 94") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
 contract ArrayCopy {
-  a : array<uint256>;
-  b : array<uint256>;
+    a: array<uint256>;
+    b: array<uint256>;
 
-  constructor() {}
+    constructor() {}
 
-  function pushA(v: uint256) public {
-    ArrayPush.push(a, v);
-  }
+    function pushA(v: uint256) public {
+        ArrayPush.push(a, v);
+    }
 
-  function pushB(v: uint256) public {
-    ArrayPush.push(b, v);
-  }
+    function pushB(v: uint256) public {
+        ArrayPush.push(b, v);
+    }
 
-  // a = b
-  function copyBintoA() public {
-    a = b;
-  }
+    // a = b
+    function copyBintoA() public {
+        a = b;
+    }
 
-  // a = a  (must be a no-op, not a self-clobbering copy)
-  function copyAintoA() public {
-    a = a;
-  }
+    // a = a  (must be a no-op, not a self-clobbering copy)
+    function copyAintoA() public {
+        a = a;
+    }
 
-  function setB(i: uint256, v: uint256) public {
-    b[i] = v;
-  }
+    function setB(i: uint256, v: uint256) public {
+        b[i] = v;
+    }
 
-  function growA(n: uint256) public {
-    Array.setLength(a, n);
-  }
+    function growA(n: uint256) public {
+        Array.setLength(a, n);
+    }
 
-  function lenA() public returns (uint256) {
-    return Length.length(a);
-  }
+    function lenA() public returns (uint256) {
+        return Length.length(a);
+    }
 
-  function getA(i: uint256) public returns (uint256) {
-    return a[i];
-  }
+    function getA(i: uint256) public returns (uint256) {
+        return a[i];
+    }
 }

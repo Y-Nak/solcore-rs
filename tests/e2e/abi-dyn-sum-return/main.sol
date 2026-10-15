@@ -19,9 +19,19 @@ import * from std.ABIGeneric;
 // variant tag, so even D3's three constructors each encode as a single tag word
 // (no positional inl/inr chain). A static sum stays inline as [tag][branch] with
 // no leading offset.
-enum D2 { L(uint256), R(memory<bytes>) }
-enum D3 { X(uint256), Y(uint256), Z(memory<bytes>) }
-enum S2 { P(uint256), Q(uint256) }
+enum D2 {
+    L(uint256),
+    R(memory<bytes>)
+}
+enum D3 {
+    X(uint256),
+    Y(uint256),
+    Z(memory<bytes>)
+}
+enum S2 {
+    P(uint256),
+    Q(uint256)
+}
 
 // #[scenario("abi_dyn_sum_return")]
 // constructor()
@@ -34,44 +44,44 @@ enum S2 { P(uint256), Q(uint256) }
 // #[raw(0x3aec6f2e0000000000000000000000000000000000000000000000000000000000000009, label = "makeP(9) -> S2.P(9): static sum, inline [keccak(\"P(uint256)\")][value], no offset") -> success(0x5e1331e0b0cf9596f31b4ecaa4d4d045bc6de1b91d2401dff29221cab1c175b40000000000000000000000000000000000000000000000000000000000000009)]
 // #[raw(0xbd82d2590000000000000000000000000000000000000000000000000000000000000008, label = "makeQ(8) -> S2.Q(8): static sum, inline [keccak(\"Q(uint256)\")][value], no offset") -> success(0x5dcad53f88dc9d20c351c1bb58593dde38a673b5308c8751aaeb91edd8c979520000000000000000000000000000000000000000000000000000000000000008)]
 contract DynSumRet {
-  constructor() {}
+    constructor() {}
 
-  // ── shallow dynamic sum ────────────────────────────────────────────────
-  // inl branch (static uint256 payload) of a dynamic sum: still takes the
-  // dynamic encode path (offset word + inline [tag][value] in the tail).
-  function makeL(n : uint256) public returns (D2) {
-    return D2.L(n);
-  }
+    // ── shallow dynamic sum ────────────────────────────────────────────────
+    // inl branch (static uint256 payload) of a dynamic sum: still takes the
+    // dynamic encode path (offset word + inline [tag][value] in the tail).
+    function makeL(n: uint256) public returns (D2) {
+        return D2.L(n);
+    }
 
-  // inr branch carrying a dynamic bytes payload: [off][1][off][len][data].
-  function makeR(b : memory<bytes>) public returns (D2) {
-    return D2.R(b);
-  }
+    // inr branch carrying a dynamic bytes payload: [off][1][off][len][data].
+    function makeR(b: memory<bytes>) public returns (D2) {
+        return D2.R(b);
+    }
 
-  // ── deeply right-nested dynamic sum ────────────────────────────────────
-  // outer inl: [off][0][value]
-  function makeX(n : uint256) public returns (D3) {
-    return D3.X(n);
-  }
+    // ── deeply right-nested dynamic sum ────────────────────────────────────
+    // outer inl: [off][0][value]
+    function makeX(n: uint256) public returns (D3) {
+        return D3.X(n);
+    }
 
-  // inr(inl …): two dynamic-sum levels, so two nested offsets: [off][1][off][0][value]
-  function makeY(n : uint256) public returns (D3) {
-    return D3.Y(n);
-  }
+    // inr(inl …): two dynamic-sum levels, so two nested offsets: [off][1][off][0][value]
+    function makeY(n: uint256) public returns (D3) {
+        return D3.Y(n);
+    }
 
-  // inr(inr bytes): nested offsets down to the bytes leaf:
-  // [off][1][off][1][off][len][data]
-  function makeZ(b : memory<bytes>) public returns (D3) {
-    return D3.Z(b);
-  }
+    // inr(inr bytes): nested offsets down to the bytes leaf:
+    // [off][1][off][1][off][len][data]
+    function makeZ(b: memory<bytes>) public returns (D3) {
+        return D3.Z(b);
+    }
 
-  // ── static sum control ─────────────────────────────────────────────────
-  // Byte-identical to the pre-fix output: inline [tag][value], no offset word.
-  function makeP(n : uint256) public returns (S2) {
-    return S2.P(n);
-  }
+    // ── static sum control ─────────────────────────────────────────────────
+    // Byte-identical to the pre-fix output: inline [tag][value], no offset word.
+    function makeP(n: uint256) public returns (S2) {
+        return S2.P(n);
+    }
 
-  function makeQ(n : uint256) public returns (S2) {
-    return S2.Q(n);
-  }
+    function makeQ(n: uint256) public returns (S2) {
+        return S2.Q(n);
+    }
 }

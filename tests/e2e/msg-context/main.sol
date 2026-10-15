@@ -9,7 +9,7 @@ import * from std.dispatch;
 // #[raw(0x3fa4f245, value = 42, label = "value()(uint256) - returns the value sent") -> success(0x000000000000000000000000000000000000000000000000000000000000002a)]
 // #[raw(0x3fa4f245, label = "value()(uint256) - zero when no value is sent") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
 contract MsgContext {
-    deployer : address;
+    deployer: address;
 
     constructor() {
         deployer = msgSender();

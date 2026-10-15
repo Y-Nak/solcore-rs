@@ -1,8 +1,12 @@
 function writeSlot() returns (word) {
-    assembly { sstore(0, add(sload(0), 1)) }
+    assembly {
+        sstore(0, add(sload(0), 1))
+    }
     return 0;
 }
-function second(first: word, value: word) returns (word) { return value; }
+function second(first: word, value: word) returns (word) {
+    return value;
+}
 // #[scenario("ignored_call_effects")]
 // #[deploy(0x) -> success]
 // #[raw(0x, label = "suite `ignored_call_effects` test #2") -> success(0x0000000000000000000000000000000000000000000000000000000000000047)]
@@ -13,7 +17,7 @@ contract IgnoredCallEffects {
         let result: word = second(writeSlot(), 7);
         assembly {
             mstore(0, add(mul(result, 10), sload(0)))
-            return(0, 32)
+            return (0, 32)
         }
         return result;
     }
