@@ -2079,12 +2079,10 @@ pragma no-bounded-variable-condition LVA, RVA;
 
 // --- Storage ---
 
-// Zeroes the storage slots in [start, endSlot). Mirrors solc's
-// clear_storage_range, used when a dynamic array shrinks so that regrowing it
-// cannot resurrect the old elements.
-function clearStorageRange(start: word, endSlot: word) returns (()) {
-    for (; start < endSlot; start += 1) {
-        sstore(start, 0);
+// Count slots rather than comparing hashed addresses, which can wrap around.
+function clearStorageSlots(start: word, count: word) returns (()) {
+    for (let i: word = 0; i < count; i += 1) {
+        sstore(start + i, 0);
     }
 }
 
@@ -2328,7 +2326,7 @@ impl<member> Typedef<array<member>, word> {
 }
 
 // cf https://docs.soliditylang.org/en/latest/internals/layout_in_storage.html#mappings-and-dynamic-arrays
-// the slot itself stores the array length; elements live at keccak256(slot) + i
+// The slot stores the array length; each element occupies StorageSize slots.
 impl<member> StorageSize<array<member>> {
     function size(x: Proxy<array<member>>) returns (word) {
         return 1;
@@ -2340,7 +2338,7 @@ trait Length<self> {
 }
 
 // Dynamic storage arrays carry their length at the slot itself (matching the
-// Solidity convention) while elements live at keccak256(slot) + i.
+// Solidity convention). Element addresses account for their storage footprint.
 trait Array<self> {
     function setLength(arr: self, n: uint256) returns (());
     function pop(arr: self) returns (());
@@ -2368,18 +2366,37 @@ impl<t> Length<calldata<array<t>>> {
     }
 }
 
-impl<t> Array<storage<array<t>>> {
-    // Shrinking clears the abandoned slots, matching solc's resize_array.
-    // For string/bytes elements this zeroes the inline slot, which makes any
-    // keccak-derived tail unreachable (reads are governed by the length word) but
-    // does not reclaim it.
+// All array operations use the same typed layout, including zero-sized values.
+// Reject lengths/indices whose element offsets would wrap and alias earlier
+// elements. Adding the offset to the hashed base still uses EVM slot arithmetic.
+function storageArrayOffset<t>(index: word, p: Proxy<t>) returns (word) where t: StorageSize {
+    let stride: word = StorageSize.size(p);
+    if (stride != 0) {
+        if (index > ~0 / stride) {
+            out_of_bounds();
+        }
+    }
+    return index * stride;
+}
+
+function storageArrayElement<t>(arr: storage<array<t>>, index: word) returns (storage<t>) where t: StorageSize {
+    return storage(hash1(Typedef.rep(arr)) + storageArrayOffset(index, @t));
+}
+
+impl<t> Array<storage<array<t>>> where t: StorageSize {
+    // Initialize every newly exposed inline slot, including on growth. Clearing
+    // a parent array discards child lengths but not their hashed payloads; when
+    // a child later grows, this same rule prevents deleted values reappearing.
     function setLength(arr: storage<array<t>>, n: uint256) returns (()) {
         let slot: word = Typedef.rep(arr);
         let oldLen: word = sload(slot);
         let newLen: word = Typedef.rep(n);
+        let oldEnd: word = storageArrayOffset(oldLen, @t);
+        let newEnd: word = storageArrayOffset(newLen, @t);
         if (newLen < oldLen) {
-            let base: word = hash1(slot);
-            clearStorageRange(base + newLen, base + oldLen);
+            clearStorageSlots(hash1(slot) + newEnd, oldEnd - newEnd);
+        } else {
+            clearStorageSlots(hash1(slot) + oldEnd, newEnd - oldEnd);
         }
         sstore(slot, newLen);
     }
@@ -2390,8 +2407,7 @@ impl<t> Array<storage<array<t>>> {
         if (n == 0) {
             out_of_bounds();
         }
-        sstore(hash1(slot) + (n - 1), 0);
-        sstore(slot, n - 1);
+        Array.setLength(arr, uint256(n - 1));
     }
 }
 
@@ -2399,14 +2415,16 @@ impl<t> Array<storage<array<t>>> {
 // than the element tag type itself. That is what lets array(string) accept a
 // memory(string), via storage(string):CanStore(memory(string)). For word-sized
 // elements v collapses to the element type and CanStore.store delegates to
-// StorageType.store, so the generated code is unchanged.
-impl<t, v> ArrayPush<storage<array<t>>, v> where storage<t>: CanStore<v> {
+// StorageType.store.
+impl<t, v> ArrayPush<storage<array<t>>, v> where storage<t>: CanStore<v>, t: StorageSize {
     function push(arr: storage<array<t>>, val: v) returns (()) {
         let slot: word = Typedef.rep(arr);
         let n: word = sload(slot);
-        let syntaxValue14: storage<t> = storage(hash1(slot) + n);
-        CanStore.store(syntaxValue14, val);
-        sstore(slot, n + 1);
+        if (n == ~0) {
+            out_of_bounds();
+        }
+        Array.setLength(arr, uint256(n + 1));
+        CanStore.store(storageArrayElement(arr, n), val);
     }
 }
 
@@ -2510,7 +2528,7 @@ impl<k, v> CanStore<storage<mapping(k => v)>, storage<mapping(k => v)>> {
     }
 }
 
-impl<v> CanStore<storage<array<v>>, storage<array<v>>> where v: StorageCopy {
+impl<v> CanStore<storage<array<v>>, storage<array<v>>> where v: StorageCopy, v: StorageSize {
     // Whole-array assignment is a deep copy, as in Solidity: a = b resizes a
     // to b's length and then copies every
     // element. Assigning an array to itself is a no-op. A *local* bound to an
@@ -2519,18 +2537,10 @@ impl<v> CanStore<storage<array<v>>, storage<array<v>>> where v: StorageCopy {
         let dst: word = Typedef.rep(l);
         let src: word = Typedef.rep(r);
         if (dst != src) {
-            let oldLen: word = sload(dst);
             let newLen: word = sload(src);
-            let dstBase: word = hash1(dst);
-            if (newLen < oldLen) {
-                clearStorageRange(dstBase + newLen, dstBase + oldLen);
-            }
-            sstore(dst, newLen);
-            let srcBase: word = hash1(src);
+            Array.setLength(l, uint256(newLen));
             for (let i = 0; i < newLen; i += 1) {
-                let syntaxValue15: storage<v> = storage(dstBase + i);
-                let syntaxValue16: storage<v> = storage(srcBase + i);
-                StorageCopy.copySlot(syntaxValue15, syntaxValue16);
+                StorageCopy.copySlot(storageArrayElement(l, i), storageArrayElement(r, i));
             }
         }
     }
@@ -2555,14 +2565,12 @@ impl<v> CanStore<storage<array<v>>, storage<array<v>>> where v: StorageCopy {
 // resurrect. The element types differ: `t` is the storage element tag and `v`
 // what a value of it looks like in memory (they coincide for word-sized
 // elements; for array(string), t = string and v = memory(string)).
-function storeArrayLit<t, v>(dst: storage<array<t>>, src: memory<DynArray<v>>) returns (()) where storage<t>: CanStore<v>, v: Typedef<word> {
+function storeArrayLit<t, v>(dst: storage<array<t>>, src: memory<DynArray<v>>) returns (()) where storage<t>: CanStore<v>, v: Typedef<word>, t: StorageSize {
     let n: word = mload(Typedef.rep(src));
     Array.setLength(dst, uint256(n));
-    let base: word = hash1(Typedef.rep(dst));
     let i: word = 0;
     for (; i < n; i += 1) {
-        let syntaxValue17: storage<t> = storage(base + i);
-        CanStore.store(syntaxValue17, IndexAccess.get(src, uint256(i)));
+        CanStore.store(storageArrayElement(dst, i), IndexAccess.get(src, uint256(i)));
     }
 }
 
@@ -2642,7 +2650,7 @@ impl StorageCopy<bytes> {
 
 // Nested arrays recurse into the array CanStore instance above. The recursion is
 // on the element type, so it terminates with the type's structure.
-impl<t> StorageCopy<array<t>> where t: StorageCopy {
+impl<t> StorageCopy<array<t>> where t: StorageCopy, t: StorageSize {
     function copySlot(dst: storage<array<t>>, src: storage<array<t>>) returns (()) {
         CanStore.store(dst, src);
     }
@@ -2749,7 +2757,7 @@ impl<i, a> RValueIdxAccess<(storage<mapping(i => a)>, i), a> where storage<a>: C
     }
 }
 
-impl<a, i> LValueIdxAccess<(storage<array<a>>, i), storage<a>> where i: Typedef<word> {
+impl<a, i> LValueIdxAccess<(storage<array<a>>, i), storage<a>> where i: Typedef<word>, a: StorageSize {
     function lookup(xi: (storage<array<a>>, i)) returns (storage<a>) {
         match (xi) {
             case (x, i) {
@@ -2760,7 +2768,7 @@ impl<a, i> LValueIdxAccess<(storage<array<a>>, i), storage<a>> where i: Typedef<
                 if (idx >= sload(slot)) {
                     out_of_bounds();
                 }
-                return storage(hash1(slot) + idx);
+                return storageArrayElement(x, idx);
             }
         }
     }
@@ -2770,7 +2778,7 @@ impl<a, i> LValueIdxAccess<(storage<array<a>>, i), storage<a>> where i: Typedef<
 // than the element tag type. For word-sized elements that is the element itself;
 // for array(string) it is a memory(string); for a nested array(array(t)) it
 // is the inner array's handle, which push/pop/length then consume.
-impl<a, v, i> RValueIdxAccess<(storage<array<a>>, i), v> where storage<a>: CanStore<v>, i: Typedef<word> {
+impl<a, v, i> RValueIdxAccess<(storage<array<a>>, i), v> where storage<a>: CanStore<v>, i: Typedef<word>, a: StorageSize {
     function lookup(xi: (storage<array<a>>, i)) returns (v) {
         return CanStore.load(LValueIdxAccess.lookup(xi));
     }

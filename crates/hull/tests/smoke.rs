@@ -2034,20 +2034,24 @@ contract CheckedArrays {
         "{memory_helper}"
     );
 
-    let storage_helper = hull_function(&hull, "__solcore_storage_array_slot");
+    let storage_helper = hull_function(&hull, "LValueIdxAccess_lookup");
     assert!(
-        storage_helper.contains("lt(index, sload(base))"),
+        storage_helper.contains("opcodes_sload") && storage_helper.contains("std_ge_"),
         "{storage_helper}"
     );
-    assert!(storage_helper.contains("0xb4120f14"), "{storage_helper}");
     assert!(
-        storage_helper.contains("keccak256(0, 32)"),
+        storage_helper.contains("std_out_of_bounds"),
         "{storage_helper}"
     );
+    assert!(
+        storage_helper.contains("Typedef_rep") && storage_helper.contains("Second"),
+        "{storage_helper}"
+    );
+    assert!(storage_helper.contains("std_hash1"), "{storage_helper}");
 }
 
 #[test]
-fn storage_array_slot_helper_is_reachable_without_array_fields() {
+fn storage_array_indexing_reaches_shared_checked_layout_without_array_fields() {
     let hull = pretty_src_hull_with_std(
         "array-local-storage-ref",
         r#"
@@ -2061,10 +2065,10 @@ function main() returns (uint256) {
     );
 
     assert!(
-        hull.contains("function __solcore_storage_array_slot"),
+        hull.contains("LValueIdxAccess_lookup") && hull.contains("std_lidx"),
         "{hull}"
     );
-    assert!(hull.contains("__solcore_storage_array_slot("), "{hull}");
+    assert!(hull.contains("std_out_of_bounds"), "{hull}");
 }
 
 #[test]
@@ -2107,7 +2111,7 @@ contract CollectionArray {
 "#,
     );
 
-    assert!(hull.contains("__solcore_storage_array_slot"), "{hull}");
+    assert!(hull.contains("LValueIdxAccess_lookup"), "{hull}");
     assert!(hull.contains("storeBytesFromMemory"), "{hull}");
     assert!(hull.contains("loadBytesFromStorage"), "{hull}");
     assert!(hull.contains("frombool"), "{hull}");

@@ -4514,6 +4514,7 @@ fn stmts_have_storage_array_index(stmts: &[MonoStmt<'_>]) -> bool {
 
 fn expr_has_storage_array_index(expr: &MonoExpr<'_>) -> bool {
     match &expr.kind {
+        MonoExprKind::Call { callee, .. } if callee.name.contains("_lidx_") => true,
         MonoExprKind::StorageIndex {
             storage_kind: MonoStorageIndexKind::Array,
             ..
@@ -4629,6 +4630,12 @@ fn collect_storage_indexes<'a, 'db>(
     indexes: &mut Vec<(MonoStorageIndexKind, &'a MonoExpr<'db>)>,
 ) {
     match &expr.kind {
+        MonoExprKind::Call { callee, args, .. } if callee.name.contains("_lidx_") => {
+            indexes.push((MonoStorageIndexKind::Array, &args[0]));
+            for arg in args {
+                collect_storage_indexes(arg, indexes);
+            }
+        }
         MonoExprKind::StorageIndex {
             storage_kind,
             base,
