@@ -24,6 +24,8 @@ pub(super) struct Layout {
     pub leading_dots: BTreeSet<usize>,
     /// Both braces of blocks; import and export selectors are excluded.
     pub block_braces: BTreeSet<usize>,
+    /// Hyphens joining the segments of a pragma name, rather than subtraction.
+    pub pragma_hyphens: BTreeSet<usize>,
 }
 
 pub(super) fn layout(source: &str) -> Result<Layout, Vec<(Range<usize>, String)>> {
@@ -149,7 +151,26 @@ impl<'src> Collector<'src> {
                     .block_braces
                     .retain(|offset| *offset < span.start || *offset >= span.end);
             }
-            ParsedTopItem::Pragma { span, .. } => self.start(span),
+            ParsedTopItem::Pragma { span, name, .. } => {
+                self.start(span);
+                let name_span = name.1;
+                // Keyword-shaped segments such as `default` are part of the
+                // pragma name, not statement or match-arm boundaries.
+                self.layout
+                    .line_starts
+                    .retain(|offset| *offset < name_span.start || *offset >= name_span.end);
+                let start = self
+                    .tokens
+                    .partition_point(|(_, range)| range.end <= name_span.start);
+                for (token, range) in &self.tokens[start..] {
+                    if range.start >= name_span.end {
+                        break;
+                    }
+                    if matches!(token, Token::Minus) {
+                        self.layout.pragma_hyphens.insert(range.start);
+                    }
+                }
+            }
             ParsedTopItem::TypeAlias { span, ty, .. } => {
                 self.start(span);
                 self.angles(span);

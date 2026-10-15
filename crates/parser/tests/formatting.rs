@@ -9,12 +9,27 @@ fn format(source: &str) -> String {
 }
 
 fn assert_stable(source: &str) {
-    let formatted = format(source);
-    assert_eq!(
-        format(&formatted),
-        formatted,
-        "formatting must be idempotent"
-    );
+    let source = source.to_owned();
+    run_with_fixture_stack(move || {
+        let formatted = format(&source);
+        assert_eq!(
+            format(&formatted),
+            formatted,
+            "formatting must be idempotent"
+        );
+    });
+}
+
+fn run_with_fixture_stack(assertion: impl FnOnce() + Send + 'static) {
+    // Match the diagnostic fixture runner's stack for deep parser regressions.
+    let result = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(assertion)
+        .expect("spawn formatting assertion")
+        .join();
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
 }
 
 #[test]
@@ -65,6 +80,30 @@ fn keeps_empty_for_clauses_inline() {
         format("function f(){for(;true;){break;}}"),
         "function f() {\n    for (; true;) {\n        break;\n    }\n}\n"
     );
+}
+
+#[test]
+fn formats_pragma_names_separately_from_subtraction() {
+    for name in ["no-patterson-condition", "no - patterson - condition"] {
+        let source = format!(
+            "pragma {name} C,D;pragma no - default - if C;function f(a:word,b:word)returns(word){{return a-b;}}"
+        );
+        assert_eq!(
+            format(&source),
+            "pragma no-patterson-condition C, D;\npragma no-default-if C;\nfunction f(a: word, b: word) returns (word) {\n    return a - b;\n}\n"
+        );
+        assert_stable(&source);
+    }
+}
+
+#[test]
+fn preserves_comments_inside_pragma_names() {
+    let source = "pragma no/* keep */-case C;pragma no-// keep line\ndefault C;";
+    assert_eq!(
+        format(source),
+        "pragma no /* keep */ -case C;\npragma no- // keep line\ndefault C;\n"
+    );
+    assert_stable(source);
 }
 
 #[test]
@@ -144,15 +183,7 @@ fn formatting_e2e_sources(fixture: Fixture<&str>) {
 
 #[test]
 fn repository_fixtures_are_formatted() {
-    // Match the diagnostic fixture runner's stack for deep parser regressions.
-    let result = std::thread::Builder::new()
-        .stack_size(64 * 1024 * 1024)
-        .spawn(check_repository_fixture_formatting)
-        .expect("spawn fixture formatting check")
-        .join();
-    if let Err(payload) = result {
-        std::panic::resume_unwind(payload);
-    }
+    run_with_fixture_stack(check_repository_fixture_formatting);
 }
 
 fn check_repository_fixture_formatting() {

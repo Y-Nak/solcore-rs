@@ -63,6 +63,43 @@ fn top_function<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> Functi
         .expect("top-level function")
 }
 
+#[test]
+fn subtraction_spacing_does_not_change_parsing_and_pragmas_keep_hyphens() {
+    for expression in ["a-b", "a -b", "a- b", "a - b", "a-b-c", "a-(b-c)"] {
+        let db = TestDb::default();
+        let source = format!(
+            "pragma no-bounded-variable-condition;\npragma no-patterson-condition Num;\npragma no-generic-instance-for Pair;\nfunction f(a: word, b: word, c: word) returns (word) {{ return {expression}; }}"
+        );
+        let (file, module) = parse_module(&db, "subtraction", &source);
+        assert!(
+            diagnostics(&db, file).is_empty(),
+            "{expression}: {:?}",
+            diagnostics(&db, file)
+        );
+        let names = module
+            .items(&db)
+            .iter()
+            .filter_map(|item| match item {
+                Item::Pragma(pragma) => Some(pragma.name(&db).atom().text(&db).to_owned()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            [
+                "no-bounded-variable-condition",
+                "no-patterson-condition",
+                "no-generic-instance-for"
+            ]
+        );
+        assert!(top_function(&db, module, "f").body(&db).is_some());
+    }
+    let db = TestDb::default();
+    let (file, _) = parse_module(&db, "hyphenated-declaration", "function foo-bar() {}");
+    assert!(!diagnostics(&db, file).is_empty());
+    assert!(!solcore_parser::is_valid_identifier("foo-bar"));
+}
+
 fn contract_function<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> FunctionDef<'db> {
     module
         .items(db)

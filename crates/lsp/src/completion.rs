@@ -150,17 +150,11 @@ fn qualified_completion_context(text: &str, offset: u32) -> Option<QualifiedComp
 }
 
 fn is_qualified_path_char(ch: char) -> bool {
-    ch == '.' || ch == '-' || ch == '_' || ch.is_alphanumeric()
+    ch == '.' || ch == '_' || ch.is_alphanumeric()
 }
 
 fn is_identifier(text: &str) -> bool {
-    text.split('-').all(is_identifier_chunk)
-}
-
-fn is_identifier_chunk(text: &str) -> bool {
-    let mut chars = text.chars();
-    chars.next().is_some_and(char::is_alphabetic)
-        && chars.all(|ch| ch == '_' || ch.is_alphanumeric())
+    parser::is_valid_identifier(text)
 }
 
 fn add_qualified_completions<'db>(
@@ -715,23 +709,52 @@ mod tests {
     }
 
     #[test]
-    fn qualified_context_accepts_only_lexer_shaped_hyphenated_identifiers() {
-        let valid = "foo-bar.member-prefix";
-        assert_eq!(
-            qualified_completion_context(valid, valid.len() as u32),
-            Some(QualifiedCompletionContext {
-                qualifier: "foo-bar".to_owned(),
-                member_prefix: "member-prefix".to_owned(),
-            })
-        );
+    fn qualified_context_respects_identifiers_and_subtraction_boundaries() {
+        for (source, qualifier, member_prefix) in [
+            ("foo_bar.member_prefix", "foo_bar", "member_prefix"),
+            ("foo-bar.member", "bar", "member"),
+            ("foo - bar.member", "bar", "member"),
+            ("foo--bar.member", "bar", "member"),
+            ("foo-bar.member-Other.next", "Other", "next"),
+            ("foo-bar.", "bar", ""),
+            ("foo-名前.値", "名前", "値"),
+        ] {
+            assert_eq!(
+                qualified_completion_context(source, source.len() as u32),
+                Some(QualifiedCompletionContext {
+                    qualifier: qualifier.to_owned(),
+                    member_prefix: member_prefix.to_owned(),
+                }),
+                "incorrect qualified context for {source:?}"
+            );
+        }
 
-        for invalid in ["foo-.member", "foo--bar.member", "foo.-member"] {
+        for invalid in [
+            "foo-.member",
+            "foo.-member",
+            "foo-bar.member-prefix",
+            "foo._member",
+            "123.member",
+            "foo.let",
+        ] {
             assert_eq!(
                 qualified_completion_context(invalid, invalid.len() as u32),
                 None,
                 "unexpectedly accepted {invalid:?}"
             );
         }
+    }
+
+    #[test]
+    fn qualified_completion_after_subtraction_resolves_the_right_operand() {
+        let classes = "trait Eq<a> { function eq(x: a, y: a) returns (bool); } export { Eq };";
+        let main =
+            "import {Eq} from classes; function main(x: word) returns (word) { return x-Eq.; }";
+        let (world, main_uri) = world_with_module(main, "classes.sol", classes);
+        let items = completion_at(&world, &main_uri, main, "Eq.");
+
+        assert_completion(&items, "eq", CompletionItemKind::METHOD);
+        assert_no_completion(&items, "Eq.eq");
     }
 
     fn world_with_module(main: &str, module_path: &str, module_source: &str) -> (WorldState, Url) {

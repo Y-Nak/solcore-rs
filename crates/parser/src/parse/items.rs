@@ -609,12 +609,6 @@ where
                 format!("reserved keyword `{name}` cannot name a derived trait"),
             ));
         }
-        if name.contains('-') {
-            emitter.emit(Rich::custom(
-                e.span(),
-                format!("identifier `{name}` cannot contain hyphens"),
-            ));
-        }
         (name, e.span())
     });
     ident

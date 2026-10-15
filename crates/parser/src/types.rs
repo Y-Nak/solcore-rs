@@ -147,7 +147,7 @@ pub(crate) enum ParsedTopItem<'src> {
         /// Consecutive comments directly preceding the declaration.
         leading_comments: Vec<ParsedSourceComment<'src>>,
         /// Pragma name.
-        name: SpannedStr<'src>,
+        name: (String, LexSpan),
         /// Pragma items.
         items: Vec<SpannedStr<'src>>,
     },

@@ -36,7 +36,7 @@ pub fn is_valid_identifier(text: &str) -> bool {
     let mut lexer = lexer::Token::lexer(text);
     matches!(
         lexer.next(),
-        Some(Ok(lexer::Token::Ident(name))) if name == text && !name.contains('-')
+        Some(Ok(lexer::Token::Ident(name))) if name == text
     ) && lexer.next().is_none()
 }
 
