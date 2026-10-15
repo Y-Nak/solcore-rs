@@ -2,16 +2,13 @@
 
 use hir::{
     anchor::DefId,
-    ast::{
-        function::{FuncParam, PatKind, StmtKind},
-        item::{ContractItem, Item, Module},
-    },
+    ast::item::{ContractItem, Item, Module},
     input::SourceFile,
     nameres::{
         BuiltinKind, DefResolutionKind, ImportedNames, LocalBinding, Namespace, Resolution,
         ScopeEntry, TypeVarBinding,
     },
-    span::{Span, Spanned, SpannedElem},
+    span::Span,
 };
 use lsp_types::{CompletionItem, CompletionItemKind, CompletionResponse, Position, Url};
 
@@ -351,15 +348,6 @@ fn add_body_completions<'db>(
         &sig.type_vars,
     ));
 
-    for param in sig.params.atom() {
-        if let Some(name) = param_name(param) {
-            completions.push(
-                name.atom().text(db).to_owned(),
-                CompletionItemKind::VARIABLE,
-                Some("parameter"),
-            );
-        }
-    }
     for type_var in &type_vars {
         completions.push(
             type_var.name.atom().text(db).to_owned(),
@@ -393,48 +381,23 @@ fn add_body_completions<'db>(
         hir::nameres::NameresDiagnosticPolicy::Emit,
     );
 
-    for binding in &body_map.stmt_bindings {
-        let Resolution::Local(LocalBinding::Let { .. }) = &binding.resolution else {
-            continue;
-        };
-        let stmt = binding.body.stmts(db).get(binding.stmt);
-        if let StmtKind::Let { name, .. } = &stmt.kind {
-            add_local_if_visible(db, file, offset, name, completions);
+    for binding in body_map.scoped_bindings.iter().rev() {
+        let scope = binding.scope.resolve_to_absolute(db);
+        if scope.file() == file
+            && scope.start().as_u32() <= offset
+            && offset < scope.end().as_u32()
+            && span_ends_before_offset(db, binding.introduced_after, file, offset)
+        {
+            completions.push(
+                binding.name.clone(),
+                CompletionItemKind::VARIABLE,
+                Some(if matches!(binding.resolution, Resolution::Param(_)) {
+                    "parameter"
+                } else {
+                    "local"
+                }),
+            );
         }
-    }
-    for binding in &body_map.pats {
-        let Resolution::Local(LocalBinding::Pattern { .. }) = &binding.resolution else {
-            continue;
-        };
-        let pat = binding.body.pats(db).get(binding.pat);
-        if let PatKind::Var(name) = &pat.kind {
-            add_local_if_visible(db, file, offset, name, completions);
-        }
-    }
-}
-
-fn param_name<'a, 'db>(
-    param: &'a FuncParam<'db>,
-) -> Option<&'a SpannedElem<'db, hir::ast::Ident<'db>>> {
-    match param {
-        FuncParam::Typed { name, .. } | FuncParam::Untyped { name, .. } => Some(name),
-        FuncParam::Error { .. } => None,
-    }
-}
-
-fn add_local_if_visible<'db>(
-    db: &'db vfs::AnalysisHost,
-    file: SourceFile,
-    offset: u32,
-    name: &SpannedElem<'db, hir::ast::Ident<'db>>,
-    completions: &mut CompletionAccumulator,
-) {
-    if span_ends_before_offset(db, name.span(db), file, offset) {
-        completions.push(
-            name.atom().text(db).to_owned(),
-            CompletionItemKind::VARIABLE,
-            Some("local"),
-        );
     }
 }
 
@@ -592,6 +555,55 @@ mod tests {
         let uri = Url::parse("file:///main/main.sol").expect("uri");
         assert!(world.open_document(uri.clone(), source.to_owned()));
         (world, uri)
+    }
+
+    #[test]
+    fn completion_uses_body_scope_even_without_an_expression() {
+        let source = "function main(input: word) returns (word) {\n  \n}";
+        let (world, uri) = world_with_main(source);
+        let items = completion_at_marker(&world, &uri, source, "  \n", 2);
+        assert_completion(&items, "input", CompletionItemKind::VARIABLE);
+    }
+
+    #[test]
+    fn completion_respects_block_arm_lambda_and_initializer_scopes() {
+        let source = r#"
+function main(input: word) returns (word) {
+    { let hidden = input; hidden; }
+    let later = input;
+    match (input) {
+        case arm { let armLocal = arm; arm; }
+    }
+    let closure = lam (nested: word) -> word { nested; return nested; };
+    return later;
+}
+"#;
+        let (world, uri) = world_with_main(source);
+        let file = world
+            .db()
+            .source_file(world.vfs_path_for_uri(&uri).unwrap())
+            .unwrap();
+        assert!(
+            parser::parse_file_to_hir(world.db(), file)
+                .diagnostics(world.db())
+                .is_empty()
+        );
+        let after = completion_at_marker(&world, &uri, source, "return later", 7);
+        assert_completion(&after, "input", CompletionItemKind::VARIABLE);
+        assert_completion(&after, "later", CompletionItemKind::VARIABLE);
+        for hidden in ["hidden", "arm", "armLocal", "nested"] {
+            assert_no_completion(&after, hidden);
+        }
+        let block = completion_at_marker(&world, &uri, source, "hidden; }", 0);
+        assert_completion(&block, "hidden", CompletionItemKind::VARIABLE);
+        let arm = completion_at_marker(&world, &uri, source, "arm; }", 0);
+        assert_completion(&arm, "arm", CompletionItemKind::VARIABLE);
+        assert_completion(&arm, "armLocal", CompletionItemKind::VARIABLE);
+        let lambda = completion_at_marker(&world, &uri, source, "nested; return", 0);
+        assert_completion(&lambda, "nested", CompletionItemKind::VARIABLE);
+        assert_completion(&lambda, "input", CompletionItemKind::VARIABLE);
+        let initializer = completion_at_marker(&world, &uri, source, "let later = input", 12);
+        assert_no_completion(&initializer, "later");
     }
 
     #[test]
@@ -764,6 +776,21 @@ mod tests {
         assert!(world.open_document(module_uri, module_source.to_owned()));
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
         (world, main_uri)
+    }
+
+    fn completion_at_marker(
+        world: &WorldState,
+        uri: &Url,
+        source: &str,
+        marker: &str,
+        delta: usize,
+    ) -> Vec<CompletionItem> {
+        let offset = (source.find(marker).expect("completion marker") + delta) as u32;
+        let position = world
+            .line_index(uri)
+            .expect("line index")
+            .byte_to_position(offset);
+        completion_items(handle_completion(world, uri, position).expect("completion response"))
     }
 
     fn completion_at(

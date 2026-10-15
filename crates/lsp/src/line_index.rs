@@ -51,13 +51,41 @@ impl LineIndexExt {
 
     /// Converts an LSP UTF-16 position to a UTF-8 byte offset.
     ///
-    /// Returns `None` when the position is out of range or lands inside a
+    /// Columns beyond the line's content are clamped to its end, as required
+    /// by LSP. Returns `None` when the line is out of range or the position lands inside a
     /// multi-byte character (e.g. the middle of a UTF-16 surrogate pair), so
     /// callers never receive a byte offset that is not a UTF-8 char boundary.
     pub fn position_to_byte(&self, position: Position) -> Option<u32> {
+        let line_start = u32::from(self.index.offset(LineCol {
+            line: position.line,
+            col: 0,
+        })?);
+        let mut line_end = position
+            .line
+            .checked_add(1)
+            .and_then(|line| self.index.offset(LineCol { line, col: 0 }))
+            .map(u32::from)
+            .unwrap_or(self.len);
+        if line_end > line_start
+            && self.text.as_bytes().get((line_end - 1) as usize) == Some(&b'\n')
+        {
+            line_end -= 1;
+            if line_end > line_start
+                && self.text.as_bytes().get((line_end - 1) as usize) == Some(&b'\r')
+            {
+                line_end -= 1;
+            }
+        }
+        let end = self.index.to_wide(
+            WideEncoding::Utf16,
+            LineCol {
+                line: position.line,
+                col: line_end - line_start,
+            },
+        )?;
         let wide = WideLineCol {
             line: position.line,
-            col: position.character,
+            col: position.character.min(end.col),
         };
         let line_col = self.index.to_utf8(WideEncoding::Utf16, wide)?;
         let offset = u32::from(self.index.offset(line_col)?);
@@ -80,6 +108,27 @@ impl LineIndexExt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oversized_columns_stop_at_the_requested_line_end() {
+        for text in ["a\nbc\n", "a\r\nbc\r\n", "😀\nbc\n", "\nbc\n", "a"] {
+            let index = LineIndexExt::new(text);
+            let end = text.find(['\r', '\n']).unwrap_or(text.len()) as u32;
+            assert_eq!(
+                index.position_to_byte(Position::new(0, 100)),
+                Some(end),
+                "{text:?}"
+            );
+            assert_eq!(index.position_to_byte(Position::new(50, 0)), None);
+        }
+        let index = LineIndexExt::new("a\n");
+        assert_eq!(index.position_to_byte(Position::new(1, u32::MAX)), Some(2));
+        // The underlying line index treats a lone CR as content, not a line
+        // break. Preserve round trips for those documents too.
+        let index = LineIndexExt::new("a\r");
+        assert_eq!(index.position_to_byte(Position::new(0, u32::MAX)), Some(2));
+        assert_eq!(index.byte_to_position(2), Position::new(0, 2));
+    }
 
     #[test]
     fn maps_ascii_positions() {

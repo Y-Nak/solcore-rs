@@ -596,9 +596,24 @@ pub struct BodyPatResolution<'db> {
     pub resolution: Resolution<'db>,
 }
 
+/// A body binding and its source visibility, recorded by lexical resolution.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct ScopedBodyBinding<'db> {
+    /// Source spelling of the binding.
+    pub name: String,
+    /// Semantic identity of the binding.
+    pub resolution: Resolution<'db>,
+    /// Lexical scope in which the binding is visible.
+    pub scope: Span<'db>,
+    /// Syntax evaluated before introducing this binding.
+    pub introduced_after: Span<'db>,
+}
+
 /// Name-resolution results for one function body.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update, Default)]
 pub struct BodyResolutionMap<'db> {
+    /// Local and parameter bindings with lexical visibility information.
+    pub scoped_bindings: Vec<ScopedBodyBinding<'db>>,
     /// Expression resolutions.
     pub exprs: Vec<BodyExprResolution<'db>>,
     /// Statement binder resolutions.

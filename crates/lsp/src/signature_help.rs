@@ -180,23 +180,22 @@ fn enclosing_call<'db>(
 }
 
 fn call_argument_range(text: &str, callee_end: u32, call_end: u32) -> Option<(u32, u32)> {
-    let bytes = text.as_bytes();
+    use parser::lexer::{Token, tokens};
     let search_start = callee_end as usize;
     let search_end = call_end.min(text.len() as u32) as usize;
-    let open = bytes
-        .get(search_start..search_end)?
-        .iter()
-        .position(|byte| *byte == b'(')?
-        + search_start;
-
+    let source = text.get(search_start..search_end)?;
+    let mut open = None;
     let mut depth = 0u32;
-    for (index, byte) in bytes.iter().enumerate().take(search_end).skip(open) {
-        match *byte {
-            b'(' => depth += 1,
-            b')' => {
+    for (token, range) in tokens(source) {
+        match token {
+            Ok(Token::LParen) => {
+                open.get_or_insert(search_start + range.end);
+                depth += 1;
+            }
+            Ok(Token::RParen) if open.is_some() => {
                 depth = depth.saturating_sub(1);
                 if depth == 0 {
-                    return Some(((open + 1) as u32, index as u32));
+                    return Some((open? as u32, (search_start + range.start) as u32));
                 }
             }
             _ => {}
@@ -229,16 +228,20 @@ fn active_parameter<'db>(
 }
 
 fn count_commas_before(text: &str, start: u32, offset: u32) -> u32 {
+    use parser::lexer::{Token, tokens};
     let start = start.min(text.len() as u32) as usize;
     let end = offset.min(text.len() as u32) as usize;
     let mut depth = 0u32;
     let mut commas = 0u32;
 
-    for byte in text.as_bytes()[start..end].iter().copied() {
-        match byte {
-            b'(' | b'[' | b'{' => depth += 1,
-            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
-            b',' if depth == 0 => commas += 1,
+    for (token, range) in tokens(&text[start..]) {
+        if start + range.start >= end {
+            break;
+        }
+        match token {
+            Ok(Token::LParen | Token::LBracket | Token::LBrace) => depth += 1,
+            Ok(Token::RParen | Token::RBracket | Token::RBrace) => depth = depth.saturating_sub(1),
+            Ok(Token::Comma) if depth == 0 => commas += 1,
             _ => {}
         }
     }
@@ -493,6 +496,38 @@ mod tests {
             .line_index(uri)
             .expect("line index")
             .byte_to_position(offset)
+    }
+
+    #[test]
+    fn comments_do_not_change_call_delimiters_or_argument_index() {
+        for call in [
+            "f(1 /* ) (, */,  2)",
+            "f /* ( */ (1,  2)",
+            "f(1 // ) ,\n,  2)",
+            "f(1, /* , */  2)",
+            "f(1 /* outer /* ) */ , */ ,  2)",
+        ] {
+            let source = format!(
+                "function f(a: word, b: word) returns (word) {{ return a; }}\nfunction main() returns (word) {{ return {call}; }}"
+            );
+            let (world, uri) = world_with_main(&source);
+            let position = position_at(&source, &world, &uri, "  2");
+            let help = handle_signature_help(&world, &uri, position).expect(call);
+            assert_eq!(help.active_parameter, Some(1), "{call}");
+        }
+    }
+
+    #[test]
+    fn string_contents_do_not_change_argument_structure() {
+        let call = r#"f("a\"),", 2)"#;
+        assert_eq!(
+            call_argument_range(call, 1, call.len() as u32),
+            Some((2, call.len() as u32 - 1))
+        );
+        assert_eq!(
+            count_commas_before(call, 2, call.find('2').unwrap() as u32),
+            1
+        );
     }
 
     #[test]

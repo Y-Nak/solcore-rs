@@ -759,6 +759,23 @@ mod tests {
     }
 
     #[test]
+    fn oversized_edit_column_stays_on_its_requested_line() {
+        let mut world = WorldState::new();
+        let uri = Url::parse("file:///main/main.sol").expect("uri");
+        assert!(world.open_document(uri.clone(), "a\nbc\n".to_owned()));
+        let position = lsp_types::Position::new(0, 3);
+        assert!(world.apply_document_changes(
+            &uri,
+            vec![TextDocumentContentChangeEvent {
+                range: Some(lsp_types::Range::new(position, position)),
+                range_length: None,
+                text: "!".to_owned(),
+            }]
+        ));
+        assert_eq!(world.document_text(&uri), Some("a!\nbc\n"));
+    }
+
+    #[test]
     fn content_change_batches_apply_utf16_ranges_in_order_atomically() {
         use lsp_types::{Position, Range};
 

@@ -8,7 +8,7 @@ use hir::{
         function::{Expr, ExprKind, FuncBody, FuncParam, Pat, PatCtorHead, PatKind, StmtKind},
         item::{
             AdtDef, ClassDef, ConstructorSelector, ContractDef, ContractItem, ExportKind,
-            ExportedName, FunctionDef, ImportSelector, Item, Module, SelectedName,
+            ExportedName, FunctionDef, Import, ImportSelector, Item, Module, SelectedName,
         },
         ty::{PredRef, TypeRef, TypeRefKind},
     },
@@ -141,7 +141,10 @@ pub fn reference_target_at<'db>(
 
     let scope = hir_nameres::item_scope_facts(db, module);
     let item_facts = hir_nameres::resolve_item_type_facts_with_imports(db, module, &scope, &env);
-    item_resolution_target_at(db, file, offset, &item_facts, &env)
+    impl_method_occurrences(db, module, &item_facts)
+        .into_iter()
+        .find_map(|(target, span)| span_contains_offset(db, span, file, offset).then_some(target))
+        .or_else(|| item_resolution_target_at(db, file, offset, &item_facts, &env))
         .or_else(|| item_scope_target_at(db, file, offset, &scope))
         .or_else(|| import_export_target_at(world, uri, position))
 }
@@ -207,6 +210,13 @@ pub fn collect_reference_locations<'db>(
         );
         for body_map in &module_map.bodies {
             collect_body_reference_locations(world, db, body_map, &env, target, &mut locations);
+        }
+        for (method_target, span) in
+            impl_method_occurrences(db, module, &module_map.item_resolutions.facts)
+        {
+            if &method_target == target {
+                push_span_location(world, db, span, &mut locations);
+            }
         }
     }
 
@@ -343,6 +353,17 @@ fn shared_selector_contains_target(world: &WorldState, target: &ReferenceTarget<
             let scope = hir_nameres::item_scope_facts(db, module);
             module.items(db).iter().any(|item| match *item {
                 Item::Import(import) => {
+                    if import.hiding(db).iter().any(|hidden| {
+                        let targets = import_hidden_name_targets(
+                            db,
+                            module_id,
+                            import,
+                            hidden.name.atom().text(db),
+                        );
+                        targets.len() > 1 && targets.iter().any(|candidate| candidate == target)
+                    }) {
+                        return true;
+                    }
                     let Some(ImportSelector::Names(names)) = import.selector(db) else {
                         return false;
                     };
@@ -432,6 +453,17 @@ fn import_export_target_in_module<'db>(
     for item in module.items(db) {
         match *item {
             Item::Import(import) => {
+                for hidden in import.hiding(db) {
+                    if span_contains_offset(db, hidden.name.span(db), file, offset) {
+                        let mut targets = import_hidden_name_targets(
+                            db,
+                            module_id,
+                            import,
+                            hidden.name.atom().text(db),
+                        );
+                        return (targets.len() == 1).then(|| targets.remove(0));
+                    }
+                }
                 let Some(ImportSelector::Names(names)) = import.selector(db) else {
                     continue;
                 };
@@ -1094,6 +1126,19 @@ fn collect_import_export_reference_locations<'db>(
     for item in module.items(db) {
         match *item {
             Item::Import(import) => {
+                for hidden in import.hiding(db) {
+                    if import_hidden_name_targets(
+                        db,
+                        module_id,
+                        import,
+                        hidden.name.atom().text(db),
+                    )
+                    .iter()
+                    .any(|candidate| candidate == target)
+                    {
+                        push_span_location(world, db, hidden.name.span(db), locations);
+                    }
+                }
                 let Some(ImportSelector::Names(names)) = import.selector(db) else {
                     continue;
                 };
@@ -1257,7 +1302,27 @@ fn reexport_name_targets<'db>(
     module: nameres::ModuleId<'db>,
     exported: &ExportedName<'db>,
 ) -> Vec<ReferenceTarget<'db>> {
-    let name = exported.name.atom().text(db);
+    interface_name_targets(db, module, exported.name.atom().text(db))
+}
+
+fn import_hidden_name_targets<'db>(
+    db: &'db dyn hir_ty::Db,
+    importing: nameres::ModuleId<'db>,
+    import: Import<'db>,
+    name: &str,
+) -> Vec<ReferenceTarget<'db>> {
+    // Hidden names are intentionally absent from the consumer's environment;
+    // their identity belongs to the provider's public interface.
+    nameres::resolve_direct_import_target(db, importing, import)
+        .map(|provider| interface_name_targets(db, provider, name))
+        .unwrap_or_default()
+}
+
+fn interface_name_targets<'db>(
+    db: &'db dyn hir_ty::Db,
+    module: nameres::ModuleId<'db>,
+    name: &str,
+) -> Vec<ReferenceTarget<'db>> {
     let interface = nameres::public_interface(db, module);
     let mut targets = [
         interface.terms.get(name),
@@ -1270,6 +1335,44 @@ fn reexport_name_targets<'db>(
     .collect::<Vec<_>>();
     targets.dedup();
     targets
+}
+
+fn impl_method_occurrences<'db>(
+    db: &'db dyn hir_ty::Db,
+    module: Module<'db>,
+    facts: &hir_nameres::ItemResolutionFacts<'db>,
+) -> Vec<(ReferenceTarget<'db>, Span<'db>)> {
+    let mut methods = Vec::new();
+    for item in module.items(db) {
+        let Item::InstanceDef(instance) = *item else {
+            continue;
+        };
+        let Some(Resolution::Def {
+            def: class,
+            kind: hir_nameres::DefResolutionKind::Class,
+        }) = facts
+            .preds
+            .iter()
+            .find(|entry| entry.pred == instance.head(db))
+            .map(|entry| &entry.resolution)
+        else {
+            continue;
+        };
+        for method in instance.methods(db) {
+            let sig = method.sig(db);
+            let name = sig.name.atom().text(db);
+            if class_method_name_span(db, *class, name).is_some() {
+                methods.push((
+                    ReferenceTarget::ClassMethod {
+                        class: *class,
+                        name: name.to_owned(),
+                    },
+                    sig.name.span(db),
+                ));
+            }
+        }
+    }
+    methods
 }
 
 fn reexport_name_type_target<'db>(

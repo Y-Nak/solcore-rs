@@ -161,7 +161,10 @@ fn function_contains_offset<'db>(
     offset: u32,
 ) -> Option<FunctionAtOffset<'db>> {
     let root_body = function.body(db)?;
-    innermost_expr(db, root_body, file, offset)?;
+    let span = root_body.span(db).resolve_to_absolute(db);
+    if span.file() != file || offset < span.start().as_u32() || offset > span.end().as_u32() {
+        return None;
+    }
     Some(FunctionAtOffset {
         function,
         root_body,

@@ -156,6 +156,105 @@ mod tests {
     }
 
     #[test]
+    fn renaming_hidden_import_updates_provider_and_hiding_occurrence() {
+        let main = "import * from math hiding {hidden};\nimport {hidden as kept} from math;\nfunction main() returns (word) { return kept(); }\n";
+        let math = "export {hidden};\nfunction hidden() returns (word) { return 7; }\n";
+        for from_hiding in [false, true] {
+            let (mut world, main_uri, math_uri) = world_with_main_and_math(main, math);
+            let (uri, source) = if from_hiding {
+                (&main_uri, main)
+            } else {
+                (&math_uri, math)
+            };
+            let position = world
+                .line_index(uri)
+                .unwrap()
+                .byte_to_position(source.find("hidden").unwrap() as u32);
+            let edit =
+                handle_rename(&world, uri, position, "renamed").expect("rename hidden symbol");
+            apply_workspace_edit(&mut world, edit);
+            assert!(
+                world
+                    .document_text(&main_uri)
+                    .unwrap()
+                    .contains("hiding {renamed}")
+            );
+            assert!(
+                world
+                    .document_text(&main_uri)
+                    .unwrap()
+                    .contains("{renamed as kept}")
+            );
+            assert!(!world.document_text(&math_uri).unwrap().contains("hidden"));
+            assert_no_error_diagnostics(&world, &[main_uri, math_uri]);
+        }
+    }
+
+    #[test]
+    fn renaming_trait_method_updates_all_impls_with_the_same_trait_identity() {
+        let math = "export {Echo};\ntrait Echo<t> { function echo(x: t) returns (word); }\n";
+        let main = r#"import {Echo} from math;
+impl Echo<word> { function echo(x: word) returns (word) { return x; } }
+impl Echo<bool> { function echo(x: bool) returns (word) { return 0; } }
+trait Other<t> { function echo(x: t) returns (word); }
+impl Other<word> { function echo(x: word) returns (word) { return x; } }
+function main() returns (word) { let x: word = 7; return Echo.echo(x); }
+"#;
+        for from_impl in [false, true] {
+            let (mut world, main_uri, math_uri) = world_with_main_and_math(main, math);
+            let (uri, source) = if from_impl {
+                (&main_uri, main)
+            } else {
+                (&math_uri, math)
+            };
+            let position = world
+                .line_index(uri)
+                .unwrap()
+                .byte_to_position(source.find("echo").unwrap() as u32);
+            let edit = handle_rename(&world, uri, position, "apply").expect("rename trait method");
+            apply_workspace_edit(&mut world, edit);
+            let renamed = world.document_text(&main_uri).unwrap();
+            assert_eq!(renamed.matches("function apply").count(), 2, "{renamed}");
+            assert_eq!(renamed.matches("function echo").count(), 2, "{renamed}");
+            assert!(renamed.contains("Echo.apply(x)"));
+            assert!(
+                world
+                    .document_text(&math_uri)
+                    .unwrap()
+                    .contains("function apply")
+            );
+            assert_no_error_diagnostics(&world, &[main_uri, math_uri]);
+        }
+    }
+
+    fn apply_workspace_edit(world: &mut WorldState, edit: WorkspaceEdit) {
+        for (uri, mut edits) in edit.changes.expect("text edits") {
+            let mut text = world.document_text(&uri).expect("document text").to_owned();
+            let index = LineIndexExt::new(&text);
+            edits.sort_by(|a, b| compare_ranges(&b.range, &a.range));
+            for edit in edits {
+                let start = index.position_to_byte(edit.range.start).unwrap() as usize;
+                let end = index.position_to_byte(edit.range.end).unwrap() as usize;
+                text.replace_range(start..end, &edit.new_text);
+            }
+            assert!(world.change_document(&uri, text));
+        }
+    }
+
+    fn assert_no_error_diagnostics(world: &WorldState, uris: &[Url]) {
+        for uri in uris {
+            let diagnostics = crate::diagnostics::compute_diagnostics(world, uri);
+            assert!(
+                diagnostics
+                    .iter()
+                    .all(|diagnostic| diagnostic.severity
+                        != Some(lsp_types::DiagnosticSeverity::ERROR)),
+                "{uri}: {diagnostics:?}"
+            );
+        }
+    }
+
+    #[test]
     fn renaming_parameter_edits_declaration_and_uses() {
         let source = "function id(x: word) returns (word) {\n  let y = x;\n  return x;\n}\n";
         let (world, uri) = world_with_main(source);

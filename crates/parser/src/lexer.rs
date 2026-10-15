@@ -8,6 +8,12 @@ use std::ops::Range;
 
 use logos::Logos;
 
+/// Iterates source tokens with byte ranges, skipping whitespace and comments.
+/// Editor consumers use the same lexical boundaries as the parser.
+pub fn tokens(text: &str) -> impl Iterator<Item = (Result<Token<'_>, LexError>, Range<usize>)> {
+    Token::lexer(text).spanned()
+}
+
 /// Additional state collected while lexing.
 ///
 /// Comments remain skipped tokens as far as the parser grammar is concerned,
