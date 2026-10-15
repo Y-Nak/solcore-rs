@@ -1850,10 +1850,8 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             YulLitKind::Number(value) | YulLitKind::Hex(value) => self.word_value(value),
             YulLitKind::Bool(value) => Ok(self.fb.make_imm_value(I256::from(u8::from(*value)))),
             YulLitKind::String(value) => {
-                let value = value
-                    .strip_prefix('"')
-                    .and_then(|value| value.strip_suffix('"'))
-                    .unwrap_or(value);
+                let value = hir::string_literal::decode_string_literal(value)
+                    .ok_or_else(|| TranslationError::new("invalid inline Yul string literal"))?;
                 if value.len() > 32 {
                     return Err(TranslationError::new(
                         "inline Yul string literal exceeds one EVM word",
@@ -2603,13 +2601,9 @@ fn is_terminal_evm_builtin(name: &str) -> bool {
 
 fn yul_symbol(expr: &YulExpr<'_>) -> Option<String> {
     match &expr.kind {
-        YulExprKind::Lit(YulLitKind::String(value)) => Some(
-            value
-                .strip_prefix('"')
-                .and_then(|value| value.strip_suffix('"'))
-                .unwrap_or(value)
-                .to_owned(),
-        ),
+        YulExprKind::Lit(YulLitKind::String(value)) => {
+            hir::string_literal::decode_string_literal(value)
+        }
         _ => None,
     }
 }

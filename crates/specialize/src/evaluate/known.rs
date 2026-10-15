@@ -3,12 +3,12 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{CEnv, TypeReg, VEnv, assigned::AssignedNames, value::BigInt};
 use crate::{
+    decode_string_literal,
     ir::{
         MonoArm, MonoBuiltinCtor, MonoExpr, MonoExprKind, MonoId, MonoParam, MonoPat, MonoPatKind,
         MonoStmt, MonoStmtKind, MonoTy,
         visit::{Visitor, walk_pat, walk_stmt},
     },
-    string_literal::decode_string_literal,
 };
 
 pub(super) fn build_type_reg<'db>(

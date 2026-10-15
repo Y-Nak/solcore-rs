@@ -381,6 +381,20 @@ fn lowers_direct_nary_injections_matches_and_terminal_builtins() {
 }
 
 #[test]
+fn inline_yul_string_length_is_checked_after_decoding() {
+    let (_, ir) = lower_source(&format!(
+        r#"function main() returns (word) {{
+            let x: word;
+            assembly {{ x := "{}" }}
+            return x;
+        }}"#,
+        r"\n".repeat(32),
+    ));
+    let expected = sonatina_ir::I256::from_be_bytes(&[b'\n'; 32]).to_string();
+    assert!(ir.contains(&expected), "{ir}");
+}
+
+#[test]
 fn source_main_lowers_through_hull_to_verified_ir() {
     let (_, ir) = lower_source(
         r#"

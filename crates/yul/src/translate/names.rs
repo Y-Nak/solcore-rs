@@ -85,17 +85,13 @@ pub(super) fn convert_yul_lit(lit: &YulLitKind) -> Result<Literal, TranslationEr
     Ok(match lit {
         YulLitKind::Number(value) => Literal::Number(canonical_numeric_lit(value)?),
         YulLitKind::Hex(value) => Literal::Hex(canonical_hex_lit(value)?),
-        YulLitKind::String(value) => Literal::String(strip_quotes(value).to_owned()),
+        YulLitKind::String(value) => Literal::String(
+            hir::string_literal::decode_string_literal(value)
+                .ok_or_else(|| TranslationError::new("invalid inline Yul string literal"))?,
+        ),
         YulLitKind::Bool(value) => Literal::Bool(*value),
         YulLitKind::Error => Literal::Number("0".to_owned()),
     })
-}
-
-fn strip_quotes(value: &str) -> &str {
-    value
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .unwrap_or(value)
 }
 
 pub(super) fn yul_name<'db>(

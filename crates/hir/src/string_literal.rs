@@ -1,13 +1,15 @@
 /// Decodes the source spelling of a Solcore string literal.
 ///
-/// Unknown escapes deliberately discard the backslash and retain the escaped
-/// character. This is the evaluator's established semantics and backend
-/// consumers must use the same decoding before materializing literal bytes.
+/// Accepts the same escapes as the source lexer. Invalid spellings return
+/// `None`, including when HIR is constructed directly by compiler consumers.
 pub fn decode_string_literal(text: &str) -> Option<String> {
     let inner = text.strip_prefix('"')?.strip_suffix('"')?;
     let mut out = String::new();
     let mut chars = inner.chars();
     while let Some(ch) = chars.next() {
+        if ch == '"' {
+            return None;
+        }
         if ch != '\\' {
             out.push(ch);
             continue;
@@ -16,9 +18,8 @@ pub fn decode_string_literal(text: &str) -> Option<String> {
             '"' => out.push('"'),
             '\\' => out.push('\\'),
             'n' => out.push('\n'),
-            'r' => out.push('\r'),
             't' => out.push('\t'),
-            other => out.push(other),
+            _ => return None,
         }
     }
     Some(out)
@@ -31,22 +32,21 @@ mod tests {
     #[test]
     fn decodes_known_escapes() {
         assert_eq!(
-            decode_string_literal(r#""a\n\r\t\"\\b""#),
-            Some("a\n\r\t\"\\b".to_owned())
+            decode_string_literal(r#""a\n\t\"\\b""#),
+            Some("a\n\t\"\\b".to_owned())
         );
     }
 
     #[test]
-    fn preserves_evaluator_semantics_for_unknown_escapes() {
-        assert_eq!(
-            decode_string_literal(r#""before\qafter""#),
-            Some("beforeqafter".to_owned())
-        );
+    fn rejects_unsupported_source_escapes() {
+        assert_eq!(decode_string_literal(r#""before\qafter""#), None);
+        assert_eq!(decode_string_literal(r#""\r""#), None);
     }
 
     #[test]
     fn rejects_malformed_literal_spellings() {
         assert_eq!(decode_string_literal("not quoted"), None);
         assert_eq!(decode_string_literal("\"trailing\\\""), None);
+        assert_eq!(decode_string_literal("\"unescaped\"quote\""), None);
     }
 }

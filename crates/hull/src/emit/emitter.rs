@@ -1644,10 +1644,7 @@ mod string_literal_tests {
             decode_string_literal(r#""a\n\t\"\\b""#),
             Some("a\n\t\"\\b".to_owned())
         );
-        assert_eq!(
-            decode_string_literal(r#""before\qafter""#),
-            Some("beforeqafter".to_owned())
-        );
+        assert_eq!(decode_string_literal(r#""before\qafter""#), None);
         assert_eq!(decode_string_literal("not quoted"), None);
     }
 }

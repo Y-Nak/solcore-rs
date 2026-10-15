@@ -1,0 +1,29 @@
+{
+  "assembly_string_escapes": {
+    "bytecode": "",
+    "contract": "AssemblyStringEscapes",
+    "tests": [
+      {
+        "kind": "constructor",
+        "input": {
+          "calldata": "",
+          "value": "0"
+        },
+        "output": {
+          "status": "success"
+        }
+      },
+      {
+        "kind": "call",
+        "input": {
+          "calldata": "",
+          "value": "0"
+        },
+        "output": {
+          "status": "success",
+          "returndata": "610a09225c620000000000000000000000000000000000000000000000000000"
+        }
+      }
+    ]
+  }
+}
