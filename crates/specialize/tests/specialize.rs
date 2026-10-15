@@ -5079,6 +5079,12 @@ fn count_returns_in_stmts(stmts: &[MonoStmt<'_>]) -> usize {
 }
 
 fn specialize_fixture(path: &Path) -> SpecializeOutput<'static> {
+    specialize_fixture_with_db(path).2
+}
+
+fn specialize_fixture_with_db(
+    path: &Path,
+) -> (&'static TestDb, SourceFile, SpecializeOutput<'static>) {
     let db = Box::leak(Box::new(TestDb::default()));
     let main_root = path.parent().expect("fixture parent").to_path_buf();
     let repo = repo_root();
@@ -5105,7 +5111,8 @@ fn specialize_fixture(path: &Path) -> SpecializeOutput<'static> {
     let unresolved = load_reachable_modules(db, key.clone());
     assert!(unresolved.is_empty(), "{unresolved:?}");
     let module = parse_file_to_hir(db, file).module(db);
-    specialize_module(db, module, SpecializeOptions::default())
+    let output = specialize_module(db, module, SpecializeOptions::default());
+    (db, file, output)
 }
 
 fn module_fs_snapshot_for_roots<'a>(
@@ -6254,4 +6261,80 @@ fn contract_field_calls_use_definition_module_evidence() {
         "consumer-only competing evidence leaked into the contract field read: {:#?}",
         loads[0]
     );
+}
+
+#[test]
+fn generic_function_specializations_preserve_module_local_dictionaries() {
+    for (entry, expected) in [
+        ("main.sol", "3"),
+        ("multiple.sol", "33"),
+        ("values.sol", "3"),
+        ("phantom.sol", "7"),
+        ("ordered_a.sol", "4"),
+        ("ordered_b.sol", "5"),
+    ] {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/module_local_function_evidence")
+            .join(entry);
+        let (db, file, output) = specialize_fixture_with_db(&fixture);
+        let module_id = nameres::module_id_for_source_file(db, file).unwrap();
+        let frontend = hir_ty::collect_frontend_diagnostics(db, module_id);
+        assert!(frontend.is_empty(), "{entry}: frontend {frontend:#?}");
+        assert!(
+            output.diagnostics.is_empty(),
+            "{entry}: {:?}",
+            output.diagnostics
+        );
+        if entry == "values.sol" {
+            for (name, value) in [("a_valueA_", "1"), ("b_valueB_", "2")] {
+                assert!(
+                    output.module.items.iter().any(|item| {
+                        let MonoItem::Function(function) = item else {
+                            return false;
+                        };
+                        function.name.starts_with(name)
+                            && matches!(function.body.last(),
+                        Some(MonoStmt { kind: MonoStmtKind::Return(Some(MonoExpr {
+                            kind: MonoExprKind::Lit(hir::ast::function::LitKind::Number(number)), ..
+                        })), .. }) if number == value)
+                    }),
+                    "{entry}: missing return {value} in {name}"
+                );
+            }
+        } else {
+            assert_eq!(
+                main_return_number(&output).as_deref(),
+                Some(expected),
+                "{entry}: {:#?}",
+                output.module
+            );
+        }
+    }
+}
+
+#[test]
+fn user_concat_lit_retains_its_word_signature_and_behavior() {
+    let (_, output) = specialize_src(
+        "function concatLit(x:word) returns(word) { return x; } function main() returns(word) { return concatLit(7); }",
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(main_return_number(&output).as_deref(), Some("7"));
+}
+
+#[test]
+fn public_dispatch_accepts_nine_parameter_functions() {
+    let (db, file, output) = specialize_src_with_std_and_db(
+        r#"
+import * from std;
+import * from std.dispatch;
+contract Nine {
+  function last(a:uint256,b:uint256,c:uint256,d:uint256,e:uint256,f:uint256,g:uint256,h:uint256,i:uint256) public returns(uint256) { return i; }
+}
+"#,
+    );
+    let module_id = nameres::module_id_for_source_file(db, file).unwrap();
+    let frontend = hir_ty::infer::module_typeck_diagnostics(db, module_id);
+    assert!(frontend.is_empty(), "frontend: {frontend:#?}");
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert!(!output.module.entry_points.is_empty());
 }

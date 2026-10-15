@@ -4084,6 +4084,114 @@ default impl Marker<Box<word>> {}
 }
 
 #[test]
+fn nested_instance_ambiguity_preserves_distinct_prerequisite_dictionaries() {
+    for instances in [
+        "impl C<word> { function f(x:word) returns(word) { return 1; } } impl C<word> { function f(x:word) returns(word) { return 2; } }",
+        "impl C<word> { function f(x:word) returns(word) { return 2; } } impl C<word> { function f(x:word) returns(word) { return 1; } }",
+    ] {
+        let db = TestDb::default();
+        let source = format!(
+            "trait C<a> {{ function f(x:a) returns(word); }} trait D<a> {{}} enum Box<a> {{Box(a)}} {instances} impl<a> D<Box<a>> where a: C {{}}"
+        );
+        let module = parse_module(&db, &source);
+        let resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &resolution);
+        let solution = solve_class_goal(
+            &db,
+            env,
+            class_id(&db, module, "D"),
+            adt_ty(&db, module, "Box", vec![Ty::word(&db)]),
+            Vec::new(),
+        );
+        let Solution::Ambiguous { candidates } = solution else {
+            panic!("{solution:?}");
+        };
+        assert_eq!(candidates.len(), 2);
+        assert_ne!(candidates[0].evidence, candidates[1].evidence);
+    }
+}
+
+#[test]
+fn nested_instance_prefers_direct_prerequisites_over_superclasses() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+trait C<a> {}
+trait Sub<a> where a: C {}
+trait D<a> {}
+impl C<word> {}
+impl Sub<word> {}
+impl<a> D<a> where a: C {}
+"#,
+    );
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &resolution);
+    let solution = solve_class_goal(
+        &db,
+        env,
+        class_id(&db, module, "D"),
+        Ty::word(&db),
+        Vec::new(),
+    );
+    let Solution::Unique {
+        evidence: Evidence::Instance { sub_evidence, .. },
+        ..
+    } = solution
+    else {
+        panic!("{solution:?}");
+    };
+    assert!(matches!(
+        sub_evidence.as_slice(),
+        [Evidence::Instance { .. }]
+    ));
+}
+
+#[test]
+fn productive_instance_cycles_have_finite_distinct_dictionaries() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        "trait C<a> {} impl C<word> {} impl<a> C<a> where a: C {}",
+    );
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &resolution);
+    let report = solve_class_report(
+        &db,
+        env,
+        class_id(&db, module, "C"),
+        Ty::word(&db),
+        Vec::new(),
+    );
+    assert!(!report.exhausted, "{report:?}");
+    assert!(matches!(report.solution, Solution::Ambiguous { candidates } if candidates.len() == 2));
+}
+
+#[test]
+fn function_values_have_no_builtin_arity_limit() {
+    for arity in [0, 1, 8, 9, 16, 32] {
+        let params = (0..arity)
+            .map(|i| format!("x{i}:word"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let args = (0..arity).map(|_| "1").collect::<Vec<_>>().join(",");
+        let source = format!(
+            "function f({params}) returns (word) {{ return 7; }} function main() returns (word) {{ let g=f; return g({args}); }}"
+        );
+        let diagnostics = lowered_module_typeck_diagnostics(&source);
+        assert!(diagnostics.is_empty(), "arity {arity}: {diagnostics:?}");
+    }
+}
+
+#[test]
+fn user_defined_concat_lit_is_an_ordinary_function() {
+    let diagnostics = lowered_module_typeck_diagnostics(
+        "function concatLit(x:word) returns(word) { return x; } function main() returns(word) { return concatLit(7); }",
+    );
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
 fn unrelated_contract_constructors_do_not_capture_pattern_variables() {
     let db = TestDb::default();
     let module = parse_module(
@@ -4143,5 +4251,43 @@ function inspect(x:Secret) returns(word) { match(x) { case .Hidden(n) { return n
                 result.diagnostics
             );
         }
+    }
+}
+
+#[test]
+fn structural_invokable_rules_preserve_comptime_transparency() {
+    let db = TestDb::default();
+    let module = parse_module(&db, "");
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &resolution);
+    let params = vec![Ty::word(&db); 16];
+    let function = Ty::function(&db, params.clone(), Ty::word(&db));
+    let goal = Pred::in_class(
+        &db,
+        ClassId::Builtin(BuiltinClassId::Invokable),
+        Ty::comptime(&db, function),
+        vec![Ty::comptime(&db, Ty::tuple(&db, params)), Ty::word(&db)],
+    );
+    assert!(matches!(
+        solve(&db, env, canonical_goal(&db, goal)),
+        Solution::Unique { .. }
+    ));
+}
+
+#[test]
+fn unit_arguments_support_nullary_and_unary_function_types() {
+    let db = TestDb::default();
+    let module = parse_module(&db, "");
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &resolution);
+    for params in [vec![], vec![Ty::unit(&db)]] {
+        let goal = Pred::in_class(
+            &db,
+            ClassId::Builtin(BuiltinClassId::Invokable),
+            Ty::function(&db, params, Ty::word(&db)),
+            vec![Ty::unit(&db), Ty::word(&db)],
+        );
+        let solution = solve(&db, env, canonical_goal(&db, goal));
+        assert!(matches!(solution, Solution::Unique { .. }), "{solution:?}");
     }
 }

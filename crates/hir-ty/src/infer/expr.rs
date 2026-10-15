@@ -1060,11 +1060,13 @@ impl<'db> InferCtx<'db> {
     }
 
     fn is_concat_lit_callee(&self, body: FuncBody<'db>, callee: Id<Expr<'db>>) -> bool {
-        match &body.exprs(self.db).get(callee).kind {
-            ExprKind::Ident(name) => (*name.atom()).text(self.db) == "concatLit",
-            ExprKind::Field { field, .. } => (*field.atom()).text(self.db) == "concatLit",
-            _ => false,
-        }
+        matches!(
+            self.expr_resolutions.get(&(body, callee)),
+            Some(hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Function,
+            }) if crate::support::is_canonical_std_def_named(self.db, *def, "concatLit")
+        )
     }
 
     pub(super) fn expected_string_lit_ty(

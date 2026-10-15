@@ -1,6 +1,5 @@
 ---
 source: crates/yul/tests/snapshots.rs
-assertion_line: 107
 expression: "render_source(\"doc_id\",\nr#\"\nimport * from std;\nimport * from std.dispatch;\n\ncontract IdDoc {\n  function id(x : uint256) public returns (uint256) {\n    return x;\n  }\n}\n\"#,)"
 ---
 object "IdDocDeploy" {
@@ -151,7 +150,7 @@ object "IdDocDeploy" {
         gen$result_53 := _v19
         leave
       }
-      function usr$dispatch_selector_matches_de46e52b9$Method_dcbe49e39LDispatchNameTy_IdDoc_id_d5611abab_NonPayable_da3e44601_uint256_d2edb4603_uint256_d2edb4603_fnLuint256_d2edb4603JRuint256_d2edb4603JJ() -> _v20 {
+      function usr$dispatch_selector_matches_de46e52b9_p0d3b3470d1df7eed$Method_dcbe49e39LDispatchNameTy_IdDoc_id_d5611abab_NonPayable_da3e44601_uint256_d2edb4603_uint256_d2edb4603_fnLuint256_d2edb4603JRuint256_d2edb4603JJ() -> _v20 {
         let src$candidate_55
         src$candidate_55 := 2101100744
         let src$selector_56
@@ -176,7 +175,7 @@ object "IdDocDeploy" {
           let _v25
           _v25 := usr$opcodes_calldatasize_dee48adc5()
           let _v26
-          _v26 := usr$std_ge_df0bec9f4$word(_v25, 4)
+          _v26 := usr$std_ge_df0bec9f4_p40d9dce58c7e7ecc$word(_v25, 4)
           _v24 := _v26
           switch _v24
             case false {
@@ -188,7 +187,7 @@ object "IdDocDeploy" {
                 {
                   let _v27
                   let _v28
-                  _v28 := usr$dispatch_selector_matches_de46e52b9$Method_dcbe49e39LDispatchNameTy_IdDoc_id_d5611abab_NonPayable_da3e44601_uint256_d2edb4603_uint256_d2edb4603_fnLuint256_d2edb4603JRuint256_d2edb4603JJ()
+                  _v28 := usr$dispatch_selector_matches_de46e52b9_p0d3b3470d1df7eed$Method_dcbe49e39LDispatchNameTy_IdDoc_id_d5611abab_NonPayable_da3e44601_uint256_d2edb4603_uint256_d2edb4603_fnLuint256_d2edb4603JRuint256_d2edb4603JJ()
                   _v27 := _v28
                   switch _v27
                     case false {
@@ -214,13 +213,13 @@ object "IdDocDeploy" {
                             let _v34
                             _v34 := usr$opcodes_calldatasize_dee48adc5()
                             let _v35
-                            _v35 := usr$std_ge_df0bec9f4$word(_v34, 36)
+                            _v35 := usr$std_ge_df0bec9f4_p40d9dce58c7e7ecc$word(_v34, 36)
                             usr$std_require_d22809541(_v35, false, 0x08638556, 911)
                             let src$ptr_59
                             src$ptr_59 := 4
                             let src$args_60
                             let _v36
-                            _v36 := usr$std_abi_decode_debc005b9$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(src$ptr_59)
+                            _v36 := usr$std_abi_decode_debc005b9_p88856831ae5400d8$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(src$ptr_59)
                             src$args_60 := _v36
                             let src$rets_61
                             let _v37
@@ -228,7 +227,7 @@ object "IdDocDeploy" {
                             src$rets_61 := _v37
                             let src$ptr_62
                             let _v38
-                            _v38 := usr$std_abi_encode_d3b55212b$uint256_d2edb4603(src$rets_61)
+                            _v38 := usr$std_abi_encode_d3b55212b_pf53eab52cb3ebeea$uint256_d2edb4603(src$rets_61)
                             src$ptr_62 := _v38
                             let _v39
                             _v39 := usr$MemoryPointer_ptr_dbc7e9939$memory_dda73d3aeLbytes_dc4f6af34J(src$ptr_62)
@@ -307,7 +306,7 @@ object "IdDocDeploy" {
         gen$result_81 := src$res_82
         leave
       }
-      function usr$std_abi_decode_debc005b9$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(src$decodable_83) -> gen$result_84 {
+      function usr$std_abi_decode_debc005b9_p88856831ae5400d8$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(src$decodable_83) -> gen$result_84 {
         let src$decoder_85
         let _v49
         _v49 := usr$HasWordReader_getWordReader_d92d4533d$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff(src$decodable_83)
@@ -317,7 +316,7 @@ object "IdDocDeploy" {
         gen$result_84 := _v50
         leave
       }
-      function usr$std_abi_encode_d3b55212b$uint256_d2edb4603(src$val_86) -> gen$result_87 {
+      function usr$std_abi_encode_d3b55212b_pf53eab52cb3ebeea$uint256_d2edb4603(src$val_86) -> gen$result_87 {
         let src$ret_88
         let _v51
         _v51 := usr$std_get_free_memory_d1dc44c02()
@@ -339,9 +338,9 @@ object "IdDocDeploy" {
         gen$result_87 := src$ret_88
         leave
       }
-      function usr$std_ge_df0bec9f4$word(src$x_91, src$y_92) -> _v56 {
+      function usr$std_ge_df0bec9f4_p40d9dce58c7e7ecc$word(src$x_91, src$y_92) -> _v56 {
         let _v57
-        _v57 := usr$std_le_d7eb3f6cb$word(src$y_92, src$x_91)
+        _v57 := usr$std_le_d7eb3f6cb_p40d9dce58c7e7ecc$word(src$y_92, src$x_91)
         _v56 := _v57
         leave
       }
@@ -351,7 +350,7 @@ object "IdDocDeploy" {
         gen$result_93 := _v58
         leave
       }
-      function usr$std_le_d7eb3f6cb$word(src$x_94, src$y_95) -> _v59 {
+      function usr$std_le_d7eb3f6cb_p40d9dce58c7e7ecc$word(src$x_94, src$y_95) -> _v59 {
         let _v60
         _v60 := usr$Ord_gt_dbce4d001$word(src$x_94, src$y_95)
         let _v61

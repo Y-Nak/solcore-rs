@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct TySubst<'db> {
     vars: FxHashMap<u32, Ty<'db>>,
 }
@@ -35,6 +35,61 @@ impl<'db> TySubst<'db> {
     pub(super) fn extend_consistent(&mut self, other: TySubst<'db>) {
         for (index, ty) in other.vars {
             self.insert_if_consistent(index, ty);
+        }
+    }
+
+    /// Recover binders that occur only in constraints from the dictionaries
+    /// selected by inference. These need not occur in a function's value type.
+    pub(super) fn refine_from_evidence(
+        &mut self,
+        db: &'db dyn Db,
+        predicates: &[Pred<'db>],
+        bindings: &[(Pred<'db>, Evidence<'db>)],
+    ) {
+        loop {
+            let before = self.clone();
+            for predicate in predicates {
+                let PredKind::InClass { class, main, args } = predicate.kind(db) else {
+                    continue;
+                };
+                let mut unique = None;
+                let mut ambiguous = false;
+                for (bound, _) in bindings {
+                    let PredKind::InClass {
+                        class: bound_class,
+                        main: bound_main,
+                        args: bound_args,
+                    } = bound.kind(db)
+                    else {
+                        continue;
+                    };
+                    if class != bound_class || args.len() != bound_args.len() {
+                        continue;
+                    }
+                    let mut matched = self.clone();
+                    if matched.match_ty(db, *main, *bound_main)
+                        && args
+                            .iter()
+                            .zip(bound_args)
+                            .all(|(arg, bound)| matched.match_ty(db, *arg, *bound))
+                    {
+                        if unique.as_ref().is_some_and(|existing| *existing != matched) {
+                            ambiguous = true;
+                            break;
+                        }
+                        unique = Some(matched);
+                    }
+                }
+                if !ambiguous && let Some(matched) = unique {
+                    *self = matched;
+                }
+            }
+            // Another predicate may fix a binder shared by two constraints
+            // from the same class. Never choose the first matching dictionary
+            // when its type arguments still admit multiple interpretations.
+            if *self == before {
+                break;
+            }
         }
     }
 

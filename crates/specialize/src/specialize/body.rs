@@ -27,7 +27,8 @@ pub(super) struct BodyIndex<'db> {
     let_tys: FxHashMap<(FuncBody<'db>, Id<Stmt<'db>>), Ty<'db>>,
     expr_resolutions: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), hir_nameres::Resolution<'db>>,
     pat_resolutions: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), hir_nameres::Resolution<'db>>,
-    call_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, Id<Expr<'db>>), CallSiteEvidence<'db>>,
+    call_evidence:
+        FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, Id<Expr<'db>>), Vec<CallSiteEvidence<'db>>>,
     class_method_value_evidence:
         FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, DefId<'db>), Evidence<'db>>,
     string_coercion_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), Evidence<'db>>,
@@ -99,7 +100,8 @@ impl<'db> BodyIndex<'db> {
             index
                 .call_evidence
                 .entry((evidence.body, evidence.call_expr, evidence.callee_expr))
-                .or_insert_with(|| evidence.clone());
+                .or_default()
+                .push(evidence.clone());
             if index.first_builtin_int_evidence.is_none()
                 && matches!(
                     evidence.callee,
@@ -1289,7 +1291,28 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         self.index
             .call_evidence
             .get(&(self.body, call_expr, callee_expr))
+            .and_then(|evidence| evidence.first())
             .cloned()
+    }
+
+    pub(super) fn call_evidence_bindings(
+        &self,
+        call_expr: Id<Expr<'db>>,
+        callee_expr: Id<Expr<'db>>,
+    ) -> Vec<(Pred<'db>, Evidence<'db>)> {
+        self.index
+            .call_evidence
+            .get(&(self.body, call_expr, callee_expr))
+            .into_iter()
+            .flatten()
+            .filter_map(|solved| {
+                let obligation = self.result.obligations.get(solved.obligation)?;
+                Some((
+                    self.subst.apply_pred(self.driver.db, obligation.pred),
+                    self.specialize_evidence(solved.evidence.clone()),
+                ))
+            })
+            .collect()
     }
 
     fn class_method_value_evidence(
@@ -2405,7 +2428,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             result_ty,
         );
         let callee = MonoId {
-            name: self.specialize_direct_function(def, callee_ty, span),
+            name: self.specialize_synthetic_std_function(def, callee_ty, span),
             ty: self
                 .driver
                 .mono_ty(callee_ty, "array helper callee", span)?,

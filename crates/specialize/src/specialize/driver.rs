@@ -754,6 +754,7 @@ impl<'db> Driver<'db> {
             return;
         }
         let givens = self.function_givens(&info, &lowered);
+        subst.refine_from_evidence(self.db, &givens, &pending.key.evidence_bindings);
         self.resolve_mptc_from_preds(info.module, &givens, &mut subst);
         let Some(params) = self.function_params(&info, &lowered, &subst, pending.key.ty) else {
             return;

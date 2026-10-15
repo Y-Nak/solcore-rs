@@ -1,6 +1,5 @@
 ---
 source: crates/yul/tests/snapshots.rs
-assertion_line: 166
 expression: "render_source(\"dispatch_basic_shape\",\nr#\"\nimport * from std;\nimport * from std.dispatch;\n\ncontract DispatchBasicShape {\n  function id(x : uint256) public returns (uint256) {\n    return x;\n  }\n\n  function answer() public returns (uint256) {\n    return uint256(42);\n  }\n}\n\"#,)"
 ---
 object "DispatchBasicShapeDeploy" {
@@ -165,7 +164,7 @@ object "DispatchBasicShapeDeploy" {
           let _v21
           _v21 := usr$opcodes_calldatasize_dee48adc5()
           let _v22
-          _v22 := usr$std_ge_df0bec9f4$word(_v21, 4)
+          _v22 := usr$std_ge_df0bec9f4_p40d9dce58c7e7ecc$word(_v21, 4)
           _v20 := _v22
           switch _v20
             case false {
@@ -177,7 +176,7 @@ object "DispatchBasicShapeDeploy" {
                 {
                   let _v23
                   let _v24
-                  _v24 := usr$dispatch_selector_matches_de46e52b9$Method_dcbe49e39LDispatchNameTy_DispatchBasicShape_id_df55aba5a_NonPayable_da3e44601_uint256_d2edb4603_uint256_d2edb4603_fnLuint256_d2edb4603JRuint256_d2edb4603JJ()
+                  _v24 := usr$dispatch_selector_matches_de46e52b9_p45a2712aa1f364f9$Method_dcbe49e39LDispatchNameTy_DispatchBasicShape_id_df55aba5a_NonPayable_da3e44601_uint256_d2edb4603_uint256_d2edb4603_fnLuint256_d2edb4603JRuint256_d2edb4603JJ()
                   _v23 := _v24
                   switch _v23
                     case false {
@@ -185,7 +184,7 @@ object "DispatchBasicShapeDeploy" {
                       {
                         let _v25
                         let _v26
-                        _v26 := usr$dispatch_selector_matches_de46e52b9$Method_dcbe49e39LDispatchNameTy_DispatchBasicShape_answer_da50cdb80_NonPayable_da3e44601_unit_uint256_d2edb4603_fnLJRuint256_d2edb4603JJ()
+                        _v26 := usr$dispatch_selector_matches_de46e52b9_pc80dbd271ccd9368$Method_dcbe49e39LDispatchNameTy_DispatchBasicShape_answer_da50cdb80_NonPayable_da3e44601_unit_uint256_d2edb4603_fnLJRuint256_d2edb4603JJ()
                         _v25 := _v26
                         switch _v25
                           case false {
@@ -211,16 +210,16 @@ object "DispatchBasicShapeDeploy" {
                                   let _v32
                                   _v32 := usr$opcodes_calldatasize_dee48adc5()
                                   let _v33
-                                  _v33 := usr$std_ge_df0bec9f4$word(_v32, 4)
+                                  _v33 := usr$std_ge_df0bec9f4_p40d9dce58c7e7ecc$word(_v32, 4)
                                   usr$std_require_d22809541(_v33, false, 0x08638556, 911)
                                   let src$ptr_59
                                   src$ptr_59 := 4
-                                  usr$std_abi_decode_debc005b9$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_unit_unit(4)
+                                  usr$std_abi_decode_debc005b9_p1bd3e575a8c5842d$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_unit_unit(4)
                                   let src$rets_60
                                   src$rets_60 := 42
                                   let src$ptr_61
                                   let _v34
-                                  _v34 := usr$std_abi_encode_d3b55212b$uint256_d2edb4603(src$rets_60)
+                                  _v34 := usr$std_abi_encode_d3b55212b_pf53eab52cb3ebeea$uint256_d2edb4603(src$rets_60)
                                   src$ptr_61 := _v34
                                   let _v35
                                   _v35 := usr$MemoryPointer_ptr_dbc7e9939$memory_dda73d3aeLbytes_dc4f6af34J(src$ptr_61)
@@ -253,13 +252,13 @@ object "DispatchBasicShapeDeploy" {
                             let _v42
                             _v42 := usr$opcodes_calldatasize_dee48adc5()
                             let _v43
-                            _v43 := usr$std_ge_df0bec9f4$word(_v42, 36)
+                            _v43 := usr$std_ge_df0bec9f4_p40d9dce58c7e7ecc$word(_v42, 36)
                             usr$std_require_d22809541(_v43, false, 0x08638556, 911)
                             let src$ptr_62
                             src$ptr_62 := 4
                             let src$args_63
                             let _v44
-                            _v44 := usr$std_abi_decode_debc005b9$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(src$ptr_62)
+                            _v44 := usr$std_abi_decode_debc005b9_p88856831ae5400d8$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(src$ptr_62)
                             src$args_63 := _v44
                             let src$rets_64
                             let _v45
@@ -267,7 +266,7 @@ object "DispatchBasicShapeDeploy" {
                             src$rets_64 := _v45
                             let src$ptr_65
                             let _v46
-                            _v46 := usr$std_abi_encode_d3b55212b$uint256_d2edb4603(src$rets_64)
+                            _v46 := usr$std_abi_encode_d3b55212b_pf53eab52cb3ebeea$uint256_d2edb4603(src$rets_64)
                             src$ptr_65 := _v46
                             let _v47
                             _v47 := usr$MemoryPointer_ptr_dbc7e9939$memory_dda73d3aeLbytes_dc4f6af34J(src$ptr_65)
@@ -307,9 +306,9 @@ object "DispatchBasicShapeDeploy" {
         }
         leave
       }
-      function usr$dispatch_selector_matches_de46e52b9$Method_dcbe49e39LDispatchNameTy_DispatchBasicShape_answer_da50cdb80_NonPayable_da3e44601_unit_uint256_d2edb4603_fnLJRuint256_d2edb4603JJ() -> _v57 {
+      function usr$dispatch_selector_matches_de46e52b9_p45a2712aa1f364f9$Method_dcbe49e39LDispatchNameTy_DispatchBasicShape_id_df55aba5a_NonPayable_da3e44601_uint256_d2edb4603_uint256_d2edb4603_fnLuint256_d2edb4603JRuint256_d2edb4603JJ() -> _v57 {
         let src$candidate_66
-        src$candidate_66 := 2243657065
+        src$candidate_66 := 2101100744
         let src$selector_67
         let _v58
         _v58 := usr$opcodes_calldataload_d37992dc7(0)
@@ -321,9 +320,9 @@ object "DispatchBasicShapeDeploy" {
         _v57 := _v60
         leave
       }
-      function usr$dispatch_selector_matches_de46e52b9$Method_dcbe49e39LDispatchNameTy_DispatchBasicShape_id_df55aba5a_NonPayable_da3e44601_uint256_d2edb4603_uint256_d2edb4603_fnLuint256_d2edb4603JRuint256_d2edb4603JJ() -> _v61 {
+      function usr$dispatch_selector_matches_de46e52b9_pc80dbd271ccd9368$Method_dcbe49e39LDispatchNameTy_DispatchBasicShape_answer_da50cdb80_NonPayable_da3e44601_unit_uint256_d2edb4603_fnLJRuint256_d2edb4603JJ() -> _v61 {
         let src$candidate_68
-        src$candidate_68 := 2101100744
+        src$candidate_68 := 2243657065
         let src$selector_69
         let _v62
         _v62 := usr$opcodes_calldataload_d37992dc7(0)
@@ -374,25 +373,25 @@ object "DispatchBasicShapeDeploy" {
         gen$result_88 := src$res_89
         leave
       }
-      function usr$std_abi_decode_debc005b9$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(src$decodable_90) -> gen$result_91 {
-        let src$decoder_92
+      function usr$std_abi_decode_debc005b9_p1bd3e575a8c5842d$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_unit_unit(src$decodable_90) {
+        let src$decoder_91
         let _v65
         _v65 := usr$HasWordReader_getWordReader_d92d4533d$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff(src$decodable_90)
-        src$decoder_92 := _v65
-        let _v66
-        _v66 := usr$ABIDecode_decode_d84af4302_pcb6af4462cd5d163$ABIDecoder_da57c46d1Luint256_d2edb4603_CalldataWordReader_d3137e4ffJ_uint256_d2edb4603(src$decoder_92, 0)
-        gen$result_91 := _v66
+        src$decoder_91 := _v65
+        usr$ABIDecode_decode_d74d1c555_pcb6af4462cd5d163$ABIDecoder_da57c46d1Lunit_CalldataWordReader_d3137e4ffJ_unit(src$decoder_91, 0)
         leave
       }
-      function usr$std_abi_decode_debc005b9$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_unit_unit(src$decodable_93) {
+      function usr$std_abi_decode_debc005b9_p88856831ae5400d8$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(src$decodable_92) -> gen$result_93 {
         let src$decoder_94
+        let _v66
+        _v66 := usr$HasWordReader_getWordReader_d92d4533d$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff(src$decodable_92)
+        src$decoder_94 := _v66
         let _v67
-        _v67 := usr$HasWordReader_getWordReader_d92d4533d$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff(src$decodable_93)
-        src$decoder_94 := _v67
-        usr$ABIDecode_decode_d74d1c555_pcb6af4462cd5d163$ABIDecoder_da57c46d1Lunit_CalldataWordReader_d3137e4ffJ_unit(src$decoder_94, 0)
+        _v67 := usr$ABIDecode_decode_d84af4302_pcb6af4462cd5d163$ABIDecoder_da57c46d1Luint256_d2edb4603_CalldataWordReader_d3137e4ffJ_uint256_d2edb4603(src$decoder_94, 0)
+        gen$result_93 := _v67
         leave
       }
-      function usr$std_abi_encode_d3b55212b$uint256_d2edb4603(src$val_95) -> gen$result_96 {
+      function usr$std_abi_encode_d3b55212b_pf53eab52cb3ebeea$uint256_d2edb4603(src$val_95) -> gen$result_96 {
         let src$ret_97
         let _v68
         _v68 := usr$std_get_free_memory_d1dc44c02()
@@ -414,9 +413,9 @@ object "DispatchBasicShapeDeploy" {
         gen$result_96 := src$ret_97
         leave
       }
-      function usr$std_ge_df0bec9f4$word(src$x_100, src$y_101) -> _v73 {
+      function usr$std_ge_df0bec9f4_p40d9dce58c7e7ecc$word(src$x_100, src$y_101) -> _v73 {
         let _v74
-        _v74 := usr$std_le_d7eb3f6cb$word(src$y_101, src$x_100)
+        _v74 := usr$std_le_d7eb3f6cb_p40d9dce58c7e7ecc$word(src$y_101, src$x_100)
         _v73 := _v74
         leave
       }
@@ -426,7 +425,7 @@ object "DispatchBasicShapeDeploy" {
         gen$result_102 := _v75
         leave
       }
-      function usr$std_le_d7eb3f6cb$word(src$x_103, src$y_104) -> _v76 {
+      function usr$std_le_d7eb3f6cb_p40d9dce58c7e7ecc$word(src$x_103, src$y_104) -> _v76 {
         let _v77
         _v77 := usr$Ord_gt_dbce4d001$word(src$x_103, src$y_104)
         let _v78

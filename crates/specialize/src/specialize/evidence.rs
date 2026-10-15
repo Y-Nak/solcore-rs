@@ -309,23 +309,38 @@ impl<'db> Driver<'db> {
         self.solve_pred_in_module(pred, self.module, span)
     }
 
-    fn solve_pred_in_module(
+    pub(super) fn solve_pred_in_module(
         &mut self,
         pred: Pred<'db>,
         module: Module<'db>,
         span: Option<Span<'db>>,
     ) -> Option<Evidence<'db>> {
+        self.solve_pred_in_modules(pred, std::iter::once(module), span)
+    }
+
+    pub(super) fn solve_pred_in_modules(
+        &mut self,
+        pred: Pred<'db>,
+        modules: impl IntoIterator<Item = Module<'db>>,
+        span: Option<Span<'db>>,
+    ) -> Option<Evidence<'db>> {
         if !pred_is_closed(self.db, pred) {
             return None;
         }
-        let Some(trait_env) = self.try_module_trait_env(module) else {
-            self.push_missing_module_trait_env(span);
-            return None;
-        };
-        match solve(self.db, trait_env, canonical_goal(self.db, pred)) {
-            Solution::Unique { evidence, .. } => Some(evidence),
-            Solution::Ambiguous { .. } | Solution::NoSolution => None,
+        for module in modules {
+            let Some(trait_env) = self.try_module_trait_env(module) else {
+                self.push_missing_module_trait_env(span);
+                return None;
+            };
+            match solve(self.db, trait_env, canonical_goal(self.db, pred)) {
+                Solution::Unique { evidence, .. } => return Some(evidence),
+                // A fallback environment supplies absent dictionaries; it
+                // must never resolve ambiguity in an earlier environment.
+                Solution::Ambiguous { .. } => return None,
+                Solution::NoSolution => {}
+            }
         }
+        None
     }
 
     fn solve_reachable_pred(

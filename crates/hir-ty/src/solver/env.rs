@@ -414,7 +414,6 @@ impl<'db> TraitClauseBuilder<'db> {
                 self.add_builtin_ground_instance(str_class, memory_string);
             }
         }
-        self.add_builtin_function_invokables();
     }
 
     fn add_builtin_ground_instance(&mut self, class: ClassId<'db>, ty: Ty<'db>) {
@@ -426,50 +425,48 @@ impl<'db> TraitClauseBuilder<'db> {
         });
     }
 
-    fn add_builtin_function_invokables(&mut self) {
+    fn add_builtin_function_invokables(&mut self, arity: u32) {
         let invokable = ClassId::Builtin(BuiltinClassId::Invokable);
-        for arity in 0..=8 {
-            let params = (0..arity)
-                .map(|index| Ty::bound(self.db, index))
-                .collect::<Vec<_>>();
-            let ret = Ty::bound(self.db, arity);
-            let main = Ty::function(self.db, params.clone(), ret);
+        let params = (0..arity)
+            .map(|index| Ty::bound(self.db, index))
+            .collect::<Vec<_>>();
+        let ret = Ty::bound(self.db, arity);
+        let main = Ty::function(self.db, params.clone(), ret);
+        self.clauses.push(ProgramClause {
+            binder_count: arity + 1,
+            head: Pred::in_class(
+                self.db,
+                invokable,
+                main,
+                vec![invokable_arg_ty(self.db, params.clone()), ret],
+            ),
+            conditions: Vec::new(),
+            origin: ClauseOrigin::Builtin,
+        });
+        if arity > 1 {
             self.clauses.push(ProgramClause {
                 binder_count: arity + 1,
                 head: Pred::in_class(
                     self.db,
                     invokable,
                     main,
-                    vec![invokable_arg_ty(self.db, params.clone()), ret],
+                    vec![Ty::tuple(self.db, params.clone()), ret],
                 ),
                 conditions: Vec::new(),
                 origin: ClauseOrigin::Builtin,
             });
-            if arity > 1 {
+            if arity > 2 {
                 self.clauses.push(ProgramClause {
                     binder_count: arity + 1,
                     head: Pred::in_class(
                         self.db,
                         invokable,
                         main,
-                        vec![Ty::tuple(self.db, params.clone()), ret],
+                        vec![nested_tuple_arg_ty(self.db, params), ret],
                     ),
                     conditions: Vec::new(),
                     origin: ClauseOrigin::Builtin,
                 });
-                if arity > 2 {
-                    self.clauses.push(ProgramClause {
-                        binder_count: arity + 1,
-                        head: Pred::in_class(
-                            self.db,
-                            invokable,
-                            main,
-                            vec![nested_tuple_arg_ty(self.db, params), ret],
-                        ),
-                        conditions: Vec::new(),
-                        origin: ClauseOrigin::Builtin,
-                    });
-                }
             }
         }
     }
@@ -758,32 +755,56 @@ fn canonical_std_string_types<'db>(db: &'db dyn Db) -> Vec<(Ty<'db>, Option<Ty<'
         .collect()
 }
 
+/// Instantiate the structural function-call rules at the arities present in
+/// this goal, rather than imposing a maximum source-language function arity.
+pub(super) fn builtin_function_invokables<'db>(
+    db: &'db dyn Db,
+    goal: Pred<'db>,
+) -> Vec<ProgramClause<'db>> {
+    let PredKind::InClass {
+        class: ClassId::Builtin(BuiltinClassId::Invokable),
+        main,
+        ..
+    } = goal.kind(db)
+    else {
+        return Vec::new();
+    };
+    let unstage = |mut ty: Ty<'db>| {
+        while let TyKind::Comptime(inner) = ty.kind(db) {
+            ty = *inner;
+        }
+        ty
+    };
+    // Main-type matching is one-way: a still-open function main is deferred
+    // until inference determines it, rather than inferred from its arguments.
+    let TyKind::Function { params, .. } = unstage(*main).kind(db) else {
+        return Vec::new();
+    };
+    let mut builder = TraitClauseBuilder::new(db);
+    if let Ok(arity) = u32::try_from(params.len()) {
+        builder.add_builtin_function_invokables(arity);
+    }
+    builder.clauses
+}
+
 fn invokable_arg_ty<'db>(db: &'db dyn Db, params: Vec<Ty<'db>>) -> Ty<'db> {
-    let mut params = params.into_iter();
-    let Some(first) = params.next() else {
+    let mut params = params.into_iter().rev();
+    let Some(last) = params.next() else {
         return Ty::unit(db);
     };
-    let rest = params.collect::<Vec<_>>();
-    if rest.is_empty() {
-        first
-    } else {
+    params.fold(last, |tail, head| {
         Ty::named(
             db,
             TyCtor::Builtin(crate::BuiltinTyCtor::Pair),
-            vec![first, invokable_arg_ty(db, rest)],
+            vec![head, tail],
         )
-    }
+    })
 }
 
 fn nested_tuple_arg_ty<'db>(db: &'db dyn Db, params: Vec<Ty<'db>>) -> Ty<'db> {
-    let mut params = params.into_iter();
-    let Some(first) = params.next() else {
+    let mut params = params.into_iter().rev();
+    let Some(last) = params.next() else {
         return Ty::unit(db);
     };
-    let rest = params.collect::<Vec<_>>();
-    if rest.is_empty() {
-        first
-    } else {
-        Ty::tuple(db, vec![first, nested_tuple_arg_ty(db, rest)])
-    }
+    params.fold(last, |tail, head| Ty::tuple(db, vec![head, tail]))
 }

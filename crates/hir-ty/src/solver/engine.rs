@@ -109,6 +109,7 @@ impl<'db> TabledEngine<'db> {
                 })
                 .filter(&head_can_apply),
         );
+        clauses.extend(env::builtin_function_invokables(self.db, key.pred));
         let base_clauses = self.env.clauses_for_pred(self.db, key.pred);
         clauses.extend(base_clauses.iter().filter_map(|clause| {
             (!clause.origin.is_default()
@@ -168,15 +169,22 @@ impl<'db> TabledEngine<'db> {
         clause: &InstantiatedClause<'db>,
         subst: MatchSubst<'db>,
         sub_evidence: Vec<Evidence<'db>>,
-    ) -> Answer<'db> {
+    ) -> ContextTransition<Self> {
         let evidence = clause_evidence(self.db, key.pred, clause, &subst, sub_evidence);
-        Answer {
+        let evidence = apply_evidence(self.db, evidence, &subst);
+        // Recursive clauses can wrap a completed proof indefinitely. Only
+        // simple dictionary derivations are useful: a repeated dictionary on a
+        // branch can be replaced by the descendant proof of that dictionary.
+        if evidence.repeats_root() {
+            return Transition::Reject;
+        }
+        Transition::Answer(Answer {
             candidate: Candidate {
                 subst: subst.snapshot_for_vars(self.db, key.flex_count),
-                evidence: apply_evidence(self.db, evidence, &subst),
+                evidence,
             },
             origin: clause.origin.clone(),
-        }
+        })
     }
 }
 
@@ -185,7 +193,7 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
     type Key = TableKey<'db>;
     type Clause = ProgramClause<'db>;
     type Answer = Answer<'db>;
-    type AnswerKey = (Substitution<'db>, ClauseOrigin<'db>);
+    type AnswerKey = Answer<'db>;
     type Output = Answer<'db>;
     type State = ConsumerState<'db>;
     type Rebase = GoalRenaming;
@@ -229,12 +237,7 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
         let mut condition_vars = allowed_goal_vars;
         condition_vars.extend(instantiated.binder_vars.iter().copied());
         if instantiated.conditions.is_empty() {
-            return Ok(Transition::Answer(self.answer(
-                key,
-                &instantiated,
-                subst,
-                Vec::new(),
-            )));
+            return Ok(self.answer(key, &instantiated, subst, Vec::new()));
         }
 
         Ok(self.suspend(ConsumerState {
@@ -272,12 +275,7 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
         if state.next_condition < state.clause.conditions.len() {
             Ok(self.suspend(state))
         } else {
-            Ok(Transition::Answer(self.answer(
-                parent,
-                &state.clause,
-                state.subst,
-                state.sub_evidence,
-            )))
+            Ok(self.answer(parent, &state.clause, state.subst, state.sub_evidence))
         }
     }
 
@@ -290,7 +288,9 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
     }
 
     fn answer_key(&self, _key: &Self::Key, answer: &Self::Answer) -> Self::AnswerKey {
-        (answer.candidate.subst.clone(), answer.origin.clone())
+        // A dictionary includes its prerequisite dictionaries. Two applications
+        // of the same clause may therefore select different implementations.
+        answer.clone()
     }
 }
 

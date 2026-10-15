@@ -368,7 +368,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     def.name(self.driver.db)
                         .unwrap_or_else(|| format!("{:?}", def.kind(self.driver.db)))
                 } else {
-                    self.specialize_direct_function(def, callee_ty, span)
+                    let evidence = self.call_evidence_bindings(call_expr, callee);
+                    self.specialize_function_with_evidence(def, callee_ty, span, evidence, None)
                 };
                 Some(MonoExprKind::Call {
                     callee: MonoId {
@@ -738,6 +739,30 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         callee_ty: Ty<'db>,
         span: Span<'db>,
     ) -> String {
+        self.specialize_function_with_evidence(def, callee_ty, span, Vec::new(), None)
+    }
+
+    pub(super) fn specialize_synthetic_std_function(
+        &mut self,
+        def: DefId<'db>,
+        callee_ty: Ty<'db>,
+        span: Span<'db>,
+    ) -> String {
+        // Compiler-inserted helpers can be needed without a source-level std
+        // import. Preserve caller dictionaries, then allow the helper's own
+        // canonical environment to provide missing standard dictionaries.
+        let definition_module = self.driver.functions.get(&def).map(|info| info.module);
+        self.specialize_function_with_evidence(def, callee_ty, span, Vec::new(), definition_module)
+    }
+
+    fn specialize_function_with_evidence(
+        &mut self,
+        def: DefId<'db>,
+        callee_ty: Ty<'db>,
+        span: Span<'db>,
+        supplied_evidence: Vec<(Pred<'db>, Evidence<'db>)>,
+        fallback_evidence_module: Option<Module<'db>>,
+    ) -> String {
         if !self
             .driver
             .ensure_specialization_type_size(&[callee_ty], Some(span))
@@ -758,6 +783,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 callee_ty,
             );
             let givens = self.driver.function_givens(&info, &lowered);
+            subst.refine_from_evidence(self.driver.db, &givens, &supplied_evidence);
+            subst.refine_from_evidence(self.driver.db, &givens, &self.evidence_bindings);
             self.driver
                 .resolve_mptc_from_preds(info.module, &givens, &mut subst);
             let args = subst.specialization_args();
@@ -767,13 +794,55 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             {
                 return base;
             }
-            let name = specialize_name(self.driver.db, &base, &args);
+            let mut evidence_bindings = Vec::new();
+            for given in &givens {
+                let pred = subst.apply_pred(self.driver.db, *given);
+                let evidence = supplied_evidence
+                    .iter()
+                    .chain(&self.evidence_bindings)
+                    .find(|(bound, _)| *bound == pred)
+                    .map(|(_, evidence)| evidence.clone())
+                    .or_else(|| {
+                        self.driver.solve_pred_in_modules(
+                            pred,
+                            std::iter::once(self.info.module).chain(fallback_evidence_module),
+                            Some(span),
+                        )
+                    });
+                let Some(evidence) = evidence else {
+                    if matches!(pred.kind(self.driver.db), PredKind::InClass { .. })
+                        && pred_is_closed(self.driver.db, pred)
+                    {
+                        self.driver.diagnostics.push(SpecializeDiagnostic {
+                            kind: SpecializeDiagnosticKind::MissingEvidence {
+                                context: format!("{base}: {}", pred.display(self.driver.db)),
+                            },
+                            span: Some(span),
+                        });
+                        return base;
+                    }
+                    continue;
+                };
+                evidence_bindings.push((pred, evidence));
+            }
+            let mut proof_base = base;
+            if !evidence_bindings.is_empty() {
+                proof_base.push('_');
+                proof_base.push_str(&evidence_hash_suffix(
+                    self.driver.db,
+                    &evidence_bindings
+                        .iter()
+                        .map(|(_, evidence)| evidence.clone())
+                        .collect::<Vec<_>>(),
+                ));
+            }
+            let name = specialize_name(self.driver.db, &proof_base, &args);
             let key = SpecKey {
                 def,
                 ty: callee_ty,
                 base_name: name,
                 origin: MonoFunctionOrigin::Source,
-                evidence_bindings: Vec::new(),
+                evidence_bindings,
             };
             return self.driver.enqueue(key, self.depth + 1);
         }
