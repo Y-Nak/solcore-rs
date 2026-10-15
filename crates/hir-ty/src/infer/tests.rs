@@ -4082,3 +4082,66 @@ default impl Marker<Box<word>> {}
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn unrelated_contract_constructors_do_not_capture_pattern_variables() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+contract Other { enum Hidden { value } }
+function main(x:word) returns(word) { match(x) { case value { return value; } } }
+"#,
+    );
+    let resolution = hir_nameres::resolve_module(&db, module);
+    assert!(
+        resolution.diagnostics.is_empty(),
+        "{:?}",
+        resolution.diagnostics
+    );
+    let (_, result) = infer_function(&db, module, "main");
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+}
+
+#[test]
+fn dot_constructors_respect_imported_constructor_identity() {
+    for exported in ["Secret", "Secret(*)"] {
+        let mut db = TestDb::default();
+        let lib_path = PathBuf::from("/main/lib.sol");
+        let main_path = PathBuf::from("/main/main.sol");
+        let lib_file = source_file_at_path(
+            &db,
+            &lib_path,
+            &format!("export {{{exported}}}; enum Secret {{ Hidden(word) }}"),
+        );
+        let main_file = source_file_at_path(
+            &db,
+            &main_path,
+            r#"
+import * from lib;
+enum Decoy { Hidden(word) }
+function forge() returns(Secret) { return .Hidden(7); }
+function inspect(x:Secret) returns(word) { match(x) { case .Hidden(n) { return n; } case _ { return 0; } } }
+"#,
+        );
+        let lib_key =
+            module_key_for_path(LibraryId::Main, &PathBuf::from("/main"), &lib_path).unwrap();
+        let main_key =
+            module_key_for_path(LibraryId::Main, &PathBuf::from("/main"), &main_path).unwrap();
+        db.insert_module_file(lib_key, lib_file);
+        db.insert_module_file(main_key.clone(), main_file);
+        let module = module_id_from_key(&db, &main_key);
+        for name in ["forge", "inspect"] {
+            let (_, result) = infer_module_function_with_solver(&db, module, name);
+            let hidden = result.diagnostics.iter().any(|diagnostic| {
+                matches!(diagnostic, TypeckDiagnostic::ShorthandConstructor { .. })
+            });
+            assert_eq!(
+                hidden,
+                exported == "Secret",
+                "{exported} {name}: {:?}",
+                result.diagnostics
+            );
+        }
+    }
+}

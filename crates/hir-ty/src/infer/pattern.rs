@@ -610,7 +610,11 @@ impl<'db> InferCtx<'db> {
             }
             return DotCtorLookup::NoExpected;
         };
-        let matches = self.lookup_adt_ctor_schemes_by_name(*def, name);
+        let matches = self
+            .lookup_adt_ctor_schemes_by_name(*def, name)
+            .into_iter()
+            .filter(|entry| self.is_adt_ctor_visible(entry.ty, entry.index))
+            .collect::<Vec<_>>();
         match matches.as_slice() {
             [] => DotCtorLookup::NoMatch,
             [entry] => {

@@ -841,12 +841,6 @@ impl<'db> ItemScopeFacts<'db> {
             .iter()
             .flat_map(|list| &list.ctors)
             .any(|ctor| ctor.name == leaf)
-            || self
-                .contracts
-                .iter()
-                .flat_map(|scope| &scope.ctor_lists)
-                .flat_map(|list| &list.ctors)
-                .any(|ctor| ctor.name == leaf)
     }
 }
 

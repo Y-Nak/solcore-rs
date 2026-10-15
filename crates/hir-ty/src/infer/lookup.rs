@@ -37,14 +37,16 @@ impl<'db> InferCtx<'db> {
         })
     }
 
-    /// Checks the imported constructor identity, including qualified and aliased
-    /// imports. Callers decide whether local or compiler-provided constructors
-    /// need an import at all.
-    pub(super) fn is_imported_adt_ctor_visible(
+    /// Representation access uses constructor identity, including qualified and
+    /// aliased imports, rather than the spelling of a same-named constructor.
+    pub(super) fn is_adt_ctor_visible(
         &self,
         def: DefId<'db>,
         index: hir_nameres::CtorIndex,
     ) -> bool {
+        if def.file(self.db) == self.module.def_id_value(self.db).file(self.db) {
+            return true;
+        }
         let Some(module) = nameres::module_id_for_source_file(
             self.db,
             self.module.def_id_value(self.db).file(self.db),

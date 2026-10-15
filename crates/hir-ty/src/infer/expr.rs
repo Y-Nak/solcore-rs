@@ -252,13 +252,10 @@ impl<'db> InferCtx<'db> {
         };
         let info = self.lookup_adt_info(*def)?;
         let ctor = info.adt.ctors(self.db).first()?;
-        if def.file(self.db) != self.module.def_id_value(self.db).file(self.db) {
-            // A projection exposes the product representation just like a
-            // constructor pattern. Respect opaque exports, including aliases
-            // and qualified imports, by comparing constructor identities.
-            if !self.is_imported_adt_ctor_visible(*def, hir_nameres::CtorIndex::from_usize(0)) {
-                return None;
-            }
+        // A projection exposes the product representation just like a
+        // constructor pattern.
+        if !self.is_adt_ctor_visible(*def, hir_nameres::CtorIndex::from_usize(0)) {
+            return None;
         }
         let field = self.field_name(body, expr);
         let index = ctor
@@ -385,10 +382,8 @@ impl<'db> InferCtx<'db> {
                     .enumerate()
                     .any(|(index, ctor)| {
                         ident_text(self.db, &ctor.name) == "Proxy"
-                            && self.is_imported_adt_ctor_visible(
-                                def,
-                                hir_nameres::CtorIndex::from_usize(index),
-                            )
+                            && self
+                                .is_adt_ctor_visible(def, hir_nameres::CtorIndex::from_usize(index))
                     })
             });
             if !visible {
