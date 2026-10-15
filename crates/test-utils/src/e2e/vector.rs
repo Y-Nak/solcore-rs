@@ -9,16 +9,9 @@ use std::{fs, path::Path};
 use serde_json::{Map, Value};
 
 use super::{
-    E2eFailure, FailureKind, ResolvedE2eCall, ResolvedExpectedOutcome, Word256,
-    configured_anvil_hardfork, decode_hex_data, encode_hex,
+    E2eFailure, FailureKind, RawE2eCall, RawE2eConstructor, RawE2eVector, ResolvedE2eCall,
+    ResolvedExpectedOutcome, Word256, configured_anvil_hardfork, decode_hex_data, encode_hex,
 };
-
-/// EVM target used to compile and execute every upstream raw vector.
-///
-/// The fixture's optional `evmVersion` is retained as upstream metadata, but
-/// both backend runners intentionally use one Osaka runtime for the complete
-/// raw-vector corpus.
-pub const RAW_E2E_TARGET_EVM_VERSION: &str = "osaka";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum E2eExecution {
@@ -32,52 +25,6 @@ impl E2eExecution {
             Self::Directives(_) => configured_anvil_hardfork(),
             Self::Raw(vector) => vector.effective_evm_version().to_owned(),
         }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RawE2eVector {
-    pub name: String,
-    pub contract: String,
-    pub evm_version: Option<String>,
-    pub constructor: RawE2eConstructor,
-    pub calls: Vec<RawE2eCall>,
-}
-
-impl RawE2eVector {
-    pub fn effective_evm_version(&self) -> &str {
-        RAW_E2E_TARGET_EVM_VERSION
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RawE2eConstructor {
-    /// Constructor arguments appended to creation bytecode.
-    pub calldata: Vec<u8>,
-    pub value: Word256,
-    pub expected_success: bool,
-    /// Optional constructor output to compare for either success or failure.
-    pub expected_output: Option<Vec<u8>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RawE2eCall {
-    pub label: String,
-    /// Complete call data, including the selector.
-    pub calldata: String,
-    pub value: Word256,
-    pub expected: ResolvedExpectedOutcome,
-}
-
-impl RawE2eCall {
-    pub fn value_rpc_quantity(&self) -> String {
-        word_rpc_quantity(self.value)
-    }
-}
-
-impl RawE2eConstructor {
-    pub fn value_rpc_quantity(&self) -> String {
-        word_rpc_quantity(self.value)
     }
 }
 
@@ -319,17 +266,6 @@ fn optional_string<'a>(
         .transpose()
 }
 
-fn word_rpc_quantity(word: Word256) -> String {
-    let bytes = word.as_be_bytes();
-    let first = bytes.iter().position(|byte| *byte != 0);
-    let Some(first) = first else {
-        return "0x0".to_owned();
-    };
-    let encoded = encode_hex(&bytes[first..]);
-    let encoded = encoded.strip_prefix('0').unwrap_or(&encoded);
-    format!("0x{encoded}")
-}
-
 fn vector_failure(message: impl Into<String>) -> E2eFailure {
     E2eFailure::new(FailureKind::Directive, message)
 }
@@ -337,6 +273,7 @@ fn vector_failure(message: impl Into<String>) -> E2eFailure {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use solcore_test_directives::RAW_E2E_TARGET_EVM_VERSION;
 
     const VECTOR: &str = r#"
     {
@@ -479,6 +416,15 @@ mod tests {
 
     #[test]
     fn renders_full_width_rpc_quantities() {
+        let word_rpc_quantity = |value| {
+            RawE2eConstructor {
+                calldata: Vec::new(),
+                value,
+                expected_success: true,
+                expected_output: None,
+            }
+            .value_rpc_quantity()
+        };
         assert_eq!(word_rpc_quantity(Word256::ZERO), "0x0");
         assert_eq!(word_rpc_quantity(Word256::from_u128(0x0102)), "0x102");
         assert_eq!(
