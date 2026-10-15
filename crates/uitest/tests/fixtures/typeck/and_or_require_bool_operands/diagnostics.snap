@@ -1,0 +1,51 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/and_or_require_bool_operands/main.sol
+---
+error[SC0201]: type mismatch: expected numeric, found bool
+  --> /main/main.sol:11:16
+   |
+10 |     function main() public returns (bool) {
+11 |         return 1 && 2;
+   |                ^ expression has mismatched type
+12 |     }
+   |
+   = note: expected type: numeric
+   = note: found type: bool
+---
+
+error[SC0201]: type mismatch: expected numeric, found bool
+  --> /main/main.sol:11:21
+   |
+10 |     function main() public returns (bool) {
+11 |         return 1 && 2;
+   |                     ^ expression has mismatched type
+12 |     }
+   |
+   = note: expected type: numeric
+   = note: found type: bool
+---
+
+error[SC0201]: type mismatch: expected numeric, found bool
+  --> /main/main.sol:15:16
+   |
+14 |     function other() public returns (bool) {
+15 |         return 1 || 2;
+   |                ^ expression has mismatched type
+16 |     }
+   |
+   = note: expected type: numeric
+   = note: found type: bool
+---
+
+error[SC0201]: type mismatch: expected numeric, found bool
+  --> /main/main.sol:15:21
+   |
+14 |     function other() public returns (bool) {
+15 |         return 1 || 2;
+   |                     ^ expression has mismatched type
+16 |     }
+   |
+   = note: expected type: numeric
+   = note: found type: bool
