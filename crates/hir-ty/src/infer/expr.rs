@@ -1354,9 +1354,9 @@ impl<'db> InferCtx<'db> {
                 // functions, so both operands must be `bool` directly.
                 let bool_ty = self.bool();
                 let lhs_ty = self.infer_expr(body, lhs_expr);
-                self.unify_expr(body, lhs_expr, lhs_ty, bool_ty.clone());
+                self.unify_expr(body, lhs_expr, bool_ty.clone(), lhs_ty);
                 let rhs_ty = self.infer_expr(body, rhs_expr);
-                self.unify_expr(body, rhs_expr, rhs_ty, bool_ty.clone());
+                self.unify_expr(body, rhs_expr, bool_ty.clone(), rhs_ty);
                 bool_ty
             }
             BinOp::Error => InferTy::Error,
