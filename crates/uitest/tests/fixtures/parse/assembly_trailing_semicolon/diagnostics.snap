@@ -11,4 +11,4 @@ error[SC0001]: parse error: unexpected `;`
   |    ^ unexpected token
 5 | }
   |
-  = note: expecting end of input, or statement
+  = note: expecting statement

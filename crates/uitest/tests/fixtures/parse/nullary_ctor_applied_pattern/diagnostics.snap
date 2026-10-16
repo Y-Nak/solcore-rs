@@ -4,17 +4,6 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/nullary_ctor_applied_pattern/main.sol
 ---
 error[SC0001]: parse error: unexpected `)`
- --> /main/main.sol:4:11
-  |
-3 | function f(x: D) returns (word) {
-4 |   match (x) {
-  |           ^ unexpected token
-5 | case C() {
-  |
-  = note: expecting `&&`, `&`, `(`, `.`, `?`, `[`, `^`, `|`, or `||`
----
-
-error[SC0001]: parse error: unexpected `)`
  --> /main/main.sol:5:8
   |
 4 |   match (x) {

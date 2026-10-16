@@ -302,6 +302,13 @@ fn parse_recovery_suppression_policy_silences_name_lookup_cascades() {
         (
             "body_expr_error",
             "function f() returns (word) {
+               let x = +;
+               return missing;
+             }",
+        ),
+        (
+            "body_statement_error",
+            "function f() returns (word) {
                let x = ;
                return missing;
              }",
@@ -367,6 +374,28 @@ fn parse_recovery_suppression_policy_silences_name_lookup_cascades() {
                             && matches!(entry.resolution, Resolution::Err)
                     }),
                 "recovered expression errors should resolve to Resolution::Err"
+            );
+        }
+        if name == "body_statement_error" {
+            let body = top_function(&db, module, "f")
+                .body(&db)
+                .expect("function body");
+            assert!(
+                body.stmts(&db)
+                    .iter()
+                    .any(|(_, stmt)| matches!(stmt.kind, hir::ast::function::StmtKind::Error))
+            );
+            assert!(
+                resolution
+                    .bodies
+                    .iter()
+                    .flat_map(|map| &map.exprs)
+                    .any(|entry| {
+                        matches!(
+                            &entry.body.exprs(&db).get(entry.expr).kind,
+                            ExprKind::Ident(_)
+                        ) && matches!(entry.resolution, Resolution::Err)
+                    })
             );
         }
     }

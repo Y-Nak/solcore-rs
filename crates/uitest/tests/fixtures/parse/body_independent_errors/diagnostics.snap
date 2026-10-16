@@ -21,4 +21,4 @@ error[SC0001]: parse error: unexpected `;`
   |              ^ unexpected token
 4 | return 0;
   |
-  = note: expecting `&&`, `&`, `(`, `.`, `?`, `[`, `^`, `|`, or `||`
+  = note: expecting expression

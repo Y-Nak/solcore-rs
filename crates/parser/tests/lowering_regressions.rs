@@ -984,6 +984,68 @@ fn ternary_expression_is_right_associative_and_allows_a_nested_then_arm() {
 }
 
 #[test]
+fn malformed_statement_contents_do_not_report_the_statement_keyword_as_an_expression() {
+    for statement in [
+        "return g(1,);",
+        "match (x) { case C() { return 1; } }",
+        "if (true) { return g(1,); } else { return 0; }",
+        "for (let i = 0; true; i = 1) { return g(1,); }",
+    ] {
+        let db = TestDb::default();
+        let source = format!("enum D {{ C }}\nfunction f(x: D) returns (word) {{ {statement} }}");
+        let (file, _) = parse_module(&db, "statement-recovery", &source);
+        let errors = diagnostics(&db, file);
+        assert_eq!(errors.len(), 1, "{statement}: {errors:?}");
+        assert_eq!(errors[0].message, "parse error: unexpected `)`");
+    }
+}
+
+#[test]
+fn contextual_while_identifier_can_still_start_an_expression_statement() {
+    let db = TestDb::default();
+    let (file, _) = parse_module(
+        &db,
+        "contextual-while-expression",
+        "function main() { while(1); while = 2; }",
+    );
+    assert!(diagnostics(&db, file).is_empty());
+}
+
+#[test]
+fn statement_recovery_preserves_following_statements_and_functions() {
+    for statement in [
+        "return g(1,);",
+        "match (x) { case C() { return 1; } }",
+        "if (true) { return g(1,); } else if (true) { return 0; } else { return 1; }",
+        "if (true) { return g(1; }",
+        "match (x) { case C( { return 1; } }",
+        "match (x) { case C() { return g(1; } }",
+    ] {
+        let db = TestDb::default();
+        let source = format!(
+            "enum D {{ C }}\nfunction bad(x: D) returns (word) {{ {statement} return 7; }}\nfunction good() {{}}"
+        );
+        let (file, module) = parse_module(&db, "statement-boundary-recovery", &source);
+        assert!(!diagnostics(&db, file).is_empty(), "{statement}");
+        let body = top_function(&db, module, "bad")
+            .body(&db)
+            .expect("recovered function body");
+        let last = *body
+            .top_level_stmts(&db)
+            .last()
+            .expect("trailing statement");
+        let StmtKind::Return(Some(value)) = body.stmts(&db).get(last).kind else {
+            panic!("{statement}: {:?}", body.stmts(&db));
+        };
+        assert!(matches!(
+            &body.exprs(&db).get(value).kind,
+            ExprKind::Lit(hir::ast::function::LitKind::Number(number)) if number == "7"
+        ));
+        assert!(top_function(&db, module, "good").body(&db).is_some());
+    }
+}
+
+#[test]
 fn array_literals_lower_with_empty_nested_and_postfix_index_forms() {
     let db = TestDb::default();
     let (file, module) = parse_module(

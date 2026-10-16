@@ -11,7 +11,7 @@ error[SC0001]: parse error: unexpected `;`
   |             ^ unexpected token
 3 |     return 0;
   |
-  = note: expecting `&&`, `&`, `(`, `.`, `?`, `[`, `^`, `|`, or `||`
+  = note: expecting expression
 ---
 
 error[SC0001]: parse error: unexpected `;`
