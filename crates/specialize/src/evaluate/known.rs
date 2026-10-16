@@ -1,3 +1,4 @@
+use hir::string_literal::encode_string_literal;
 use hir::{ast::function::LitKind, span::Span};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -103,7 +104,7 @@ pub(super) fn string_expr<'db>(value: String, ty: MonoTy<'db>, span: Span<'db>) 
     MonoExpr {
         span,
         ty,
-        kind: MonoExprKind::Lit(LitKind::String(encode_string_lit(&value))),
+        kind: MonoExprKind::Lit(LitKind::String(encode_string_literal(&value))),
     }
 }
 
@@ -299,20 +300,4 @@ impl<'out, 'db> Visitor<'db> for PatBinderCollector<'out> {
     }
 
     fn visit_expr(&mut self, _expr: &MonoExpr<'db>) {}
-}
-
-fn encode_string_lit(value: &str) -> String {
-    let mut out = String::from("\"");
-    for ch in value.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            ch => out.push(ch),
-        }
-    }
-    out.push('"');
-    out
 }

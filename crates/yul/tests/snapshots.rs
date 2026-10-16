@@ -763,6 +763,17 @@ fn inline_yul_string_escapes_are_decoded_before_printing() {
 }
 
 #[test]
+fn folded_strings_preserve_carriage_returns() {
+    for (value, length) in [("a\rb", 4), ("line one\r\nline two", 19)] {
+        let source = format!(
+            "import * from std; function main() returns (word) {{ return strlenLit(concatLit(\"{value}\", \"!\")); }}"
+        );
+        let yul = render_source("folded_carriage_return", &source);
+        assert!(yul.contains(&format!(":= {length}")), "{yul}");
+    }
+}
+
+#[test]
 fn object_less_source_calls_its_mangled_main_before_returning() {
     let yul = render_source(
         "object_less_main",

@@ -543,6 +543,16 @@ fn inline_yul_string_length_is_checked_after_decoding() {
 }
 
 #[test]
+fn folded_strings_preserve_carriage_returns() {
+    for (value, length) in [("a\rb", 4), ("line one\r\nline two", 19)] {
+        let (_, ir) = lower_source_with_file_url_imports(&format!(
+            "import * from std; function main() returns (word) {{ return strlenLit(concatLit(\"{value}\", \"!\")); }}"
+        ));
+        assert!(ir.contains(&format!("return {length}.i256")), "{ir}");
+    }
+}
+
+#[test]
 fn source_main_lowers_through_hull_to_verified_ir() {
     let (_, ir) = lower_source(
         r#"
