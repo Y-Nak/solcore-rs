@@ -358,7 +358,7 @@ impl<'db> Evaluator<'db> {
         );
     }
 
-    fn closure_captures(
+    pub(super) fn closure_captures(
         &self,
         params: &[MonoParam<'db>],
         body: &[MonoStmt<'db>],
@@ -410,10 +410,14 @@ impl<'db> CaptureCollector<'_, 'db> {
 
     fn stmts(&mut self, body: &[MonoStmt<'db>]) {
         let saved = self.locals.clone();
+        self.stmts_in_scope(body);
+        self.locals = saved;
+    }
+
+    fn stmts_in_scope(&mut self, body: &[MonoStmt<'db>]) {
         for stmt in body {
             self.visit_stmt(stmt);
         }
-        self.locals = saved;
     }
 
     fn yul_name(&mut self, name: &hir::span::SpannedElem<'db, hir::ast::Ident<'db>>) {
@@ -519,9 +523,9 @@ impl<'db> Visitor<'db> for CaptureCollector<'_, 'db> {
                 else_body,
             } => {
                 self.visit_expr(cond);
-                self.stmts(then_body);
+                self.stmts_in_scope(then_body);
                 if let Some(body) = else_body {
-                    self.stmts(body);
+                    self.stmts_in_scope(body);
                 }
             }
             MonoStmtKind::Match { scrutinees, arms } => {
@@ -529,6 +533,10 @@ impl<'db> Visitor<'db> for CaptureCollector<'_, 'db> {
                     self.visit_expr(expr);
                 }
                 for arm in arms {
+                    if self.evaluator.if_stmt_spans.contains(&stmt.span) {
+                        self.stmts_in_scope(&arm.body);
+                        continue;
+                    }
                     let saved = self.locals.clone();
                     for pat in &arm.pats {
                         collect_pat_binders(pat, &mut self.locals);
@@ -543,14 +551,10 @@ impl<'db> Visitor<'db> for CaptureCollector<'_, 'db> {
                 post,
                 body,
             } => {
-                let saved = self.locals.clone();
-                for stmt in init {
-                    self.visit_stmt(stmt);
-                }
+                self.stmts_in_scope(init);
                 self.visit_expr(cond);
-                self.stmts(body);
-                self.stmts(post);
-                self.locals = saved;
+                self.stmts_in_scope(post);
+                self.stmts_in_scope(body);
             }
             _ => walk_stmt(self, stmt),
         }

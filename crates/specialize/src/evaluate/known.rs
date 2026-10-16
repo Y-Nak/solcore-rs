@@ -125,12 +125,18 @@ pub(super) fn bool_expr<'db>(value: bool, ty: MonoTy<'db>, span: Span<'db>) -> M
     }
 }
 
+pub(super) struct MatchedArm<'db> {
+    pub(super) env: VEnv<'db>,
+    pub(super) bindings: Vec<MonoId<'db>>,
+    pub(super) body: Vec<MonoStmt<'db>>,
+}
+
 pub(super) fn match_arms_with<'db, F>(
     env: &VEnv<'db>,
     scrutinees: &[MonoExpr<'db>],
     arms: &[MonoArm<'db>],
     is_known: F,
-) -> Option<(VEnv<'db>, Vec<MonoStmt<'db>>)>
+) -> Option<MatchedArm<'db>>
 where
     F: Fn(&MonoExpr<'db>) -> bool + Copy,
 {
@@ -142,8 +148,33 @@ where
         for (pat, value) in arm.pats.iter().zip(scrutinees) {
             env = match_pat(env, pat, value, is_known)?;
         }
-        Some((env, arm.body.clone()))
+        Some(MatchedArm {
+            env,
+            bindings: pattern_bindings(&arm.pats),
+            body: arm.body.clone(),
+        })
     })
+}
+
+pub(super) fn pattern_bindings<'db>(pats: &[MonoPat<'db>]) -> Vec<MonoId<'db>> {
+    let mut bindings = MatchedBindings { ids: Vec::new() };
+    for pat in pats {
+        bindings.visit_pat(pat);
+    }
+    bindings.ids
+}
+
+struct MatchedBindings<'db> {
+    ids: Vec<MonoId<'db>>,
+}
+
+impl<'db> Visitor<'db> for MatchedBindings<'db> {
+    fn visit_pat(&mut self, pat: &MonoPat<'db>) {
+        if let MonoPatKind::Var(id) = &pat.kind {
+            self.ids.push(id.clone());
+        }
+        walk_pat(self, pat);
+    }
 }
 
 pub(super) fn match_expr_arms_with<'db, F>(
@@ -151,13 +182,17 @@ pub(super) fn match_expr_arms_with<'db, F>(
     scrutinee: &MonoExpr<'db>,
     arms: &[crate::ir::MonoExprArm<'db>],
     is_known: F,
-) -> Option<(VEnv<'db>, MonoExpr<'db>)>
+) -> Option<(VEnv<'db>, MonoExpr<'db>, Vec<MonoId<'db>>)>
 where
     F: Fn(&MonoExpr<'db>) -> bool + Copy,
 {
     arms.iter().find_map(|arm| {
         let env = match_pat(env.clone(), &arm.pat, scrutinee, is_known)?;
-        Some((env, arm.expr.clone()))
+        Some((
+            env,
+            arm.expr.clone(),
+            pattern_bindings(std::slice::from_ref(&arm.pat)),
+        ))
     })
 }
 

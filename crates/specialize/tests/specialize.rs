@@ -4349,6 +4349,13 @@ fn folds_qualified_constructor_matches_before_wildcard_defaults() {
 }
 
 fn main_return_expr<'a, 'db>(output: &'a SpecializeOutput<'db>) -> Option<&'a MonoExpr<'db>> {
+    fn returned_expr<'a, 'db>(stmts: &'a [MonoStmt<'db>]) -> Option<&'a MonoExpr<'db>> {
+        stmts.iter().find_map(|stmt| match &stmt.kind {
+            MonoStmtKind::Return(Some(expr)) => Some(expr),
+            MonoStmtKind::Block(body) => returned_expr(body),
+            _ => None,
+        })
+    }
     let mut main_names = output
         .module
         .items
@@ -4381,12 +4388,9 @@ fn main_return_expr<'a, 'db>(output: &'a SpecializeOutput<'db>) -> Option<&'a Mo
         let MonoItem::Function(function) = item else {
             return None;
         };
-        main_names.contains(&function.name).then(|| {
-            function.body.iter().find_map(|stmt| match &stmt.kind {
-                MonoStmtKind::Return(Some(expr)) => Some(expr),
-                _ => None,
-            })
-        })?
+        main_names
+            .contains(&function.name)
+            .then(|| returned_expr(&function.body))?
     })
 }
 
@@ -6399,7 +6403,11 @@ fn operator_functions_preserve_all_module_local_dictionaries() {
             "{entry}: {:?}",
             output.diagnostics
         );
-        assert_eq!(main_return_number(&output).as_deref(), Some("21"), "{entry}");
+        assert_eq!(
+            main_return_number(&output).as_deref(),
+            Some("21"),
+            "{entry}"
+        );
     }
 }
 
@@ -6419,4 +6427,184 @@ contract Nine {
     assert!(frontend.is_empty(), "frontend: {frontend:#?}");
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     assert!(!output.module.entry_points.is_empty());
+}
+
+#[test]
+fn folded_match_and_block_scopes_preserve_outer_bindings_and_writes() {
+    let cases = [
+        (
+            "let x:word=1; let y:word=2; match(x,y){case(y,x){}} return x;",
+            "1",
+        ),
+        (
+            "let x:word=1; let y:word=2; let observed:word=0; match(x,y){case(y,x){observed=x;}} return primAddWord(x,observed);",
+            "3",
+        ),
+        (
+            "let x:word=1; let y:word=2; let observed:word=0; match(x,y){case(y,x){match(x,y){case(y,x){observed=primAddWord(x,y);}} observed=primAddWord(observed,x);}} return primAddWord(x,observed);",
+            "6",
+        ),
+        ("let x:word=1; {x=3; let x:word=4; x=5;} return x;", "3"),
+        (
+            "let x:word=1; {x=2; {let x:word=4; x=5;} x=primAddWord(x,1);} return x;",
+            "3",
+        ),
+        (
+            "let x:word=1; let z:word=0; match(z){case(_){x=3; let x:word=4; x=5;}} return x;",
+            "3",
+        ),
+        (
+            "let x:word=1; {if(true){let x:word=4;} else{} x=5;} return x;",
+            "1",
+        ),
+        (
+            "let x:word=1; let y:word=2; match((x,y)){case((y,x)){return x;}} return x;",
+            "2",
+        ),
+        (
+            "let x:word=7; {let x:bool=true;} assembly {x := add(x, 1)} return x;",
+            "8",
+        ),
+        (
+            "let x:word=7; let y:bool=true; match(y){case(x){}} assembly {x := add(x, 1)} return x;",
+            "8",
+        ),
+    ];
+    for (body, expected) in cases {
+        // Exercise both residualization and interpretation of a pure call.
+        for source in [
+            format!("function main() returns(word) {{ {body} }}"),
+            format!(
+                "function compute() returns(word) {{ {body} }} function main() returns(word) {{return compute();}}"
+            ),
+        ] {
+            let (_db, output) = specialize_src(&source);
+            assert!(
+                output.diagnostics.is_empty(),
+                "{source}: {:?}",
+                output.diagnostics
+            );
+            assert_eq!(
+                main_return_number(&output).as_deref(),
+                Some(expected),
+                "{source}"
+            );
+        }
+    }
+}
+
+#[test]
+fn folded_match_captures_closures_before_typed_pattern_shadowing() {
+    let (_db, output) = specialize_src(
+        r#"
+function main(n: word) returns(word) {
+    let observed: word = 0;
+    let get: function() returns (word) = lam () -> word { let v: word; assembly { v := n } return v; };
+    match ((true, get)) {
+        case ((n, get)) { observed = get(); }
+    }
+    return primAddWord(n, observed);
+}
+"#,
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    for item in &output.module.items {
+        if let MonoItem::Function(function) = item {
+            assert!(
+                !function.body.iter().any(stmt_has_closure_dispatch),
+                "{function:#?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn non_scoping_loop_declarations_remain_available_to_closure_captures() {
+    let (_db, output) = specialize_src(
+        r#"
+function main() returns(word) {
+    for (let i: word = 0; primEqWord(i, 0); i = 1) { let x: word = 7; }
+    let get: function() returns (word) = lam () -> word { let result: word; assembly { result := x } return result; };
+    return get();
+}
+"#,
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let lifted = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Function(function) if function.name.starts_with("__lambda") => Some(function),
+            _ => None,
+        })
+        .expect("closure should lift to a function");
+    assert_eq!(
+        lifted
+            .params
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect::<Vec<_>>(),
+        ["x"]
+    );
+}
+
+#[test]
+fn non_scoping_declarations_do_not_residualize_shadowed_function_aggregates() {
+    fn has_aggregate_binding(stmts: &[MonoStmt<'_>]) -> bool {
+        stmts.iter().any(|stmt| match &stmt.kind {
+            MonoStmtKind::Let {
+                id,
+                init: Some(init),
+                ..
+            } => id.name == "bundle" && matches!(&init.kind, MonoExprKind::Tuple(_)),
+            MonoStmtKind::Block(body) => has_aggregate_binding(body),
+            MonoStmtKind::Match { arms, .. } => {
+                arms.iter().any(|arm| has_aggregate_binding(&arm.body))
+            }
+            MonoStmtKind::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                has_aggregate_binding(then_body)
+                    || else_body
+                        .as_ref()
+                        .is_some_and(|body| has_aggregate_binding(body))
+            }
+            MonoStmtKind::For {
+                init, post, body, ..
+            } => {
+                has_aggregate_binding(init)
+                    || has_aggregate_binding(post)
+                    || has_aggregate_binding(body)
+            }
+            _ => false,
+        })
+    }
+
+    for declaration in [
+        "if (flag) { let bundle: word = 42; } else {} bundle = value;",
+        "for (let i: word = 0; primEqWord(i, 0); i = 1) { let bundle: word = value; }",
+    ] {
+        let source = format!(
+            "function identity(value: word) returns(word) {{ return value; }}
+             function main(flag: bool, value: word) returns(word) {{
+                 let zero: word = 0;
+                 match ((identity, zero)) {{
+                     case (bundle) {{ {declaration} return bundle; }}
+                 }}
+             }}"
+        );
+        let (_db, output) = specialize_src(&source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        for item in &output.module.items {
+            if let MonoItem::Function(function) = item {
+                assert!(
+                    !has_aggregate_binding(&function.body),
+                    "a shadowed function aggregate must remain erased: {source}"
+                );
+            }
+        }
+    }
 }
