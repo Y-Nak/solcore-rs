@@ -191,6 +191,69 @@ mod tests {
     }
 
     #[test]
+    fn renaming_hidden_selected_import_updates_every_provider_reference() {
+        let math = "export {hidden};\nfunction hidden() returns (word) { return 7; }\n";
+        for selector in ["hidden", "hidden as kept"] {
+            let main = format!(
+                "import {{{selector}}} from math hiding {{hidden}};\nfunction main() returns (word) {{ return 1; }}\n"
+            );
+            for origin in ["provider", "selector", "hiding"] {
+                let (mut world, main_uri, math_uri) = world_with_main_and_math(&main, math);
+                assert_no_error_diagnostics(&world, &[main_uri.clone(), math_uri.clone()]);
+                let (uri, offset) = match origin {
+                    "provider" => (&math_uri, math.find("hidden").unwrap()),
+                    "selector" => (&main_uri, main.find("hidden").unwrap()),
+                    _ => (&main_uri, main.rfind("hidden").unwrap()),
+                };
+                let position = world
+                    .line_index(uri)
+                    .unwrap()
+                    .byte_to_position(offset as u32);
+                assert!(handle_prepare_rename(&world, uri, position).is_some());
+                let edit = handle_rename(&world, uri, position, "renamed").expect(origin);
+                apply_workspace_edit(&mut world, edit);
+                let expected = main.replace("hidden", "renamed");
+                assert_eq!(world.document_text(&main_uri), Some(expected.as_str()));
+                assert_eq!(
+                    world.document_text(&math_uri),
+                    Some(math.replace("hidden", "renamed").as_str())
+                );
+                assert_no_error_diagnostics(&world, &[main_uri, math_uri]);
+            }
+        }
+    }
+
+    #[test]
+    fn renaming_hidden_type_import_preserves_its_alias() {
+        let math = "enum Choice { Some(word), None }\nexport {Choice(Some)};\n";
+        let main = "import {Choice as Hidden} from math hiding {Choice};\nfunction main() returns (word) { return 1; }\n";
+        for from_selector in [false, true] {
+            let (mut world, main_uri, math_uri) = world_with_main_and_math(main, math);
+            assert_no_error_diagnostics(&world, &[main_uri.clone(), math_uri.clone()]);
+            let (uri, source) = if from_selector {
+                (&main_uri, main)
+            } else {
+                (&math_uri, math)
+            };
+            let position = world
+                .line_index(uri)
+                .unwrap()
+                .byte_to_position(source.find("Choice").unwrap() as u32);
+            let edit = handle_rename(&world, uri, position, "Option").expect("rename hidden type");
+            apply_workspace_edit(&mut world, edit);
+            assert_eq!(
+                world.document_text(&main_uri),
+                Some(main.replace("Choice", "Option").as_str())
+            );
+            assert_eq!(
+                world.document_text(&math_uri),
+                Some(math.replace("Choice", "Option").as_str())
+            );
+            assert_no_error_diagnostics(&world, &[main_uri, math_uri]);
+        }
+    }
+
+    #[test]
     fn renaming_trait_method_updates_all_impls_with_the_same_trait_identity() {
         let math = "export {Echo};\ntrait Echo<t> { function echo(x: t) returns (word); }\n";
         let main = r#"import {Echo} from math;

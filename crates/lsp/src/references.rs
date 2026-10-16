@@ -300,7 +300,6 @@ fn definition_has_public_alias(world: &WorldState, target: &ReferenceTarget<'_>)
             if exported.is_empty() {
                 return false;
             }
-            let env = nameres::module_env(db, module_id);
             module.items(db).iter().any(|item| {
                 let Item::Import(import) = *item else {
                     return false;
@@ -313,14 +312,9 @@ fn definition_has_public_alias(world: &WorldState, target: &ReferenceTarget<'_>)
                         return false;
                     };
                     exported.contains(alias.atom().text(db))
-                        && import_selected_name_resolutions(db, &env, selected)
+                        && import_name_targets(db, module_id, import, selected.name.atom().text(db))
                             .iter()
-                            .any(|resolution| {
-                                matches!(
-                                    resolution,
-                                    Resolution::Def { def: candidate, .. } if candidate == def
-                                )
-                            })
+                            .any(|candidate| matches!(candidate, ReferenceTarget::Def(candidate) if candidate == def))
                 })
             })
         })
@@ -354,12 +348,8 @@ fn shared_selector_contains_target(world: &WorldState, target: &ReferenceTarget<
             module.items(db).iter().any(|item| match *item {
                 Item::Import(import) => {
                     if import.hiding(db).iter().any(|hidden| {
-                        let targets = import_hidden_name_targets(
-                            db,
-                            module_id,
-                            import,
-                            hidden.name.atom().text(db),
-                        );
+                        let targets =
+                            import_name_targets(db, module_id, import, hidden.name.atom().text(db));
                         targets.len() > 1 && targets.iter().any(|candidate| candidate == target)
                     }) {
                         return true;
@@ -368,10 +358,12 @@ fn shared_selector_contains_target(world: &WorldState, target: &ReferenceTarget<
                         return false;
                     };
                     names.iter().any(|selected| {
-                        let targets = import_selected_name_resolutions(db, &env, selected)
-                            .iter()
-                            .filter_map(target_from_resolution)
-                            .collect::<Vec<_>>();
+                        let targets = import_name_targets(
+                            db,
+                            module_id,
+                            import,
+                            selected.name.atom().text(db),
+                        );
                         targets.len() > 1 && targets.iter().any(|candidate| candidate == target)
                     })
                 }
@@ -455,12 +447,8 @@ fn import_export_target_in_module<'db>(
             Item::Import(import) => {
                 for hidden in import.hiding(db) {
                     if span_contains_offset(db, hidden.name.span(db), file, offset) {
-                        let mut targets = import_hidden_name_targets(
-                            db,
-                            module_id,
-                            import,
-                            hidden.name.atom().text(db),
-                        );
+                        let mut targets =
+                            import_name_targets(db, module_id, import, hidden.name.atom().text(db));
                         return (targets.len() == 1).then(|| targets.remove(0));
                     }
                 }
@@ -469,11 +457,12 @@ fn import_export_target_in_module<'db>(
                 };
                 for selected in names {
                     if span_contains_offset(db, selected.name.span(db), file, offset) {
-                        let mut targets = import_selected_name_resolutions(db, &env, selected)
-                            .iter()
-                            .filter_map(target_from_resolution)
-                            .collect::<Vec<_>>();
-                        targets.dedup();
+                        let mut targets = import_name_targets(
+                            db,
+                            module_id,
+                            import,
+                            selected.name.atom().text(db),
+                        );
                         return (targets.len() == 1).then(|| targets.remove(0));
                     }
                     if selected
@@ -485,7 +474,7 @@ fn import_export_target_in_module<'db>(
                     }
                     if let Some(target) = constructor_selector_target_at(
                         db,
-                        import_selected_type_target(db, &env, selected).as_ref(),
+                        import_selected_type_target(db, module_id, import, selected).as_ref(),
                         selected.constructors.as_ref(),
                         file,
                         offset,
@@ -1127,14 +1116,9 @@ fn collect_import_export_reference_locations<'db>(
         match *item {
             Item::Import(import) => {
                 for hidden in import.hiding(db) {
-                    if import_hidden_name_targets(
-                        db,
-                        module_id,
-                        import,
-                        hidden.name.atom().text(db),
-                    )
-                    .iter()
-                    .any(|candidate| candidate == target)
+                    if import_name_targets(db, module_id, import, hidden.name.atom().text(db))
+                        .iter()
+                        .any(|candidate| candidate == target)
                     {
                         push_span_location(world, db, hidden.name.span(db), locations);
                     }
@@ -1143,16 +1127,14 @@ fn collect_import_export_reference_locations<'db>(
                     continue;
                 };
                 for selected in names {
-                    let selected_targets = import_selected_name_resolutions(db, &env, selected)
-                        .iter()
-                        .filter_map(target_from_resolution)
-                        .collect::<Vec<_>>();
+                    let selected_targets =
+                        import_name_targets(db, module_id, import, selected.name.atom().text(db));
                     if selected_targets.iter().any(|candidate| candidate == target) {
                         push_span_location(world, db, selected.name.span(db), locations);
                     }
                     for (ctor_target, span) in constructor_selector_targets(
                         db,
-                        import_selected_type_target(db, &env, selected).as_ref(),
+                        import_selected_type_target(db, module_id, import, selected).as_ref(),
                         selected.constructors.as_ref(),
                     ) {
                         if &ctor_target == target {
@@ -1211,41 +1193,14 @@ fn collect_import_export_reference_locations<'db>(
     }
 }
 
-fn import_selected_name_resolutions<'db>(
-    db: &'db dyn hir_ty::Db,
-    env: &dyn hir_nameres::ImportedNames<'db>,
-    selected: &SelectedName<'db>,
-) -> Vec<Resolution<'db>> {
-    let local_name = selected
-        .alias
-        .as_ref()
-        .unwrap_or(&selected.name)
-        .atom()
-        .text(db);
-    let mut resolutions = [
-        env.imported(db, hir_nameres::Namespace::Term, local_name),
-        env.imported(db, hir_nameres::Namespace::Type, local_name),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
-    resolutions.dedup();
-    resolutions
-}
-
 fn import_selected_type_target<'db>(
     db: &'db dyn hir_ty::Db,
-    env: &dyn hir_nameres::ImportedNames<'db>,
+    importing: nameres::ModuleId<'db>,
+    import: Import<'db>,
     selected: &SelectedName<'db>,
 ) -> Option<ReferenceTarget<'db>> {
-    let local_name = selected
-        .alias
-        .as_ref()
-        .unwrap_or(&selected.name)
-        .atom()
-        .text(db);
-    env.imported(db, hir_nameres::Namespace::Type, local_name)
-        .and_then(|resolution| target_from_resolution(&resolution))
+    let provider = nameres::resolve_direct_import_target(db, importing, import).ok()?;
+    interface_type_target(db, provider, selected.name.atom().text(db))
 }
 
 fn export_name_resolutions<'db>(
@@ -1305,14 +1260,15 @@ fn reexport_name_targets<'db>(
     interface_name_targets(db, module, exported.name.atom().text(db))
 }
 
-fn import_hidden_name_targets<'db>(
+fn import_name_targets<'db>(
     db: &'db dyn hir_ty::Db,
     importing: nameres::ModuleId<'db>,
     import: Import<'db>,
     name: &str,
 ) -> Vec<ReferenceTarget<'db>> {
-    // Hidden names are intentionally absent from the consumer's environment;
-    // their identity belongs to the provider's public interface.
+    // Both selectors and hiding clauses name the provider's public interface.
+    // The consumer's environment has already applied aliases and hiding, so it
+    // cannot recover every source occurrence's identity.
     nameres::resolve_direct_import_target(db, importing, import)
         .map(|provider| interface_name_targets(db, provider, name))
         .unwrap_or_default()
@@ -1380,9 +1336,15 @@ fn reexport_name_type_target<'db>(
     module: nameres::ModuleId<'db>,
     exported: &ExportedName<'db>,
 ) -> Option<ReferenceTarget<'db>> {
-    let name = exported.name.atom().text(db);
-    let interface = nameres::public_interface(db, module);
-    interface
+    interface_type_target(db, module, exported.name.atom().text(db))
+}
+
+fn interface_type_target<'db>(
+    db: &'db dyn hir_ty::Db,
+    module: nameres::ModuleId<'db>,
+    name: &str,
+) -> Option<ReferenceTarget<'db>> {
+    nameres::public_interface(db, module)
         .types
         .get(name)
         .map(|origin| ReferenceTarget::Def(origin.def_id))
@@ -1552,7 +1514,6 @@ fn import_alias_target_for_span<'db>(
         text.get(absolute.start().as_u32() as usize..absolute.end().as_u32() as usize)?;
     let module_id = nameres::module_id_for_source_file(db, absolute.file())?;
     let module = parser::parse_file_to_hir(db, absolute.file()).module(db);
-    let env = nameres::module_env(db, module_id);
 
     module.items(db).iter().find_map(|item| {
         let Item::Import(import) = *item else {
@@ -1566,10 +1527,10 @@ fn import_alias_target_for_span<'db>(
             if alias.atom().text(db) != occurrence {
                 return None;
             }
-            let belongs_to_alias = import_selected_name_resolutions(db, &env, selected)
-                .iter()
-                .filter_map(target_from_resolution)
-                .any(|imported| &imported == target);
+            let belongs_to_alias =
+                import_name_targets(db, module_id, import, selected.name.atom().text(db))
+                    .iter()
+                    .any(|imported| imported == target);
             if belongs_to_alias {
                 import_alias_target(db, module, selected)
             } else {
