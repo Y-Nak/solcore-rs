@@ -126,6 +126,7 @@ pub(super) fn bool_expr<'db>(value: bool, ty: MonoTy<'db>, span: Span<'db>) -> M
 }
 
 pub(super) struct MatchedArm<'db> {
+    pub(super) index: usize,
     pub(super) env: VEnv<'db>,
     pub(super) bindings: Vec<MonoId<'db>>,
     pub(super) body: Vec<MonoStmt<'db>>,
@@ -140,7 +141,7 @@ pub(super) fn match_arms_with<'db, F>(
 where
     F: Fn(&MonoExpr<'db>) -> bool + Copy,
 {
-    arms.iter().find_map(|arm| {
+    arms.iter().enumerate().find_map(|(index, arm)| {
         if arm.pats.len() != scrutinees.len() {
             return None;
         }
@@ -149,6 +150,7 @@ where
             env = match_pat(env, pat, value, is_known)?;
         }
         Some(MatchedArm {
+            index,
             env,
             bindings: pattern_bindings(&arm.pats),
             body: arm.body.clone(),

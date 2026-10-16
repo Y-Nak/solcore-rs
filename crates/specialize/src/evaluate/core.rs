@@ -438,31 +438,55 @@ impl<'db> Evaluator<'db> {
     }
 
     fn stmts_introduce_bindings(&self, body: &[MonoStmt<'db>]) -> bool {
-        body.iter().any(|stmt| match &stmt.kind {
-            MonoStmtKind::Let { .. } => true,
-            MonoStmtKind::If {
-                then_body,
-                else_body,
-                ..
-            } => {
-                self.stmts_introduce_bindings(then_body)
-                    || else_body
-                        .as_ref()
-                        .is_some_and(|body| self.stmts_introduce_bindings(body))
+        !self.stmts_binding_effects(body).is_empty()
+    }
+
+    /// Source `if` and `for` declarations become visible in source order,
+    /// independently of which runtime branch executes. Explicit blocks and
+    /// actual match arms, in contrast, own their declarations.
+    fn stmts_binding_effects(&self, body: &[MonoStmt<'db>]) -> AssignedNames {
+        let mut bindings = AssignedNames::empty();
+        for stmt in body {
+            match &stmt.kind {
+                MonoStmtKind::Let { id, .. } => bindings.insert(id.name.clone()),
+                MonoStmtKind::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    bindings.merge(self.stmts_binding_effects(then_body));
+                    if let Some(body) = else_body {
+                        bindings.merge(self.stmts_binding_effects(body));
+                    }
+                }
+                MonoStmtKind::For {
+                    init, post, body, ..
+                } => {
+                    bindings.merge(self.stmts_binding_effects(init));
+                    bindings.merge(self.stmts_binding_effects(post));
+                    bindings.merge(self.stmts_binding_effects(body));
+                }
+                MonoStmtKind::Match { arms, .. } if self.if_stmt_spans.contains(&stmt.span) => {
+                    for arm in arms {
+                        bindings.merge(self.stmts_binding_effects(&arm.body));
+                    }
+                }
+                _ => {}
             }
-            MonoStmtKind::For {
-                init, post, body, ..
-            } => {
-                self.stmts_introduce_bindings(init)
-                    || self.stmts_introduce_bindings(post)
-                    || self.stmts_introduce_bindings(body)
-            }
-            MonoStmtKind::Match { arms, .. } if self.if_stmt_spans.contains(&stmt.span) => arms
-                .iter()
-                .any(|arm| self.stmts_introduce_bindings(&arm.body)),
-            // Explicit blocks and real match arms own their declarations.
-            _ => false,
-        })
+        }
+        bindings
+    }
+
+    fn can_discard_if_arms(&self, arms: &[MonoArm<'db>], selected: usize) -> bool {
+        arms.iter()
+            .enumerate()
+            .all(|(index, arm)| index == selected || !self.stmts_introduce_bindings(&arm.body))
+    }
+
+    fn control_flow_effects(&self, body: &[MonoStmt<'db>]) -> AssignedNames {
+        let mut effects = self.stmts_write_effects(body);
+        effects.merge(self.stmts_binding_effects(body));
+        effects
     }
 
     fn eval_stmt(
@@ -706,7 +730,13 @@ impl<'db> Evaluator<'db> {
                 let mut env = env;
                 let mut comptime_env = comptime_env;
                 self.invalidate_assigned_effects(&cond_effects, &mut env, &mut comptime_env);
-                if let Some(value) = known_bool(self.db, &cond) {
+                if let Some(value) = known_bool(self.db, &cond)
+                    && !self.stmts_introduce_bindings(if value {
+                        else_body.as_deref().unwrap_or_default()
+                    } else {
+                        &then_body
+                    })
+                {
                     let selected = if value {
                         then_body
                     } else {
@@ -721,9 +751,9 @@ impl<'db> Evaluator<'db> {
                         scope,
                     );
                 }
-                let mut assigned = self.stmts_write_effects(&then_body);
+                let mut assigned = self.control_flow_effects(&then_body);
                 if let Some(else_body) = else_body.as_deref() {
-                    assigned.merge(self.stmts_write_effects(else_body));
+                    assigned.merge(self.control_flow_effects(else_body));
                 }
                 let (branch_env, branch_comptime_env) =
                     self.mask_assigned_env(env.clone(), comptime_env.clone(), &assigned);
@@ -779,7 +809,10 @@ impl<'db> Evaluator<'db> {
                     let matched = match_arms_with(&env, &scrutinees, &arms, |expr| {
                         self.expr_is_known_value(expr)
                     });
-                    if let Some(matched) = matched {
+                    if let Some(matched) = matched.filter(|matched| {
+                        !self.if_stmt_spans.contains(&span)
+                            || self.can_discard_if_arms(&arms, matched.index)
+                    }) {
                         // Source `if` is desugared to a match, but does not
                         // introduce an arm scope in the source language.
                         if self.if_stmt_spans.contains(&span) {
@@ -819,11 +852,19 @@ impl<'db> Evaluator<'db> {
                 let mut assigned = AssignedNames::empty();
                 for arm in &arms {
                     assigned.merge(self.stmts_write_effects(&arm.body));
+                    if self.if_stmt_spans.contains(&span) {
+                        assigned.merge(self.stmts_binding_effects(&arm.body));
+                    }
                 }
                 let arms = arms
                     .into_iter()
                     .map(|arm| {
                         let mut masked = self.stmts_write_effects(&arm.body);
+                        if self.if_stmt_spans.contains(&span) {
+                            // Bindings from either arm are statically visible
+                            // even if their declaration never executes.
+                            masked.merge(assigned.clone());
+                        }
                         masked.insert_pat_binders(&arm.pats);
                         let (arm_env, arm_comptime_env) =
                             self.mask_assigned_env(env.clone(), comptime_env.clone(), &masked);
@@ -882,10 +923,10 @@ impl<'db> Evaluator<'db> {
             } => {
                 // Names written anywhere in the loop (init/cond/post/body)
                 // must not fold to their pre-loop constants.
-                let mut assigned = self.stmts_write_effects(&body);
-                assigned.merge(self.stmts_write_effects(&init));
+                let mut assigned = self.control_flow_effects(&body);
+                assigned.merge(self.control_flow_effects(&init));
                 assigned.merge(self.expr_write_effects(&cond));
-                assigned.merge(self.stmts_write_effects(&post));
+                assigned.merge(self.control_flow_effects(&post));
                 let (loop_env, loop_comptime_env) =
                     self.mask_assigned_env(env.clone(), comptime_env.clone(), &assigned);
                 let (_, _, init) = self.eval_stmts_in_scope(
@@ -2505,6 +2546,15 @@ impl<'db> Evaluator<'db> {
                             self.expr_is_known_value(expr)
                         });
                         if let Some(matched) = matched {
+                            if self.if_stmt_spans.contains(&stmt.span)
+                                && !self.can_discard_if_arms(&arms, matched.index)
+                            {
+                                // An unexecuted declaration still contributes
+                                // a binding. Keep this control flow for backend
+                                // declaration hoisting instead of interpreting
+                                // only the selected arm.
+                                return FoldOutcome::ReturnedUnknownAbort;
+                            }
                             let result = if self.if_stmt_spans.contains(&stmt.span) {
                                 self.eval_fun_body_in_scope(
                                     type_reg,
@@ -2564,6 +2614,13 @@ impl<'db> Evaluator<'db> {
                     let Some(cond) = known_bool(self.db, &cond) else {
                         return FoldOutcome::ReturnedUnknownAbort;
                     };
+                    if self.stmts_introduce_bindings(if cond {
+                        else_body.as_deref().unwrap_or_default()
+                    } else {
+                        &then_body
+                    }) {
+                        return FoldOutcome::ReturnedUnknownAbort;
+                    }
                     let body = if cond {
                         then_body
                     } else {

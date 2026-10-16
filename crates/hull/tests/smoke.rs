@@ -2503,3 +2503,6 @@ fn repo_root() -> PathBuf {
         .expect("crate is under repo/crates/hull")
         .to_path_buf()
 }
+
+#[path = "scope/control_flow.rs"]
+mod control_flow_scopes;

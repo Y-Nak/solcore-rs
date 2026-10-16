@@ -37,6 +37,7 @@ use crate::{
     word::{canonical_word_literal, wrap_word_literal},
 };
 
+mod assembly;
 mod contract;
 mod diagnostics;
 mod emitter;

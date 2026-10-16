@@ -6608,3 +6608,137 @@ fn non_scoping_declarations_do_not_residualize_shadowed_function_aggregates() {
         }
     }
 }
+
+#[test]
+fn constant_conditionals_preserve_bindings_from_unexecuted_source_branches() {
+    fn contains_x_declaration(body: &[MonoStmt<'_>]) -> bool {
+        body.iter().any(|stmt| match &stmt.kind {
+            MonoStmtKind::Let { id, .. } => id.name == "x",
+            MonoStmtKind::Block(body) => contains_x_declaration(body),
+            MonoStmtKind::Match { arms, .. } => {
+                arms.iter().any(|arm| contains_x_declaration(&arm.body))
+            }
+            MonoStmtKind::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                contains_x_declaration(then_body)
+                    || else_body.as_deref().is_some_and(contains_x_declaration)
+            }
+            MonoStmtKind::For {
+                init, post, body, ..
+            } => {
+                contains_x_declaration(init)
+                    || contains_x_declaration(post)
+                    || contains_x_declaration(body)
+            }
+            _ => false,
+        })
+    }
+    for body in [
+        "if(false){let x:word=42;}else{} return x;",
+        "if(true){}else{let x:word=7;} return x;",
+        "let x:word=1; if(true){let x:word=42;}else{let x:word=7;} return x;",
+        "if(true){}else{if(true){let x:word=7;}else{}} return x;",
+        "if(true){}else{for(;false;){let x:word=7;}} return x;",
+    ] {
+        // Both function residualization and pure-call interpretation must
+        // preserve declarations whose runtime initializer does not execute.
+        for source in [
+            format!("function main() returns(word) {{ {body} }}"),
+            format!(
+                "function compute() returns(word) {{ {body} }} function main() returns(word) {{ return compute(); }}"
+            ),
+        ] {
+            let (_db, output) = specialize_src(&source);
+            assert!(
+                output.diagnostics.is_empty(),
+                "{source}: {:?}",
+                output.diagnostics
+            );
+            assert!(
+                main_return_number(&output).is_none(),
+                "unsound branch folding: {source}"
+            );
+            assert!(output.module.items.iter().any(|item| {
+                matches!(item, MonoItem::Function(function) if contains_x_declaration(&function.body))
+            }), "discarded a statically visible declaration: {source}");
+        }
+    }
+}
+
+#[test]
+fn control_flow_declarations_invalidate_shadowed_constants() {
+    for source in [
+        "function main(flag:bool) returns(word) {let x:word=1; if(flag){let x:word=7;}else{} return x;}",
+        "function main(flag:bool) returns(word) {let x:word=1; if(flag){}else{let x:word=7;} return x;}",
+        "function main(flag:bool) returns(word) {let x:word=1; if(flag){if(flag){let x:word=7;}else{}}else{} return x;}",
+    ] {
+        let (_db, output) = specialize_src(source);
+        assert!(
+            output.diagnostics.is_empty(),
+            "{source}: {:?}",
+            output.diagnostics
+        );
+        assert!(
+            matches!(main_return_expr(&output).map(|expr| &expr.kind), Some(MonoExprKind::Var(id)) if id.name == "x"),
+            "a branch declaration must hide the preceding constant: {source}"
+        );
+    }
+
+    let (db, file, output) = specialize_src_with_std_and_db(
+        "import * from std; function main() returns(word) {let i:word=1; for(let i:word=0; eqWord(i,0);i=1){} return i;}",
+    );
+    let module_id = nameres::module_id_for_source_file(db, file).unwrap();
+    let frontend = hir_ty::collect_frontend_diagnostics(db, module_id);
+    assert!(frontend.is_empty(), "frontend: {frontend:#?}");
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let condition = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| {
+            let MonoItem::Function(function) = item else {
+                return None;
+            };
+            function.body.iter().find_map(|stmt| match &stmt.kind {
+                MonoStmtKind::For { cond, .. } => Some(cond),
+                _ => None,
+            })
+        })
+        .expect("residual loop");
+    assert!(
+        matches!(&condition.kind, MonoExprKind::Call { args, .. } if args.iter().any(|arg| matches!(&arg.kind, MonoExprKind::Var(id) if id.name == "i"))),
+        "the loop initializer shadows the pre-loop constant: {condition:?}"
+    );
+}
+
+#[test]
+fn constant_conditionals_still_fold_when_discarded_bindings_are_lexical() {
+    for body in [
+        "let x:word=1; if(true){}else{{let x:word=7;}} return x;",
+        "let x:word=1; if(true){}else{match(x){case(x){let x:word=7;}}} return x;",
+        "if(true){let x:word=7;}else{} return x;",
+    ] {
+        for source in [
+            format!("function main() returns(word) {{ {body} }}"),
+            format!(
+                "function compute() returns(word) {{ {body} }} function main() returns(word) {{return compute();}}"
+            ),
+        ] {
+            let (_db, output) = specialize_src(&source);
+            assert!(
+                output.diagnostics.is_empty(),
+                "{source}: {:?}",
+                output.diagnostics
+            );
+            let expected = if body.starts_with("if") { "7" } else { "1" };
+            assert_eq!(
+                main_return_number(&output).as_deref(),
+                Some(expected),
+                "{source}"
+            );
+        }
+    }
+}
