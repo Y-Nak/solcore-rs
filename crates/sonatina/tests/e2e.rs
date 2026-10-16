@@ -419,7 +419,7 @@ fn abi_shape(param: &AbiParam) -> AbiShape {
             _ => AbiShape::Unsupported(name.clone()),
         },
         AbiType::String => AbiShape::Unsupported("string".to_owned()),
-        AbiType::Unsupported => AbiShape::Unsupported(param.ty.to_string()),
+        AbiType::Array(_) | AbiType::Unsupported => AbiShape::Unsupported(param.ty.to_string()),
     }
 }
 

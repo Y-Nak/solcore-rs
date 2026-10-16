@@ -167,6 +167,7 @@ fn render_named_params(
 
 fn render_abi_param(out: &mut String, ind: usize, param: &AbiParam) -> Result<(), String> {
     let ty = param.ty.to_string();
+    let has_components = param.ty.has_tuple_components();
     line(out, ind, "{");
     line(
         out,
@@ -184,10 +185,10 @@ fn render_abi_param(out: &mut String, ind: usize, param: &AbiParam) -> Result<()
         &format!(
             "\"type\": {}{}",
             json_string(&ty),
-            if param.components.is_empty() { "" } else { "," }
+            if has_components { "," } else { "" }
         ),
     );
-    if !param.components.is_empty() {
+    if has_components {
         render_named_params(out, ind + 1, "components", &param.components, false)?;
     }
     push_close_brace(out, ind);

@@ -950,6 +950,123 @@ contract Tuples {
 }
 
 #[test]
+fn unit_array_abi_keeps_empty_tuple_value_context() {
+    let (mut db, key) = db_with_main(
+        r#"
+import * from std;
+type UnitAlias = ();
+type Units = calldata<array<UnitAlias>>;
+contract UnitArrays {
+  constructor(seed: uint256) {}
+  function units(values: Units) public returns (uint256) { return uint256(0); }
+  function nested(values: calldata<array<Units>>) public returns (uint256) { return uint256(0); }
+  function empty() public returns (UnitAlias) { return; }
+  function wrapped(values: calldata<array<(Units, uint256)>>) public returns (uint256) { return uint256(0); }
+}
+"#,
+    );
+    insert_real_std_modules(&mut db);
+    let file = db.module_files[&key];
+    let module = parse_file_to_hir(&db, file).module(&db);
+    let contract = contract_named(&db, module, "UnitArrays");
+    let surface = contract_dispatch_surface(&db, module, contract);
+    assert!(surface.diagnostics.is_empty(), "{:?}", surface.diagnostics);
+
+    let units = &surface.methods[0];
+    assert_eq!(units.signature, "units(()[])");
+    // Keccak of the canonical signature text, without external parser normalization.
+    assert_eq!(units.selector.to_hex(), "0xfc59547a");
+    assert_eq!(units.inputs[0].ty.to_string(), "tuple[]");
+    assert!(units.inputs[0].components.is_empty());
+    let nested = &surface.methods[1];
+    assert_eq!(nested.signature, "nested(()[][])");
+    assert_eq!(nested.inputs[0].ty.to_string(), "tuple[][]");
+    assert!(nested.inputs[0].components.is_empty());
+    let empty = &surface.methods[2];
+    assert_eq!(empty.signature, "empty()");
+    assert!(empty.inputs.is_empty());
+    assert!(empty.outputs.is_empty());
+    let wrapped = &surface.methods[3];
+    assert_eq!(wrapped.signature, "wrapped((()[],uint256)[])");
+    assert_eq!(wrapped.inputs[0].ty.to_string(), "tuple[]");
+    assert_eq!(wrapped.inputs[0].components[0].ty.to_string(), "tuple[]");
+    let DispatchConstructor::Explicit { inputs, .. } = &surface.constructor else {
+        panic!("expected explicit constructor");
+    };
+    assert_eq!(inputs[0].ty.to_string(), "uint256");
+
+    let abi = contract_abi_json(&db, module, contract).expect("empty tuple array ABI JSON");
+    assert!(abi.contains("\"type\": \"tuple[]\""), "{abi}");
+    assert!(abi.contains("\"type\": \"tuple[][]\""), "{abi}");
+    assert_eq!(abi.matches("\"components\": []").count(), 3, "{abi}");
+    assert!(!abi.contains("\"type\": \"\""), "{abi}");
+    assert!(!abi.contains("\"type\": \"[]\""), "{abi}");
+}
+
+#[test]
+fn explicit_unit_product_members_are_rejected_at_public_boundaries() {
+    for member in [
+        "function bad(x: UnitAlias) public {}",
+        "constructor(x: UnitAlias) {}",
+        "function bad(x: (UnitAlias, uint256)) public {}",
+        "function bad(x: calldata<array<(UnitAlias, uint256)>>) public {}",
+        "function bad(x: calldata<array<(uint256, (UnitAlias, uint256))>>) public {}",
+        "function bad() public returns ((uint256, UnitAlias)) { return (uint256(0), ()); }",
+    ] {
+        let source = format!("import * from std;\ntype UnitAlias = ();\ncontract C {{ {member} }}");
+        let (mut db, key) = db_with_main(&source);
+        insert_real_std_modules(&mut db);
+        let module = parse_file_to_hir(&db, db.module_files[&key]).module(&db);
+        let contract = contract_named(&db, module, "C");
+        let surface = contract_dispatch_surface(&db, module, contract);
+        assert!(
+            surface.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_deref() == Some("SC0231")
+                    && diagnostic.message.contains("explicit unit")
+            }),
+            "{member}: {:?}",
+            surface.diagnostics
+        );
+        assert!(
+            contract_abi_json(&db, module, contract).is_err(),
+            "{member}"
+        );
+    }
+}
+
+#[test]
+fn unit_array_outputs_remain_input_only() {
+    let (mut db, key) = db_with_main(
+        r#"
+import * from std;
+type Units = calldata<array<()>>;
+contract C {
+  function bad(values: Units) public returns (Units) { return values; }
+  function nested(values: calldata<array<Units>>) public returns (calldata<array<Units>>) { return values; }
+}
+"#,
+    );
+    insert_real_std_modules(&mut db);
+    let module = parse_file_to_hir(&db, db.module_files[&key]).module(&db);
+    let contract = contract_named(&db, module, "C");
+    let surface = contract_dispatch_surface(&db, module, contract);
+    assert_eq!(
+        surface
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.code.as_deref() == Some("SC0231")
+                    && diagnostic.message.contains("input-only")
+            })
+            .count(),
+        2,
+        "{:?}",
+        surface.diagnostics
+    );
+    assert!(contract_abi_json(&db, module, contract).is_err());
+}
+
+#[test]
 fn nested_calldata_arrays_recurse_in_signatures_and_abi_json() {
     let (mut db, key) = db_with_main(
         r#"
