@@ -14,10 +14,12 @@
 //!
 //! Logical discovery shares answers by substitution, clause origin, and local
 //! given provenance. If different dictionaries share a logical answer, a
-//! second pass retains their complete evidence while pruning lower-priority
-//! choices in acyclic dependency regions. Cyclic regions keep their finite
-//! seeds, even when a preferred recursive proof depends on one. Both passes
-//! share the same work budget.
+//! second pass retains dictionary identity while pruning lower-priority choices
+//! justified by finite witnesses. A witness is safe in a consuming context when
+//! its non-leaf clause origins cannot repeat an ancestor. This keeps necessary
+//! recursive seeds inside cycles without multiplying dominated uses outside
+//! them. Superclass paths to the same predicate from one local given identify
+//! one dictionary. Both passes share the same work budget.
 //!
 //! Because repeated subgoals are shared within each pass, diamond-shaped constraint
 //! graphs are resolved without the exponential blow-up of naive backtracking,
@@ -531,6 +533,19 @@ fn solve_goal<'db>(
     report.fuel_remaining = solver.fuel;
     report.stats = solver.stats;
     report
+}
+
+#[cfg(test)]
+pub(crate) fn solve_report_with_fuel<'db>(
+    db: &'db dyn Db,
+    env: TraitEnvId<'db>,
+    goal: CanonicalGoal<'db>,
+    fuel: usize,
+) -> SolverReport<'db> {
+    Solver::new(db, env, fuel).solve_pred_with_allowed(
+        goal.pred(db),
+        &goal.allowed_vars(db).iter().copied().collect(),
+    )
 }
 
 impl<'db> SolverReport<'db> {

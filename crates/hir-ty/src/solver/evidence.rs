@@ -1,6 +1,124 @@
 use super::*;
 
+/// Dictionary identity, separate from the path used to discover it. Projecting
+/// the same predicate from one local dictionary is independent of the sequence
+/// of superclass edges; other dictionaries retain their complete prerequisites.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) enum DictionaryIdentity<'db> {
+    Given {
+        pred: Pred<'db>,
+        source: Pred<'db>,
+    },
+    Instance {
+        instance: DefId<'db>,
+        args: Vec<Ty<'db>>,
+        children: Vec<Self>,
+    },
+    Builtin(Pred<'db>),
+    Superclass {
+        class: DefId<'db>,
+        pred: Pred<'db>,
+        child: Box<Self>,
+    },
+    Derived {
+        kind: DerivedClauseKind<'db>,
+        pred: Pred<'db>,
+        children: Vec<Self>,
+    },
+}
+
+/// A clause that can wrap a prerequisite dictionary. Type arguments are
+/// deliberately omitted: this over-approximates possible recursive conflicts
+/// when a proof is substituted beneath another clause.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) enum BranchOrigin<'db> {
+    Instance(DefId<'db>),
+    Superclass(DefId<'db>),
+    Derived(DerivedClauseKind<'db>),
+}
+
+/// Exact identity used by the simple-proof cycle check. Unlike a footprint,
+/// this retains the instantiation, so recursive instances at smaller types do
+/// not conflict with their callers.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) enum BranchRoot<'db> {
+    Instance(DefId<'db>, Vec<Ty<'db>>),
+    Superclass(DefId<'db>, Pred<'db>),
+    Derived(DerivedClauseKind<'db>, Pred<'db>),
+}
+
+impl<'db> BranchOrigin<'db> {
+    pub(super) fn for_clause(origin: &ClauseOrigin<'db>) -> Option<Self> {
+        match origin {
+            ClauseOrigin::Instance { def, .. } => Some(Self::Instance(*def)),
+            ClauseOrigin::Superclass(class) => Some(Self::Superclass(*class)),
+            ClauseOrigin::Derived(kind) => Some(Self::Derived(*kind)),
+            ClauseOrigin::Builtin | ClauseOrigin::Given => None,
+        }
+    }
+}
+
 impl<'db> Evidence<'db> {
+    pub(super) fn branch_root(&self) -> Option<BranchRoot<'db>> {
+        match self {
+            Self::Instance { instance, args, .. } => {
+                Some(BranchRoot::Instance(*instance, args.clone()))
+            }
+            Self::Superclass { class, pred, .. } => Some(BranchRoot::Superclass(*class, *pred)),
+            Self::Derived { kind, pred, .. } => Some(BranchRoot::Derived(*kind, *pred)),
+            Self::Builtin { .. } => None,
+        }
+    }
+
+    pub(super) fn dictionary_identity(
+        &self,
+        is_given: &impl Fn(Pred<'db>) -> bool,
+    ) -> DictionaryIdentity<'db> {
+        if let Some(source) = evidence_root_given(self)
+            && is_given(source)
+        {
+            let pred = match self {
+                Self::Builtin { pred } | Self::Superclass { pred, .. } => *pred,
+                _ => {
+                    unreachable!("only given dictionaries and their projections have a given root")
+                }
+            };
+            return DictionaryIdentity::Given { pred, source };
+        }
+        match self {
+            Self::Instance {
+                instance,
+                args,
+                sub_evidence,
+            } => DictionaryIdentity::Instance {
+                instance: *instance,
+                args: args.clone(),
+                children: sub_evidence
+                    .iter()
+                    .map(|child| child.dictionary_identity(is_given))
+                    .collect(),
+            },
+            Self::Builtin { pred } => DictionaryIdentity::Builtin(*pred),
+            Self::Superclass { class, pred, child } => DictionaryIdentity::Superclass {
+                class: *class,
+                pred: *pred,
+                child: Box::new(child.dictionary_identity(is_given)),
+            },
+            Self::Derived {
+                kind,
+                pred,
+                sub_evidence,
+            } => DictionaryIdentity::Derived {
+                kind: *kind,
+                pred: *pred,
+                children: sub_evidence
+                    .iter()
+                    .map(|child| child.dictionary_identity(is_given))
+                    .collect(),
+            },
+        }
+    }
+
     fn children(&self) -> &[Self] {
         match self {
             Self::Instance { sub_evidence, .. } | Self::Derived { sub_evidence, .. } => {
@@ -141,7 +259,11 @@ pub(super) fn solution_from_answers<'db>(
         if answer_priority(db, env, &answer) != best_priority {
             continue;
         }
-        if seen_candidates.insert(answer.candidate.clone()) {
+        let identity = answer
+            .candidate
+            .evidence
+            .dictionary_identity(&|pred| env.local_givens(db).contains(&pred));
+        if seen_candidates.insert((answer.candidate.subst.clone(), identity)) {
             candidates.push(answer.candidate);
         }
     }
@@ -196,6 +318,10 @@ fn evidence_preference<'db>(
     right: &Evidence<'db>,
 ) -> Option<std::cmp::Ordering> {
     use std::cmp::Ordering;
+    let is_given = |pred| env.local_givens(db).contains(&pred);
+    if left.dictionary_identity(&is_given) == right.dictionary_identity(&is_given) {
+        return Some(Ordering::Equal);
+    }
     let priority = evidence_priority(db, env, left).cmp(&evidence_priority(db, env, right));
     if priority != Ordering::Equal {
         return Some(priority);

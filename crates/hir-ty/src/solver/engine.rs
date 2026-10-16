@@ -1,4 +1,10 @@
-use std::convert::Infallible;
+use std::{
+    collections::VecDeque,
+    convert::Infallible,
+    hash::{Hash, Hasher},
+};
+
+use super::evidence::{BranchOrigin, BranchRoot};
 
 use tablesolve::{
     AnswerlessMode, Canonical as TabledCanonical, CanonicalizeResult, ClausesResult,
@@ -25,7 +31,7 @@ pub(super) struct TabledEngine<'db> {
     /// Work-item budget retained for compatibility with `SolverReport`.
     fuel: usize,
     discovery: Option<ProofDiscovery<'db>>,
-    preferred: FxHashMap<TableKey<'db>, FxHashMap<Substitution<'db>, u8>>,
+    preferred: ProofPreference<'db>,
 }
 
 impl<'db> TabledEngine<'db> {
@@ -46,7 +52,7 @@ impl<'db> TabledEngine<'db> {
             local_context_vars,
             fuel,
             discovery: Some(ProofDiscovery::default()),
-            preferred: FxHashMap::default(),
+            preferred: ProofPreference::default(),
         }
     }
 
@@ -60,16 +66,20 @@ impl<'db> TabledEngine<'db> {
         // Discover logical answers without multiplying their dictionary
         // derivations. If no different dictionaries share a logical answer,
         // this first pass already contains every complete proof.
-        let logical = self.run_once(goal, allowed_goal_vars);
+        let mut logical = self.run_once(goal, allowed_goal_vars);
         let discovery = self.discovery.take().expect("initial discovery pass");
         if !discovery.collapsed || logical.exhausted {
             return logical;
         }
 
-        // Only saturated, acyclic dependency regions permit pruning by a
-        // subgoal's best priority. A preferred recursive proof can need a
-        // less-preferred seed, so cyclic regions retain all alternatives.
-        self.preferred = discovery.preferred_acyclic_answers();
+        // Saturated finite witnesses justify preference before expansion.
+        // Their recursion footprints determine which contexts can safely use
+        // them; a recursive preferred proof must not erase its own seed.
+        let Ok(preferred) = discovery.finish(&mut logical.fuel_remaining) else {
+            logical.exhausted = true;
+            return logical;
+        };
+        self.preferred = preferred;
         self.fuel = logical.fuel_remaining;
         let mut complete = self.run_once(goal, allowed_goal_vars);
         complete.stats.add(logical.stats);
@@ -85,6 +95,7 @@ impl<'db> TabledEngine<'db> {
             pred: goal,
             allowed_vars: allowed_goal_vars.clone(),
             rigid_vars: self.local_context_vars.clone(),
+            context: ProofContext::default(),
         };
         let config = TabledConfig {
             scheduling: Scheduling::Fair,
@@ -179,11 +190,7 @@ impl<'db> TabledEngine<'db> {
         })
     }
 
-    fn suspend(
-        &mut self,
-        parent: &TableKey<'db>,
-        state: ConsumerState<'db>,
-    ) -> ContextTransition<Self> {
+    fn suspend(&mut self, state: ConsumerState<'db>) -> ContextTransition<Self> {
         let condition = state
             .subst
             .apply_pred(self.db, state.clause.conditions[state.next_condition]);
@@ -191,26 +198,20 @@ impl<'db> TabledEngine<'db> {
             pred: condition,
             allowed_vars: state.condition_vars.clone(),
             rigid_vars: state.rigid_vars.clone(),
+            context: state.context.clone(),
         };
-        if let Some(discovery) = &mut self.discovery {
-            let (child, _) =
-                canonicalize_goal(self.db, goal.pred, &goal.allowed_vars, &goal.rigid_vars);
-            discovery
-                .dependencies
-                .entry(parent.clone())
-                .or_default()
-                .insert(child);
-        }
         Transition::Suspend { goal, state }
     }
 
     fn answer(
         &mut self,
-        key: &TableKey<'db>,
+        contextual: &ContextKey<'db>,
         clause: &InstantiatedClause<'db>,
         subst: MatchSubst<'db>,
         sub_evidence: Vec<Evidence<'db>>,
+        prerequisites: Vec<ProofNode<'db>>,
     ) -> ContextTransition<Self> {
+        let key = &contextual.logical;
         let evidence = clause_evidence(self.db, key.pred, clause, &subst, sub_evidence);
         let evidence = apply_evidence(self.db, evidence, &subst);
         // Recursive clauses can wrap a completed proof indefinitely. Only
@@ -233,18 +234,19 @@ impl<'db> TabledEngine<'db> {
             // repeated witness still proves logical reachability, but needs
             // the complete pass to enumerate its finite dictionary choices.
             discovery.collapsed |= repeats_root;
+            discovery.record_recipe(key, &logical_key, prerequisites);
             let answers = discovery.answers.entry(key.clone()).or_default();
             if let Some(previous) = answers.get(&logical_key) {
                 discovery.collapsed |= previous != &answer;
             } else {
                 answers.insert(logical_key, answer.clone());
             }
-        } else if self
-            .preferred
-            .get(key)
-            .and_then(|priorities| priorities.get(&answer.candidate.subst))
-            .is_some_and(|priority| *priority < logical_key.priority())
-        {
+        } else if self.preferred.dominates(
+            key,
+            &answer,
+            logical_key.priority(),
+            &contextual.context,
+        ) {
             return Transition::Reject;
         }
         Transition::Answer(answer)
@@ -272,7 +274,7 @@ impl<'db> TabledEngine<'db> {
 
 impl<'db> ResolutionContext for TabledEngine<'db> {
     type Goal = SolverGoal<'db>;
-    type Key = TableKey<'db>;
+    type Key = ContextKey<'db>;
     type Clause = ProgramClause<'db>;
     type Answer = Answer<'db>;
     type AnswerKey = AnswerKey<'db>;
@@ -288,17 +290,21 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
     ) -> CanonicalizeResult<Self::Key, Self::Rebase, Self::StopReason, Self::Error> {
         let (key, rebase) =
             canonicalize_goal(self.db, goal.pred, &goal.allowed_vars, &goal.rigid_vars);
-        Ok(TabledCanonical::new(key, rebase).into())
+        Ok(TabledCanonical::new(
+            ContextKey {
+                logical: key,
+                context: goal.context,
+            },
+            rebase,
+        )
+        .into())
     }
 
     fn clauses(
         &mut self,
         key: &Self::Key,
     ) -> ClausesResult<Self::Clause, Self::StopReason, Self::Error> {
-        if let Some(discovery) = &mut self.discovery {
-            discovery.dependencies.entry(key.clone()).or_default();
-        }
-        Ok(self.applicable_clauses(key).into())
+        Ok(self.applicable_clauses(&key.logical).into())
     }
 
     fn apply_clause(
@@ -306,13 +312,14 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
         key: &Self::Key,
         clause: Self::Clause,
     ) -> Result<ContextTransition<Self>, Self::Error> {
-        let allowed_goal_vars = key.allowed_vars();
-        let avoid_vars = key.canonical_context_vars();
-        let instantiated = instantiate_clause(self.db, &clause, key.pred, &avoid_vars);
+        let logical = &key.logical;
+        let allowed_goal_vars = logical.allowed_vars();
+        let avoid_vars = logical.canonical_context_vars();
+        let instantiated = instantiate_clause(self.db, &clause, logical.pred, &avoid_vars);
         let Some(subst) = match_head(
             self.db,
             instantiated.head,
-            key.pred,
+            logical.pred,
             &instantiated.binder_vars,
             &allowed_goal_vars,
         ) else {
@@ -322,20 +329,36 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
         let mut condition_vars = allowed_goal_vars;
         condition_vars.extend(instantiated.binder_vars.iter().copied());
         if instantiated.conditions.is_empty() {
-            return Ok(self.answer(key, &instantiated, subst, Vec::new()));
+            return Ok(self.answer(key, &instantiated, subst, Vec::new(), Vec::new()));
         }
 
-        Ok(self.suspend(
-            key,
-            ConsumerState {
-                clause: instantiated,
-                subst,
-                sub_evidence: Vec::new(),
-                next_condition: 0,
-                condition_vars,
-                rigid_vars: key.rigid_vars().to_vec(),
-            },
-        ))
+        let mut context = key.context.clone();
+        if self.discovery.is_none() {
+            let evidence =
+                clause_evidence(self.db, logical.pred, &instantiated, &subst, Vec::new());
+            let root = apply_evidence(self.db, evidence, &subst).branch_root();
+            if let Some(root) =
+                root.and_then(|root| canonical::stable_branch_root(self.db, root, logical))
+                && !context.roots.insert(root)
+            {
+                // Every completion would fail the final simple-proof check.
+                return Ok(Transition::Reject);
+            }
+            context.origins.insert(
+                BranchOrigin::for_clause(&instantiated.origin)
+                    .expect("clauses with prerequisites have dictionary branches"),
+            );
+        }
+        Ok(self.suspend(ConsumerState {
+            clause: instantiated,
+            subst,
+            sub_evidence: Vec::new(),
+            prerequisites: Vec::new(),
+            next_condition: 0,
+            condition_vars,
+            rigid_vars: logical.rigid_vars().to_vec(),
+            context,
+        }))
     }
 
     fn resume(
@@ -345,6 +368,18 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
         answer: Self::Answer,
         rebase: Self::Rebase,
     ) -> Result<ContextTransition<Self>, Self::Error> {
+        let condition = state
+            .subst
+            .apply_pred(self.db, state.clause.conditions[state.next_condition]);
+        let (child, _) =
+            canonicalize_goal(self.db, condition, &state.condition_vars, &state.rigid_vars);
+        let answer_key = self.logical_answer_key(&child, &answer);
+        if self.discovery.is_some() {
+            state.prerequisites.push(ProofNode {
+                table: child,
+                answer: answer_key,
+            });
+        }
         let alternative = actualize_answer(self.db, &answer, &rebase);
         let mut combined_subst = state.subst.clone();
         if !combined_subst.merge(self.db, &alternative.candidate.subst) {
@@ -361,9 +396,15 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
         state.subst = combined_subst;
         state.next_condition += 1;
         if state.next_condition < state.clause.conditions.len() {
-            Ok(self.suspend(parent, state))
+            Ok(self.suspend(state))
         } else {
-            Ok(self.answer(parent, &state.clause, state.subst, state.sub_evidence))
+            Ok(self.answer(
+                parent,
+                &state.clause,
+                state.subst,
+                state.sub_evidence,
+                state.prerequisites,
+            ))
         }
     }
 
@@ -377,18 +418,60 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
 
     fn answer_key(&self, key: &Self::Key, answer: &Self::Answer) -> Self::AnswerKey {
         if self.discovery.is_some() {
-            AnswerKey::Logical(self.logical_answer_key(key, answer))
+            AnswerKey::Logical(self.logical_answer_key(&key.logical, answer))
         } else {
             // Equal-priority dictionaries include all prerequisite evidence.
-            AnswerKey::Complete(answer.clone())
+            AnswerKey::Complete(
+                answer.candidate.subst.clone(),
+                answer.candidate.evidence.dictionary_identity(&|pred| {
+                    self.env.local_givens(self.db).iter().any(|given| {
+                        canonicalize_local_given(self.db, *given, &key.logical) == pred
+                    })
+                }),
+            )
         }
+    }
+}
+
+/// Complete dictionaries are shared only in contexts with the same ancestors.
+/// Discovery leaves this context empty, preserving context-free reachability.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) struct ContextKey<'db> {
+    logical: TableKey<'db>,
+    context: ProofContext<'db>,
+}
+
+#[derive(Clone, Default, PartialEq, Eq)]
+struct ProofContext<'db> {
+    origins: Footprint<'db>,
+    roots: FxHashSet<BranchRoot<'db>>,
+}
+
+impl Hash for ProofContext<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // Set equality is independent of traversal order, and so must hashing
+        // be. Hash collisions here are harmless: table equality compares sets.
+        fn hash_set<T: Hash, H: Hasher>(set: &FxHashSet<T>, state: &mut H) {
+            let mut hashes = set
+                .iter()
+                .map(|item| {
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    item.hash(&mut hasher);
+                    hasher.finish()
+                })
+                .collect::<Vec<_>>();
+            hashes.sort_unstable();
+            hashes.hash(state);
+        }
+        hash_set(&self.origins, state);
+        hash_set(&self.roots, state);
     }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(super) enum AnswerKey<'db> {
     Logical(LogicalAnswerKey<'db>),
-    Complete(Answer<'db>),
+    Complete(Substitution<'db>, evidence::DictionaryIdentity<'db>),
 }
 
 /// Identity sufficient for logical reachability and root priority, but not
@@ -407,55 +490,178 @@ impl LogicalAnswerKey<'_> {
     }
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct ProofNode<'db> {
+    table: TableKey<'db>,
+    answer: LogicalAnswerKey<'db>,
+}
+
+/// Child identities retain the correlations established by clause matching,
+/// without committing their parents to the first arriving dictionary trees.
+#[derive(PartialEq, Eq, Hash)]
+struct ProofRecipe<'db> {
+    origin: Option<BranchOrigin<'db>>,
+    prerequisites: Vec<ProofNode<'db>>,
+}
+
 #[derive(Default)]
 struct ProofDiscovery<'db> {
     answers: FxHashMap<TableKey<'db>, FxHashMap<LogicalAnswerKey<'db>, Answer<'db>>>,
-    dependencies: FxHashMap<TableKey<'db>, FxHashSet<TableKey<'db>>>,
+    recipes: FxHashMap<ProofNode<'db>, FxHashSet<ProofRecipe<'db>>>,
     collapsed: bool,
 }
 
+type Footprint<'db> = FxHashSet<BranchOrigin<'db>>;
+type WitnessIndex<'db> =
+    FxHashMap<TableKey<'db>, FxHashMap<Substitution<'db>, Vec<ProofWitness<'db>>>>;
+
+/// A finite proof's priority and conservative recursion footprint. Only
+/// non-leaf origins matter: a leaf cannot be an ancestor of a substituted proof.
+struct ProofWitness<'db> {
+    priority: u8,
+    origins: Footprint<'db>,
+}
+
+#[derive(Default)]
+struct ProofPreference<'db> {
+    witnesses: WitnessIndex<'db>,
+}
+
 impl<'db> ProofDiscovery<'db> {
-    fn preferred_acyclic_answers(
-        self,
-    ) -> FxHashMap<TableKey<'db>, FxHashMap<Substitution<'db>, u8>> {
-        // Remove leaves upwards. Remaining goals are in, or depend on, a
-        // cycle; retaining those proofs preserves finite recursive seeds.
-        let mut remaining = FxHashMap::default();
-        let mut parents: FxHashMap<_, Vec<_>> = FxHashMap::default();
-        let mut leaves = Vec::new();
-        for (parent, children) in &self.dependencies {
-            remaining.insert(parent.clone(), children.len());
-            if children.is_empty() {
-                leaves.push(parent.clone());
-            }
-            for child in children {
-                parents
-                    .entry(child.clone())
-                    .or_default()
-                    .push(parent.clone());
+    fn record_recipe(
+        &mut self,
+        table: &TableKey<'db>,
+        answer: &LogicalAnswerKey<'db>,
+        prerequisites: Vec<ProofNode<'db>>,
+    ) {
+        let origin = (!prerequisites.is_empty()).then(|| {
+            BranchOrigin::for_clause(&answer.origin)
+                .expect("clauses with prerequisites have dictionary branches")
+        });
+        self.recipes
+            .entry(ProofNode {
+                table: table.clone(),
+                answer: answer.clone(),
+            })
+            .or_default()
+            .insert(ProofRecipe {
+                origin,
+                prerequisites,
+            });
+    }
+
+    fn finish(self, fuel: &mut usize) -> Result<ProofPreference<'db>, ()> {
+        Ok(ProofPreference {
+            witnesses: self.finite_witnesses(fuel)?,
+        })
+    }
+
+    fn finite_witnesses(&self, fuel: &mut usize) -> Result<WitnessIndex<'db>, ()> {
+        let mut consumers: FxHashMap<_, FxHashSet<_>> = FxHashMap::default();
+        for (parent, recipes) in &self.recipes {
+            for recipe in recipes {
+                for child in &recipe.prerequisites {
+                    consumers
+                        .entry(child.clone())
+                        .or_default()
+                        .insert(parent.clone());
+                }
             }
         }
-        let mut preferred = FxHashMap::default();
-        while let Some(leaf) = leaves.pop() {
-            if let Some(answers) = self.answers.get(&leaf) {
-                let mut priorities: FxHashMap<_, u8> = FxHashMap::default();
-                for answer in answers.keys() {
-                    priorities
-                        .entry(answer.subst.clone())
-                        .and_modify(|priority| *priority = (*priority).min(answer.priority()))
-                        .or_insert_with(|| answer.priority());
+        let mut footprints: FxHashMap<ProofNode<'db>, Vec<Footprint<'db>>> = FxHashMap::default();
+        let mut pending = self.recipes.keys().cloned().collect::<VecDeque<_>>();
+        let mut queued = self.recipes.keys().cloned().collect::<FxHashSet<_>>();
+        while let Some(parent) = pending.pop_front() {
+            queued.remove(&parent);
+            let mut changed = false;
+            for recipe in &self.recipes[&parent] {
+                spend_analysis_step(fuel)?;
+                let mut alternatives =
+                    vec![recipe.origin.iter().cloned().collect::<Footprint<'db>>()];
+                for child in &recipe.prerequisites {
+                    let Some(children) = footprints.get(child) else {
+                        alternatives.clear();
+                        break;
+                    };
+                    let mut combined = Vec::new();
+                    for prefix in &alternatives {
+                        for child in children {
+                            spend_analysis_step(fuel)?;
+                            let mut origins = prefix.clone();
+                            origins.extend(child.iter().cloned());
+                            insert_minimal_footprint(&mut combined, origins);
+                        }
+                    }
+                    alternatives = combined;
                 }
-                preferred.insert(leaf.clone(), priorities);
+                let witnesses = footprints.entry(parent.clone()).or_default();
+                for alternative in alternatives {
+                    changed |= insert_minimal_footprint(witnesses, alternative);
+                }
             }
-            for parent in parents.get(&leaf).into_iter().flatten() {
-                let count = remaining.get_mut(parent).expect("known parent goal");
-                *count -= 1;
-                if *count == 0 {
-                    leaves.push(parent.clone());
+            if changed {
+                for consumer in consumers.get(&parent).into_iter().flatten() {
+                    if queued.insert(consumer.clone()) {
+                        pending.push_back(consumer.clone());
+                    }
                 }
             }
         }
-        preferred
+        // Leaf recipes seed a least fixed point of finite derivations. A
+        // repeated dictionary root in a finite tree can be replaced by its
+        // descendant proof, producing a simple witness with a subset of the
+        // origins. These footprints therefore safely over-approximate it.
+        let mut witnesses: WitnessIndex<'db> = FxHashMap::default();
+        for (node, alternatives) in footprints {
+            let destination = witnesses
+                .entry(node.table)
+                .or_default()
+                .entry(node.answer.subst)
+                .or_default();
+            destination.extend(alternatives.into_iter().map(|origins| ProofWitness {
+                priority: evidence::clause_priority(&node.answer.origin, node.answer.local_given),
+                origins,
+            }));
+        }
+        Ok(witnesses)
+    }
+}
+
+fn insert_minimal_footprint<'db>(
+    alternatives: &mut Vec<Footprint<'db>>,
+    footprint: Footprint<'db>,
+) -> bool {
+    if alternatives.iter().any(|old| old.is_subset(&footprint)) {
+        return false;
+    }
+    alternatives.retain(|old| !footprint.is_subset(old));
+    alternatives.push(footprint);
+    true
+}
+
+fn spend_analysis_step(fuel: &mut usize) -> Result<(), ()> {
+    *fuel = fuel.checked_sub(1).ok_or(())?;
+    Ok(())
+}
+
+impl<'db> ProofPreference<'db> {
+    fn dominates(
+        &self,
+        goal: &TableKey<'db>,
+        answer: &Answer<'db>,
+        priority: u8,
+        context: &ProofContext<'db>,
+    ) -> bool {
+        let Some(witnesses) = self
+            .witnesses
+            .get(goal)
+            .and_then(|answers| answers.get(&answer.candidate.subst))
+        else {
+            return false;
+        };
+        witnesses.iter().any(|witness| {
+            witness.priority < priority && witness.origins.is_disjoint(&context.origins)
+        })
     }
 }
 
@@ -464,6 +670,7 @@ pub(super) struct SolverGoal<'db> {
     pred: Pred<'db>,
     allowed_vars: FxHashSet<u32>,
     rigid_vars: Vec<RigidVar>,
+    context: ProofContext<'db>,
 }
 
 /// A partially solved clause retained by `tablesolve` while it waits for the
@@ -473,10 +680,12 @@ pub(super) struct ConsumerState<'db> {
     clause: InstantiatedClause<'db>,
     subst: MatchSubst<'db>,
     sub_evidence: Vec<Evidence<'db>>,
+    prerequisites: Vec<ProofNode<'db>>,
     next_condition: usize,
     condition_vars: FxHashSet<u32>,
     /// Stable rigid origins mapped into the parent subgoal's coordinates.
     rigid_vars: Vec<RigidVar>,
+    context: ProofContext<'db>,
 }
 
 pub(super) struct EngineResult<'db> {
