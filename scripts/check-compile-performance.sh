@@ -55,6 +55,47 @@ instance_heavy="$work_dir/instance-heavy.sol"
   echo 'function main() returns (word) { return 0; }'
 } > "$instance_heavy"
 
+# A nested ADT has a linear-sized runtime representation. Check both expression
+# inference and backend layout traversal, keeping a runtime value through the
+# constructors and matches so the workload is not just dead constant data.
+python3 - "$work_dir" <<'PY'
+from pathlib import Path
+import sys
+
+directory = Path(sys.argv[1])
+
+def box_type(level):
+    return "Box<" * level + "word" + ">" * level
+
+for style, depth in [("sequential", 32), ("inline", 24)]:
+    # The inline case remains below the existing expression-depth limit.
+    unwrap = [
+        "enum Box<a> { Box(a) }",
+        f"function unwrap(value: {box_type(depth)}) returns(word) {{",
+    ]
+    for level in range(depth, 0, -1):
+        value = "value" if level == depth else f"value{level}"
+        unwrap.append(f"match ({value}) {{ case (Box(value{level - 1})) {{")
+    unwrap.extend(["return value0;", "}}" * depth, "}"])
+
+    lines = unwrap + [
+        "function main() returns(word) {",
+        "let value: word; assembly { value := calldataload(0) }",
+    ]
+    if style == "sequential":
+        lines.append("let value0: word = value;")
+        for level in range(1, depth + 1):
+            lines.append(
+                f"let value{level}: {box_type(level)} = Box(value{level - 1});"
+            )
+        lines.append(f"return unwrap(value{depth});")
+    else:
+        value = "Box(" * depth + "value" + ")" * depth
+        lines.append(f"return unwrap({value});")
+    lines.append("}")
+    (directory / f"nested-adt-{style}.sol").write_text("\n".join(lines) + "\n")
+PY
+
 run_with_deadline() {
   local name="$1"
   shift
@@ -102,6 +143,15 @@ run_with_deadline \
   "${common_args[@]}" \
   "--emit-hull=$work_dir/instance-heavy.hull" \
   "$instance_heavy"
+
+for style in sequential inline; do
+  run_with_deadline \
+    "nested-adt-$style" \
+    "${common_args[@]}" \
+    "--emit-yul=$work_dir/nested-adt-$style.yul" \
+    "--emit-sonatina=$work_dir/nested-adt-$style.snt" \
+    "$work_dir/nested-adt-$style.sol"
+done
 
 run_with_deadline \
   incremental-diagnostics \

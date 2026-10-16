@@ -50,8 +50,7 @@ impl<'db> Emitter<'db> {
                 ctor: TyCtor::User(user),
                 args,
             } if matches!(user.kind, UserTyCtorKind::Adt) => {
-                let layout = self.adt_layout(user.def, args, span)?;
-                Some(layout.target)
+                self.adt_representation(user.def, args, span)
             }
             SemTyKind::Function { params, ret } => Some(Ty::function(
                 span,
@@ -165,13 +164,38 @@ impl<'db> Emitter<'db> {
                     fields: sem_product_fields_exact(self.db, product, arm.field_count as usize)?,
                 })
             })
-            .collect::<Option<Vec<_>>>()?;
+            .collect::<Option<Vec<_>>>();
         self.layout_stack.pop();
         Some(AdtLayout {
             name,
             target,
-            ctors,
+            ctors: ctors?,
         })
+    }
+
+    /// Lower only the runtime representation of an ADT. Constructor payload
+    /// layouts belong to constructor and match emission: recursively building
+    /// them here would lower each nested field both through the representation
+    /// and through its constructor, making even single-field nesting exponential.
+    fn adt_representation(
+        &mut self,
+        def: DefId<'db>,
+        args: &[SemTy<'db>],
+        span: Span<'db>,
+    ) -> Option<Ty<'db>> {
+        let name = def.name(self.db).unwrap_or_else(|| "Adt".to_owned());
+        let layout_key = (def, args.to_vec());
+        if self.layout_stack.contains(&layout_key) {
+            return Some(Ty::named_ref(span, name));
+        }
+        let module = parse_file_to_hir(self.db, def.file(self.db)).module(self.db);
+        let adt = find_adt(self.db, module, def)?;
+        let plan = hir_ty::derived_generic_plan(self.db, module, adt)?;
+        self.layout_stack.push(layout_key);
+        let rep = subst_sem_ty(self.db, plan.rep, args);
+        let inner = self.hull_ty(rep, span);
+        self.layout_stack.pop();
+        Some(Ty::named(span, name, inner))
     }
 }
 
