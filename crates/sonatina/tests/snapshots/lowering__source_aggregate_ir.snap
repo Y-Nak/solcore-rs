@@ -42,9 +42,8 @@ func private %solcore_fn_12_object0_2einit_39_main_5fAggregateContract_5f_5fstar
 
     block4:
         v24.i256 = sym_size &AggregateContract;
-        v25.i256 = sym_size &AggregateContract;
-        v26.i256 = sym_addr &AggregateContract;
-        evm_code_copy 0.i256 v26 v25;
+        v25.i256 = sym_addr &AggregateContract;
+        evm_code_copy 0.i256 v25 v24;
         evm_return 0.i256 v24;
 }
 

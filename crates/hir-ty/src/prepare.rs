@@ -892,13 +892,19 @@ fn return_runtime_object_yul<'db>(
 ) -> Vec<YulStmt<'db>> {
     let runtime = yul_string(span, contract_name);
     let size = yul_call(db, span, "datasize", vec![runtime.clone()]);
-    let offset = yul_call(db, span, "dataoffset", vec![runtime.clone()]);
-    let runtime_size = yul_call(db, span, "datasize", vec![runtime]);
+    let offset = yul_call(db, span, "dataoffset", vec![runtime]);
     let copy = yul_call(
         db,
         span,
         "codecopy",
-        vec![yul_number(span, "0"), offset, runtime_size],
+        // Copy and return exactly the same computed extent. Besides avoiding
+        // a redundant linker query, this keeps the terminal payload's memory
+        // range explicit for backend spill planning.
+        vec![
+            yul_number(span, "0"),
+            offset,
+            yul_ident_expr(db, span, "size"),
+        ],
     );
     let ret = yul_call(
         db,

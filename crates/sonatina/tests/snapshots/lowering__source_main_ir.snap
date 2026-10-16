@@ -36,9 +36,8 @@ func private %solcore_fn_12_object0_2einit_32_main_5fSimpleMain_5f_5fstart_5fd6d
 
     block4:
         v24.i256 = sym_size &SimpleMain;
-        v25.i256 = sym_size &SimpleMain;
-        v26.i256 = sym_addr &SimpleMain;
-        evm_code_copy 0.i256 v26 v25;
+        v25.i256 = sym_addr &SimpleMain;
+        evm_code_copy 0.i256 v25 v24;
         evm_return 0.i256 v24;
 }
 

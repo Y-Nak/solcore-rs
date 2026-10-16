@@ -617,7 +617,9 @@ case Choice.Right(x) { return x; }}
 
 #[test]
 fn contract_object_data_symbols_and_inline_evm_lower_to_verified_ir() {
-    let (_, ir) = lower_source(
+    use sonatina_codegen::{EvmCompile, OptLevel};
+
+    let (module, ir) = lower_source(
         r#"
 contract MemoryContract {
   function main() returns (word) {
@@ -639,6 +641,13 @@ contract MemoryContract {
     assert!(ir.contains("sym_size &MemoryContract"), "{ir}");
     assert!(ir.contains("evm_mstore "), "{ir}");
     assert!(ir.contains("evm_mload "), "{ir}");
+
+    // Deployment copies and returns one dynamic runtime payload. Check the
+    // backend's memory validation even when the EVM execution suite is disabled.
+    EvmCompile::new(module)
+        .with_opt_level(OptLevel::O0)
+        .compile()
+        .expect("compile generated runtime deployment");
 }
 
 #[test]

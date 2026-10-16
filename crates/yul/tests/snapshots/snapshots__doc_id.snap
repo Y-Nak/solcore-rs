@@ -14,7 +14,7 @@ object "IdDocDeploy" {
         revert(28, 4)
       }
       let asm$size_0 := datasize("IdDoc")
-      codecopy(0, dataoffset("IdDoc"), datasize("IdDoc"))
+      codecopy(0, dataoffset("IdDoc"), asm$size_0)
       return(0, asm$size_0)
     }
     usr$doc_id_IdDoc__start_def83aaf8()

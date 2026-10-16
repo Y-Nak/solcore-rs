@@ -14,7 +14,7 @@ object "DataTypeStorageFullDeploy" {
         revert(28, 4)
       }
       let asm$size_0 := datasize("DataTypeStorageFull")
-      codecopy(0, dataoffset("DataTypeStorageFull"), datasize("DataTypeStorageFull"))
+      codecopy(0, dataoffset("DataTypeStorageFull"), asm$size_0)
       return(0, asm$size_0)
     }
     usr$main_DataTypeStorageFull__start_d1108d95f()

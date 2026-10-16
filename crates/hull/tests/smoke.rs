@@ -396,7 +396,7 @@ fn deployment_objects_copy_runtime_and_guard_constructor_value() {
     assert!(hull.contains("object \"CDeploy\""), "{hull}");
     assert!(hull.contains("object \"C\""), "{hull}");
     assert!(
-        hull.contains("codecopy(0, dataoffset(\"C\"), datasize(\"C\"))"),
+        hull.contains("codecopy(0, dataoffset(\"C\"), size)"),
         "{hull}"
     );
 
@@ -422,7 +422,7 @@ fn deployment_objects_copy_runtime_and_guard_constructor_value() {
     assert!(outer.contains("0xb5988ea3"), "{hull}");
     assert!(outer.matches("_start").count() >= 2, "{hull}");
     assert!(
-        outer.contains("codecopy(0, dataoffset(\"NonPayableCtor\"), datasize(\"NonPayableCtor\"))"),
+        outer.contains("codecopy(0, dataoffset(\"NonPayableCtor\"), size)"),
         "{hull}"
     );
     assert!(outer.contains("return(0, size)"), "{hull}");
@@ -469,7 +469,7 @@ contract C {
     assert!(outer.contains("_start"), "{hull}");
     assert!(outer.contains("init_"), "{hull}");
     assert!(
-        outer.contains("codecopy(0, dataoffset(\"C\"), datasize(\"C\"))"),
+        outer.contains("codecopy(0, dataoffset(\"C\"), size)"),
         "{hull}"
     );
     assert!(!outer.contains("constructor_arg"), "{hull}");

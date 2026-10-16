@@ -1119,17 +1119,11 @@ function allocate_zeroed_memory(size: word) returns (word) {
     return ptr;
 }
 
-// Clears a memory area.
+// Clears exactly the requested memory range, including an unaligned tail.
 function zeroize_memory(ptr: word, len: word) returns (()) {
-    let end_ptr = ptr + len;
-
-    // Zero out 32-byte words.
-    for (let i = 0; i < len / 32; i += 1, ptr += 32) {
-        mstore(ptr, 0);
-    }
-
-    // Zero out trailing bytes. We rely on the zero-slot (0x60-0x7f).
-    mcopy(ptr, 0x60, end_ptr - ptr);
+    // Calldata reads beyond its end are zero-filled. This avoids reading a
+    // fixed zero slot or touching bytes outside the requested destination.
+    calldatacopy(ptr, calldatasize(), len);
 }
 
 // --- Indexable Types ---

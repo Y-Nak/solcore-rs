@@ -14,7 +14,7 @@ object "DispatchBasicShapeDeploy" {
         revert(28, 4)
       }
       let asm$size_0 := datasize("DispatchBasicShape")
-      codecopy(0, dataoffset("DispatchBasicShape"), datasize("DispatchBasicShape"))
+      codecopy(0, dataoffset("DispatchBasicShape"), asm$size_0)
       return(0, asm$size_0)
     }
     usr$dispatch_basic_shape_DispatchBasicShape__start_d214b9efd()
