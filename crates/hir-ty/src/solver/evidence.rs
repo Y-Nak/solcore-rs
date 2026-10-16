@@ -218,10 +218,17 @@ fn evidence_preference<'db>(
 }
 
 fn answer_priority<'db>(db: &'db dyn Db, env: TraitEnvId<'db>, answer: &Answer<'db>) -> u8 {
-    if evidence_root_is_local_given(db, env, &answer.candidate.evidence) {
+    clause_priority(
+        &answer.origin,
+        evidence_root_is_local_given(db, env, &answer.candidate.evidence),
+    )
+}
+
+pub(super) fn clause_priority(origin: &ClauseOrigin<'_>, local_given: bool) -> u8 {
+    if local_given {
         return 0;
     }
-    match &answer.origin {
+    match origin {
         ClauseOrigin::Instance { default: true, .. } => 3,
         ClauseOrigin::Superclass(_) => 2,
         ClauseOrigin::Instance { default: false, .. }
@@ -236,10 +243,14 @@ fn evidence_root_is_local_given<'db>(
     env: TraitEnvId<'db>,
     evidence: &Evidence<'db>,
 ) -> bool {
+    evidence_root_given(evidence).is_some_and(|pred| env.local_givens(db).contains(&pred))
+}
+
+pub(super) fn evidence_root_given<'db>(evidence: &Evidence<'db>) -> Option<Pred<'db>> {
     match evidence {
-        Evidence::Builtin { pred } => env.local_givens(db).contains(pred),
-        Evidence::Superclass { child, .. } => evidence_root_is_local_given(db, env, child),
-        Evidence::Instance { .. } | Evidence::Derived { .. } => false,
+        Evidence::Builtin { pred } => Some(*pred),
+        Evidence::Superclass { child, .. } => evidence_root_given(child),
+        Evidence::Instance { .. } | Evidence::Derived { .. } => None,
     }
 }
 

@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_abi_evidence_budget/main.sol
 ---
-error[SC0209]: cannot solve trait constraint `ABIDecoder<pair<Level3<Box<Wrap<Wrap<Wrap<uint256>>>>>, Level3<Wrap<Wrap<Wrap<Wrap<uint256>>>>>>, MemoryWordReader>: ABIDecode<pair<Level3<Box<Wrap<Wrap<Wrap<uint256>>>>>, Level3<Wrap<Wrap<Wrap<Wrap<uint256>>>>>>>`: solver exceeded its iteration bound
+error[SC0209]: cannot solve trait constraint `Level2<Wrap<Wrap<Wrap<Wrap<Box<uint256>>>>>>: ABIAttribs`: solver exceeded its iteration bound
   --> /main/main.sol:77:5
    |
 76 |   contract C {

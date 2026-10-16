@@ -12,7 +12,14 @@
 //! detection. Local givens, instances, superclass projections, and fallback
 //! defaults retain their existing resolution order.
 //!
-//! Because every subgoal is solved once and shared, diamond-shaped constraint
+//! Logical discovery shares answers by substitution, clause origin, and local
+//! given provenance. If different dictionaries share a logical answer, a
+//! second pass retains their complete evidence while pruning lower-priority
+//! choices in acyclic dependency regions. Cyclic regions keep their finite
+//! seeds, even when a preferred recursive proof depends on one. Both passes
+//! share the same work budget.
+//!
+//! Because repeated subgoals are shared within each pass, diamond-shaped constraint
 //! graphs are resolved without the exponential blow-up of naive backtracking,
 //! and cyclic instance dependencies saturate instead of diverging: re-entering
 //! an in-progress subgoal only registers another consumer on its existing table

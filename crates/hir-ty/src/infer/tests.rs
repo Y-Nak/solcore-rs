@@ -4291,3 +4291,113 @@ fn unit_arguments_support_nullary_and_unary_function_types() {
         assert!(matches!(solution, Solution::Unique { .. }), "{solution:?}");
     }
 }
+
+#[test]
+fn tabled_solver_prunes_dominated_dictionaries_before_expanding_parents() {
+    for depth in [12, 24] {
+        for late_preferred in [false, true] {
+            for ambiguous_leaf in [false, true] {
+                let db = TestDb::default();
+                let context = if late_preferred { "where a: Ready" } else { "" };
+                let duplicate = if ambiguous_leaf {
+                    "impl C<word> {}"
+                } else {
+                    ""
+                };
+                let source = format!(
+                    r#"
+trait C<a> {{}}
+trait Sub<a> where a: C {{}}
+trait Ready<a> {{}}
+trait Middle<a> {{}}
+trait Seed<a> {{}}
+impl<a> C<a> {context} {{}}
+impl<a> Sub<a> {{}}
+impl<a> Ready<a> where a: Middle {{}}
+impl<a> Middle<a> where a: Seed {{}}
+impl<a> Seed<a> {{}}
+{duplicate}
+trait D<a> {{}}
+enum Box<a> {{ Box(a) }}
+impl D<word> {{}}
+impl<a> D<Box<a>> where a: D, a: C {{}}
+"#
+                );
+                let module = parse_module(&db, &source);
+                let resolution = hir_nameres::resolve_module(&db, module);
+                let env = trait_env(&db, module, &resolution);
+                let ty =
+                    (0..depth).fold(Ty::word(&db), |ty, _| adt_ty(&db, module, "Box", vec![ty]));
+                let report =
+                    solve_class_report(&db, env, class_id(&db, module, "D"), ty, Vec::new());
+                assert!(!report.exhausted, "{report:?}");
+                if ambiguous_leaf {
+                    let Solution::Ambiguous { candidates } = &report.solution else {
+                        panic!("{report:?}");
+                    };
+                    assert_eq!(candidates.len(), 2, "{report:?}");
+                    assert_ne!(candidates[0].evidence, candidates[1].evidence);
+                } else {
+                    assert!(
+                        matches!(report.solution, Solution::Unique { .. }),
+                        "{report:?}"
+                    );
+                }
+                // Both logical discovery and complete evidence construction
+                // must scale with the chain, not its 2^depth proof choices.
+                assert!(report.stats.answers_found < 20 * depth + 20, "{report:?}");
+                assert!(report.stats.generator_steps < 20 * depth + 20, "{report:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn tabled_solver_preserves_lower_priority_seeds_in_preference_cycles() {
+    let implementations = [
+        "impl<a> C<a> where a: D {}",
+        "impl<a> D<a> where a: C {}",
+        "impl<a> Sub<a> {}",
+    ];
+    for reversed in [false, true] {
+        let db = TestDb::default();
+        let mut implementations = implementations;
+        if reversed {
+            implementations.reverse();
+        }
+        let source = format!(
+            "trait C<a> {{}} trait D<a> {{}} trait Sub<a> where a:C {{}} trait Top<a> {{}} {} impl<a> Top<a> where a:C {{}}",
+            implementations.join(" ")
+        );
+        let module = parse_module(&db, &source);
+        let resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &resolution);
+        let report = solve_class_report(
+            &db,
+            env,
+            class_id(&db, module, "Top"),
+            Ty::word(&db),
+            Vec::new(),
+        );
+        assert!(!report.exhausted, "{report:?}");
+        let Solution::Unique { mut evidence, .. } = report.solution else {
+            panic!("{report:?}");
+        };
+        // Top -> direct C -> direct D -> superclass C -> Sub. Dropping the
+        // superclass C seed because direct C exists would remove every proof.
+        for _ in 0..3 {
+            let Evidence::Instance {
+                mut sub_evidence, ..
+            } = evidence
+            else {
+                panic!("expected direct instance: {evidence:?}");
+            };
+            assert_eq!(sub_evidence.len(), 1);
+            evidence = sub_evidence.pop().unwrap();
+        }
+        assert!(
+            matches!(evidence, Evidence::Superclass { .. }),
+            "{evidence:?}"
+        );
+    }
+}

@@ -24,6 +24,8 @@ pub(super) struct TabledEngine<'db> {
     local_context_vars: Vec<RigidVar>,
     /// Work-item budget retained for compatibility with `SolverReport`.
     fuel: usize,
+    discovery: Option<ProofDiscovery<'db>>,
+    preferred: FxHashMap<TableKey<'db>, FxHashMap<Substitution<'db>, u8>>,
 }
 
 impl<'db> TabledEngine<'db> {
@@ -43,12 +45,38 @@ impl<'db> TabledEngine<'db> {
             env,
             local_context_vars,
             fuel,
+            discovery: Some(ProofDiscovery::default()),
+            preferred: FxHashMap::default(),
         }
     }
 
     /// Resolve `goal` through `tablesolve`, mapping the generic engine report
     /// back to the solver's existing result and counter types.
     pub(super) fn run(
+        &mut self,
+        goal: Pred<'db>,
+        allowed_goal_vars: &FxHashSet<u32>,
+    ) -> EngineResult<'db> {
+        // Discover logical answers without multiplying their dictionary
+        // derivations. If no different dictionaries share a logical answer,
+        // this first pass already contains every complete proof.
+        let logical = self.run_once(goal, allowed_goal_vars);
+        let discovery = self.discovery.take().expect("initial discovery pass");
+        if !discovery.collapsed || logical.exhausted {
+            return logical;
+        }
+
+        // Only saturated, acyclic dependency regions permit pruning by a
+        // subgoal's best priority. A preferred recursive proof can need a
+        // less-preferred seed, so cyclic regions retain all alternatives.
+        self.preferred = discovery.preferred_acyclic_answers();
+        self.fuel = logical.fuel_remaining;
+        let mut complete = self.run_once(goal, allowed_goal_vars);
+        complete.stats.add(logical.stats);
+        complete
+    }
+
+    fn run_once(
         &mut self,
         goal: Pred<'db>,
         allowed_goal_vars: &FxHashSet<u32>,
@@ -151,7 +179,11 @@ impl<'db> TabledEngine<'db> {
         })
     }
 
-    fn suspend(&self, state: ConsumerState<'db>) -> ContextTransition<Self> {
+    fn suspend(
+        &mut self,
+        parent: &TableKey<'db>,
+        state: ConsumerState<'db>,
+    ) -> ContextTransition<Self> {
         let condition = state
             .subst
             .apply_pred(self.db, state.clause.conditions[state.next_condition]);
@@ -160,11 +192,20 @@ impl<'db> TabledEngine<'db> {
             allowed_vars: state.condition_vars.clone(),
             rigid_vars: state.rigid_vars.clone(),
         };
+        if let Some(discovery) = &mut self.discovery {
+            let (child, _) =
+                canonicalize_goal(self.db, goal.pred, &goal.allowed_vars, &goal.rigid_vars);
+            discovery
+                .dependencies
+                .entry(parent.clone())
+                .or_default()
+                .insert(child);
+        }
         Transition::Suspend { goal, state }
     }
 
     fn answer(
-        &self,
+        &mut self,
         key: &TableKey<'db>,
         clause: &InstantiatedClause<'db>,
         subst: MatchSubst<'db>,
@@ -175,16 +216,57 @@ impl<'db> TabledEngine<'db> {
         // Recursive clauses can wrap a completed proof indefinitely. Only
         // simple dictionary derivations are useful: a repeated dictionary on a
         // branch can be replaced by the descendant proof of that dictionary.
-        if evidence.repeats_root() {
+        let repeats_root = evidence.repeats_root();
+        if repeats_root && self.discovery.is_none() {
             return Transition::Reject;
         }
-        Transition::Answer(Answer {
+        let answer = Answer {
             candidate: Candidate {
                 subst: subst.snapshot_for_vars(self.db, key.flex_count),
                 evidence,
             },
             origin: clause.origin.clone(),
-        })
+        };
+        let logical_key = self.logical_answer_key(key, &answer);
+        if let Some(discovery) = &mut self.discovery {
+            // Discovery depends only on substitutions and provenance. A
+            // repeated witness still proves logical reachability, but needs
+            // the complete pass to enumerate its finite dictionary choices.
+            discovery.collapsed |= repeats_root;
+            let answers = discovery.answers.entry(key.clone()).or_default();
+            if let Some(previous) = answers.get(&logical_key) {
+                discovery.collapsed |= previous != &answer;
+            } else {
+                answers.insert(logical_key, answer.clone());
+            }
+        } else if self
+            .preferred
+            .get(key)
+            .and_then(|priorities| priorities.get(&answer.candidate.subst))
+            .is_some_and(|priority| *priority < logical_key.priority())
+        {
+            return Transition::Reject;
+        }
+        Transition::Answer(answer)
+    }
+
+    fn logical_answer_key(
+        &self,
+        key: &TableKey<'db>,
+        answer: &Answer<'db>,
+    ) -> LogicalAnswerKey<'db> {
+        let local_given =
+            evidence::evidence_root_given(&answer.candidate.evidence).is_some_and(|pred| {
+                self.env
+                    .local_givens(self.db)
+                    .iter()
+                    .any(|given| canonicalize_local_given(self.db, *given, key) == pred)
+            });
+        LogicalAnswerKey {
+            subst: answer.candidate.subst.clone(),
+            origin: answer.origin.clone(),
+            local_given,
+        }
     }
 }
 
@@ -193,7 +275,7 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
     type Key = TableKey<'db>;
     type Clause = ProgramClause<'db>;
     type Answer = Answer<'db>;
-    type AnswerKey = Answer<'db>;
+    type AnswerKey = AnswerKey<'db>;
     type Output = Answer<'db>;
     type State = ConsumerState<'db>;
     type Rebase = GoalRenaming;
@@ -213,6 +295,9 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
         &mut self,
         key: &Self::Key,
     ) -> ClausesResult<Self::Clause, Self::StopReason, Self::Error> {
+        if let Some(discovery) = &mut self.discovery {
+            discovery.dependencies.entry(key.clone()).or_default();
+        }
         Ok(self.applicable_clauses(key).into())
     }
 
@@ -240,14 +325,17 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
             return Ok(self.answer(key, &instantiated, subst, Vec::new()));
         }
 
-        Ok(self.suspend(ConsumerState {
-            clause: instantiated,
-            subst,
-            sub_evidence: Vec::new(),
-            next_condition: 0,
-            condition_vars,
-            rigid_vars: key.rigid_vars().to_vec(),
-        }))
+        Ok(self.suspend(
+            key,
+            ConsumerState {
+                clause: instantiated,
+                subst,
+                sub_evidence: Vec::new(),
+                next_condition: 0,
+                condition_vars,
+                rigid_vars: key.rigid_vars().to_vec(),
+            },
+        ))
     }
 
     fn resume(
@@ -273,7 +361,7 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
         state.subst = combined_subst;
         state.next_condition += 1;
         if state.next_condition < state.clause.conditions.len() {
-            Ok(self.suspend(state))
+            Ok(self.suspend(parent, state))
         } else {
             Ok(self.answer(parent, &state.clause, state.subst, state.sub_evidence))
         }
@@ -287,10 +375,87 @@ impl<'db> ResolutionContext for TabledEngine<'db> {
         Ok(actualize_answer(self.db, answer, rebase))
     }
 
-    fn answer_key(&self, _key: &Self::Key, answer: &Self::Answer) -> Self::AnswerKey {
-        // A dictionary includes its prerequisite dictionaries. Two applications
-        // of the same clause may therefore select different implementations.
-        answer.clone()
+    fn answer_key(&self, key: &Self::Key, answer: &Self::Answer) -> Self::AnswerKey {
+        if self.discovery.is_some() {
+            AnswerKey::Logical(self.logical_answer_key(key, answer))
+        } else {
+            // Equal-priority dictionaries include all prerequisite evidence.
+            AnswerKey::Complete(answer.clone())
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) enum AnswerKey<'db> {
+    Logical(LogicalAnswerKey<'db>),
+    Complete(Answer<'db>),
+}
+
+/// Identity sufficient for logical reachability and root priority, but not
+/// for the final choice of a dictionary. Local-given provenance matters for
+/// superclass projections, which otherwise have the same clause origin.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) struct LogicalAnswerKey<'db> {
+    subst: Substitution<'db>,
+    origin: ClauseOrigin<'db>,
+    local_given: bool,
+}
+
+impl LogicalAnswerKey<'_> {
+    fn priority(&self) -> u8 {
+        evidence::clause_priority(&self.origin, self.local_given)
+    }
+}
+
+#[derive(Default)]
+struct ProofDiscovery<'db> {
+    answers: FxHashMap<TableKey<'db>, FxHashMap<LogicalAnswerKey<'db>, Answer<'db>>>,
+    dependencies: FxHashMap<TableKey<'db>, FxHashSet<TableKey<'db>>>,
+    collapsed: bool,
+}
+
+impl<'db> ProofDiscovery<'db> {
+    fn preferred_acyclic_answers(
+        self,
+    ) -> FxHashMap<TableKey<'db>, FxHashMap<Substitution<'db>, u8>> {
+        // Remove leaves upwards. Remaining goals are in, or depend on, a
+        // cycle; retaining those proofs preserves finite recursive seeds.
+        let mut remaining = FxHashMap::default();
+        let mut parents: FxHashMap<_, Vec<_>> = FxHashMap::default();
+        let mut leaves = Vec::new();
+        for (parent, children) in &self.dependencies {
+            remaining.insert(parent.clone(), children.len());
+            if children.is_empty() {
+                leaves.push(parent.clone());
+            }
+            for child in children {
+                parents
+                    .entry(child.clone())
+                    .or_default()
+                    .push(parent.clone());
+            }
+        }
+        let mut preferred = FxHashMap::default();
+        while let Some(leaf) = leaves.pop() {
+            if let Some(answers) = self.answers.get(&leaf) {
+                let mut priorities: FxHashMap<_, u8> = FxHashMap::default();
+                for answer in answers.keys() {
+                    priorities
+                        .entry(answer.subst.clone())
+                        .and_modify(|priority| *priority = (*priority).min(answer.priority()))
+                        .or_insert_with(|| answer.priority());
+                }
+                preferred.insert(leaf.clone(), priorities);
+            }
+            for parent in parents.get(&leaf).into_iter().flatten() {
+                let count = remaining.get_mut(parent).expect("known parent goal");
+                *count -= 1;
+                if *count == 0 {
+                    leaves.push(parent.clone());
+                }
+            }
+        }
+        preferred
     }
 }
 
