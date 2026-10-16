@@ -6382,6 +6382,28 @@ fn function_values_preserve_module_local_constraint_only_type_arguments() {
 }
 
 #[test]
+fn operator_functions_preserve_all_module_local_dictionaries() {
+    // Logical syntax combines bool comparison results; named and/or calls
+    // separately retain their ordinary function dictionaries. Both import
+    // orders must preserve all selected constraints and phantom type arguments.
+    for entry in ["main.sol", "reversed.sol"] {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/operator_evidence")
+            .join(entry);
+        let (db, file, output) = specialize_fixture_with_db(&fixture);
+        let module_id = nameres::module_id_for_source_file(db, file).unwrap();
+        let frontend = hir_ty::collect_frontend_diagnostics(db, module_id);
+        assert!(frontend.is_empty(), "{entry}: frontend {frontend:#?}");
+        assert!(
+            output.diagnostics.is_empty(),
+            "{entry}: {:?}",
+            output.diagnostics
+        );
+        assert_eq!(main_return_number(&output).as_deref(), Some("21"), "{entry}");
+    }
+}
+
+#[test]
 fn public_dispatch_accepts_nine_parameter_functions() {
     let (db, file, output) = specialize_src_with_std_and_db(
         r#"

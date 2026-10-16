@@ -173,7 +173,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     def.name(self.driver.db)
                         .unwrap_or_else(|| format!("{:?}", def.kind(self.driver.db)))
                 } else {
-                    self.specialize_direct_function(def, callee_ty, span)
+                    self.specialize_function_call(def, expr_id, expr_id, callee_ty, span)
                 };
                 (name, origin)
             }
@@ -241,7 +241,13 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     def.name(self.driver.db)
                         .unwrap_or_else(|| format!("{:?}", def.kind(self.driver.db)))
                 } else {
-                    self.specialize_direct_function(def, callee_ty, expr.span)
+                    self.specialize_function_call(
+                        def,
+                        expr.expr_id,
+                        expr.expr_id,
+                        callee_ty,
+                        expr.span,
+                    )
                 };
                 Some(MonoExprKind::Call {
                     callee: MonoId {
@@ -368,8 +374,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     def.name(self.driver.db)
                         .unwrap_or_else(|| format!("{:?}", def.kind(self.driver.db)))
                 } else {
-                    let evidence = self.call_evidence_bindings(call_expr, callee);
-                    self.specialize_function_with_evidence(def, callee_ty, span, evidence, None)
+                    self.specialize_function_call(def, call_expr, callee, callee_ty, span)
                 };
                 Some(MonoExprKind::Call {
                     callee: MonoId {
@@ -733,13 +738,19 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         })
     }
 
-    pub(super) fn specialize_direct_function(
+    fn specialize_function_call(
         &mut self,
         def: DefId<'db>,
+        call_expr: Id<Expr<'db>>,
+        callee_expr: Id<Expr<'db>>,
         callee_ty: Ty<'db>,
         span: Span<'db>,
     ) -> String {
-        self.specialize_function_with_evidence(def, callee_ty, span, Vec::new(), None)
+        // Operators and explicit calls share the same inference call-site
+        // evidence. Keeping both on this path preserves every constraint,
+        // including parameters absent from the runtime function type.
+        let evidence = self.call_evidence_bindings(call_expr, callee_expr);
+        self.specialize_function_with_evidence(def, callee_ty, span, evidence, None)
     }
 
     pub(super) fn specialize_function_value(
