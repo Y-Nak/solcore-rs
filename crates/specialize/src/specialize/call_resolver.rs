@@ -742,6 +742,20 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         self.specialize_function_with_evidence(def, callee_ty, span, Vec::new(), None)
     }
 
+    pub(super) fn specialize_function_value(
+        &mut self,
+        def: DefId<'db>,
+        expr: Id<Expr<'db>>,
+        callee_ty: Ty<'db>,
+        span: Span<'db>,
+    ) -> String {
+        // Function values instantiate their constraints at the reference, just
+        // like direct calls do at the callee. Their runtime function type can
+        // omit constraint-only binders, so retain the inferred dictionaries.
+        let evidence = self.function_value_evidence_bindings(expr, def);
+        self.specialize_function_with_evidence(def, callee_ty, span, evidence, None)
+    }
+
     pub(super) fn specialize_synthetic_std_function(
         &mut self,
         def: DefId<'db>,

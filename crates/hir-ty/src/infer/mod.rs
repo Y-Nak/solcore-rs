@@ -241,6 +241,15 @@ pub enum ObligationSource<'db> {
     },
     /// Obligation instantiated from a scheme.
     Scheme,
+    /// Obligation instantiated from a named function used as a value.
+    FunctionValue {
+        /// Body containing the function expression.
+        body: FuncBody<'db>,
+        /// Expression that resolved to the function.
+        expr: Id<Expr<'db>>,
+        /// Function whose scheme was instantiated.
+        function: DefId<'db>,
+    },
     /// Obligation instantiated while typing a call callee.
     CallSite {
         /// Body containing the call.

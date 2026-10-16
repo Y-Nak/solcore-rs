@@ -479,6 +479,7 @@ impl<'db> InferCtx<'db> {
         match source {
             ObligationSource::IntegerLiteral { body, expr }
             | ObligationSource::StringCoercion { body, expr }
+            | ObligationSource::FunctionValue { body, expr, .. }
             | ObligationSource::ClassMethod { body, expr } => self.expr_label_span(*body, *expr),
             ObligationSource::CallSite {
                 body, call_expr, ..

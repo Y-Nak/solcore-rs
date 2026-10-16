@@ -221,7 +221,14 @@ impl<'db> InferCtx<'db> {
             hir_nameres::Resolution::Def {
                 def,
                 kind: hir_nameres::DefResolutionKind::Function,
-            } => self.instantiate_function(def, source.unwrap_or(ObligationSource::Scheme)),
+            } => self.instantiate_function(
+                def,
+                source.unwrap_or(ObligationSource::FunctionValue {
+                    body,
+                    expr,
+                    function: def,
+                }),
+            ),
             hir_nameres::Resolution::Field(field) => self.instantiate_field_read(
                 body,
                 expr,

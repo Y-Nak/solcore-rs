@@ -21,6 +21,9 @@ pub(super) struct BodyCtx<'a, 'db> {
     pub(super) locals: FxHashMap<String, Ty<'db>>,
 }
 
+/// A value expression and the function or class whose dictionary it requires.
+type ValueEvidenceKey<'db> = (FuncBody<'db>, Id<Expr<'db>>, DefId<'db>);
+
 pub(super) struct BodyIndex<'db> {
     expr_tys: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), Ty<'db>>,
     pat_tys: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), Ty<'db>>,
@@ -29,8 +32,8 @@ pub(super) struct BodyIndex<'db> {
     pat_resolutions: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), hir_nameres::Resolution<'db>>,
     call_evidence:
         FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, Id<Expr<'db>>), Vec<CallSiteEvidence<'db>>>,
-    class_method_value_evidence:
-        FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, DefId<'db>), Evidence<'db>>,
+    function_value_evidence: FxHashMap<ValueEvidenceKey<'db>, Vec<(Pred<'db>, Evidence<'db>)>>,
+    class_method_value_evidence: FxHashMap<ValueEvidenceKey<'db>, Evidence<'db>>,
     string_coercion_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), Evidence<'db>>,
     first_builtin_int_evidence: Option<CallSiteEvidence<'db>>,
     comptime_let_stmts: FxHashSet<(FuncBody<'db>, Id<Stmt<'db>>)>,
@@ -50,6 +53,7 @@ impl<'db> BodyIndex<'db> {
             expr_resolutions: FxHashMap::default(),
             pat_resolutions: FxHashMap::default(),
             call_evidence: FxHashMap::default(),
+            function_value_evidence: FxHashMap::default(),
             class_method_value_evidence: FxHashMap::default(),
             string_coercion_evidence: FxHashMap::default(),
             first_builtin_int_evidence: None,
@@ -117,6 +121,19 @@ impl<'db> BodyIndex<'db> {
             let Some(obligation) = result.obligations.get(solved.obligation) else {
                 continue;
             };
+            if let hir_ty::ObligationSource::FunctionValue {
+                body,
+                expr,
+                function,
+            } = obligation.source
+            {
+                index
+                    .function_value_evidence
+                    .entry((body, expr, function))
+                    .or_default()
+                    .push((obligation.pred, solved.evidence.clone()));
+                continue;
+            }
             if let hir_ty::ObligationSource::StringCoercion { body, expr } = obligation.source {
                 index
                     .string_coercion_evidence
@@ -588,7 +605,12 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                                 def.name(self.driver.db)
                                     .unwrap_or_else(|| format!("{:?}", def.kind(self.driver.db)))
                             } else {
-                                self.specialize_direct_function(def, mono_ty.ty(), expr.span)
+                                self.specialize_function_value(
+                                    def,
+                                    expr_id,
+                                    mono_ty.ty(),
+                                    expr.span,
+                                )
                             };
                             MonoExprKind::Var(MonoId {
                                 name,
@@ -750,7 +772,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     def.name(self.driver.db)
                         .unwrap_or_else(|| format!("{:?}", def.kind(self.driver.db)))
                 } else {
-                    self.specialize_direct_function(def, ty.ty(), span)
+                    self.specialize_function_value(def, expr_id, ty.ty(), span)
                 };
                 MonoExprKind::Var(MonoId { name, ty, span })
             }
@@ -1289,6 +1311,25 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     self.subst.apply_pred(self.driver.db, obligation.pred),
                     self.specialize_evidence(solved.evidence.clone()),
                 ))
+            })
+            .collect()
+    }
+
+    pub(super) fn function_value_evidence_bindings(
+        &self,
+        expr: Id<Expr<'db>>,
+        function: DefId<'db>,
+    ) -> Vec<(Pred<'db>, Evidence<'db>)> {
+        self.index
+            .function_value_evidence
+            .get(&(self.body, expr, function))
+            .into_iter()
+            .flatten()
+            .map(|(pred, evidence)| {
+                (
+                    self.subst.apply_pred(self.driver.db, *pred),
+                    self.specialize_evidence(evidence.clone()),
+                )
             })
             .collect()
     }

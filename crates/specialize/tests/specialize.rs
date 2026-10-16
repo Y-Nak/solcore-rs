@@ -6329,6 +6329,59 @@ fn user_concat_lit_retains_its_word_signature_and_behavior() {
 }
 
 #[test]
+fn function_values_preserve_module_local_constraint_only_type_arguments() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/function_value_evidence/main.sol");
+    let (db, file, output) = specialize_fixture_with_db(&fixture);
+    let module_id = nameres::module_id_for_source_file(db, file).unwrap();
+    let frontend = hir_ty::collect_frontend_diagnostics(db, module_id);
+    assert!(frontend.is_empty(), "frontend: {frontend:#?}");
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let functions = output
+        .module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            MonoItem::Function(function) => Some(function),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for (module, suffix, expected) in [("a", "A", "3"), ("b", "B", "4")] {
+        for usage in ["local", "qualified", "argument", "nested", "generic"] {
+            let prefix = format!("{module}_{usage}{suffix}_");
+            let mut function = functions
+                .iter()
+                .find(|function| function.name.starts_with(&prefix))
+                .unwrap_or_else(|| panic!("missing {prefix}"));
+            let mut visited = BTreeSet::new();
+            loop {
+                assert!(visited.insert(&function.name), "cyclic return in {prefix}");
+                let Some(MonoStmt {
+                    kind: MonoStmtKind::Return(Some(value)),
+                    ..
+                }) = function.body.last()
+                else {
+                    panic!("missing return in {}", function.name);
+                };
+                match &value.kind {
+                    MonoExprKind::Lit(hir::ast::function::LitKind::Number(number)) => {
+                        assert_eq!(number, expected, "wrong dictionary in {prefix}");
+                        break;
+                    }
+                    MonoExprKind::Call { callee, .. } => {
+                        function = functions
+                            .iter()
+                            .find(|function| function.name == callee.name)
+                            .unwrap_or_else(|| panic!("missing {}", callee.name));
+                    }
+                    other => panic!("unexpected return in {}: {other:#?}", function.name),
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn public_dispatch_accepts_nine_parameter_functions() {
     let (db, file, output) = specialize_src_with_std_and_db(
         r#"
