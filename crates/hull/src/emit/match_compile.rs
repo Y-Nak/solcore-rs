@@ -637,7 +637,13 @@ impl<'db> Emitter<'db> {
                     this.bind_expr(name.clone(), lhs);
                 }
                 materialized.extend(this.emit_stmts(body));
-                materialized
+                // An arm owns a lexical scope even when its pattern needs no
+                // runtime switch. Preserve that scope in Hull so backends do
+                // not keep its bindings after control returns to the caller.
+                vec![Stmt {
+                    span,
+                    kind: StmtKind::Block(materialized),
+                }]
             }),
             DecisionTree::Fail { span } => vec![Stmt {
                 span: *span,

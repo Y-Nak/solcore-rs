@@ -1322,6 +1322,35 @@ contract C {
 }
 
 #[test]
+fn irrefutable_match_bindings_end_before_the_following_statement() {
+    let hull = pretty_src_hull(
+        "irrefutable_match_scope",
+        r#"
+function main() returns (word) {
+  let x: word;
+  assembly { x := calldatasize() }
+  let y = primAddWord(x, 21);
+  match (x, y) { case (y, x) { assembly { mstore(128, x) } } }
+  return x;
+}
+"#,
+    );
+    let main = hull_function(&hull, "_main_");
+    assert_contains_in_order(
+        "irrefutable arm scope",
+        main,
+        &[
+            "\n  {\n",
+            "let y",
+            "let x",
+            "mstore(128, x)",
+            "\n  }\n",
+            "return x",
+        ],
+    );
+}
+
+#[test]
 fn audit_p0_for_initializer_let_remains_visible_after_the_loop() {
     let hull = pretty_src_hull(
         "for_initializer_scope",
