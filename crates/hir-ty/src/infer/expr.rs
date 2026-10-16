@@ -1353,10 +1353,8 @@ impl<'db> InferCtx<'db> {
                 // if/then/else lowering), not overloadable via `and`/`or`
                 // functions, so both operands must be `bool` directly.
                 let bool_ty = self.bool();
-                let lhs_ty = self.infer_expr(body, lhs_expr);
-                self.unify_expr(body, lhs_expr, bool_ty.clone(), lhs_ty);
-                let rhs_ty = self.infer_expr(body, rhs_expr);
-                self.unify_expr(body, rhs_expr, bool_ty.clone(), rhs_ty);
+                self.infer_expr_expected(body, lhs_expr, Some(bool_ty.clone()));
+                self.infer_expr_expected(body, rhs_expr, Some(bool_ty.clone()));
                 bool_ty
             }
             BinOp::Error => InferTy::Error,
