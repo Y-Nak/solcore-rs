@@ -55,3 +55,11 @@ function main(flag: bool) returns (word) {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn generated_closure_captures_with_shared_source_spans_keep_distinct_bindings() {
+    pretty_src_hull_with_std(
+        "control_flow_capture_identity",
+        include_str!("../../../../tests/e2e/control-flow-capture-identity/main.sol"),
+    );
+}

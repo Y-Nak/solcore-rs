@@ -92,9 +92,23 @@ struct Emitter<'db> {
     fresh: usize,
 }
 
+/// Identity of a declaration occurrence in the immutable Mono tree currently
+/// being emitted. Source spans identify provenance, not bindings: generated
+/// captures and cloned bodies can contain distinct declarations with equal spans.
+/// Entries are retained only while their owning control-flow tree is borrowed;
+/// this pointer is compared for identity and is never dereferenced.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct DeclarationId<'db>(*const MonoStmt<'db>);
+
+impl<'db> DeclarationId<'db> {
+    fn of(stmt: &MonoStmt<'db>) -> Self {
+        Self(std::ptr::from_ref(stmt))
+    }
+}
+
 #[derive(Clone)]
 struct PredeclaredLet<'db> {
-    span: Span<'db>,
+    declaration: DeclarationId<'db>,
     backend_name: String,
     ty: Ty<'db>,
 }

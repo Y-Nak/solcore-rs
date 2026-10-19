@@ -174,7 +174,7 @@ impl<'db> Emitter<'db> {
                 if let Some(predeclared) = self
                     .predeclared_lets
                     .iter()
-                    .find(|predeclared| predeclared.span == stmt.span)
+                    .find(|predeclared| predeclared.declaration == DeclarationId::of(stmt))
                     .cloned()
                 {
                     // The declaration was hoisted ahead of control flow. Evaluate the
@@ -501,14 +501,14 @@ impl<'db> Emitter<'db> {
             if self
                 .predeclared_lets
                 .iter()
-                .any(|predeclared| predeclared.span == let_stmt.span)
+                .any(|predeclared| predeclared.declaration == DeclarationId::of(let_stmt))
             {
                 continue;
             }
             let ty = self.declared_let_ty(let_stmt);
             let backend_name = self.fresh_temp("if_local");
             self.predeclared_lets.push(PredeclaredLet {
-                span: let_stmt.span,
+                declaration: DeclarationId::of(let_stmt),
                 backend_name: backend_name.clone(),
                 ty: ty.clone(),
             });
