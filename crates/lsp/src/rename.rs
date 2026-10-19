@@ -9,7 +9,10 @@ use lsp_types::{Location, Position, PrepareRenameResponse, Range, TextEdit, Url,
 
 use crate::{
     LineIndexExt,
-    references::{collect_reference_locations, reference_target_at, target_supports_text_rename},
+    references::{
+        collect_reference_locations, reference_target_at, target_identifier_context,
+        target_supports_text_rename,
+    },
     state::WorldState,
 };
 
@@ -43,11 +46,12 @@ pub fn handle_rename(
     position: Position,
     new_name: &str,
 ) -> Option<WorkspaceEdit> {
-    if !parser::is_valid_identifier(new_name) {
+    let target = reference_target_at(world, uri, position)?;
+    let context = target_identifier_context(world.db(), &target)?;
+    if !parser::is_valid_identifier_in(new_name, context) {
         return None;
     }
 
-    let target = reference_target_at(world, uri, position)?;
     if !target_supports_text_rename(world, &target) {
         return None;
     }
@@ -314,6 +318,87 @@ function main() returns (word) { let x: word = 7; return Echo.echo(x); }
                         != Some(lsp_types::DiagnosticSeverity::ERROR)),
                 "{uri}: {diagnostics:?}"
             );
+        }
+    }
+
+    #[test]
+    fn rename_respects_runtime_parameter_contexts() {
+        for source in [
+            "function id(value: word) returns (word) { return value; }",
+            "import * from std; import * from std.dispatch; contract C { function id(value: word) returns (word) { return value; } }",
+            "trait Echo<t> { function echo(x: t) returns (t); } impl Echo<word> { function echo(value: word) returns (word) { return value; } }",
+            "function main() returns (word) { let f = lam (value: word) -> word { return value; }; return f(1); }",
+            "function main() returns (word) { let f = lam (value) { return value; }; return f(1); }",
+            "function main() returns (word) { let f = lam (outer: word) { let g = lam (value) { return value; }; return g(outer); }; return f(1); }",
+        ] {
+            let (world, uri) = world_with_main(source);
+            assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+            for offset in [
+                source.find("value").unwrap(),
+                source.rfind("value").unwrap(),
+            ] {
+                let position = world
+                    .line_index(&uri)
+                    .unwrap()
+                    .byte_to_position(offset as u32);
+                assert!(
+                    handle_prepare_rename(&world, &uri, position).is_some(),
+                    "{source}"
+                );
+                assert!(
+                    handle_rename(&world, &uri, position, "comptime").is_none(),
+                    "{source}"
+                );
+                assert!(
+                    handle_rename(&world, &uri, position, "renamed").is_some(),
+                    "{source}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rename_preserves_legal_contextual_names() {
+        for (source, new_name) in [
+            (
+                "function id(comptime value: word) returns (word) { return value; }",
+                "comptime",
+            ),
+            (
+                "function main() returns (word) { let f = lam (comptime value: word) -> word { return value; }; return f(1); }",
+                "comptime",
+            ),
+            (
+                "function main() returns (word) { let value: word = 1; return value; }",
+                "comptime",
+            ),
+            (
+                "function value() returns (word) { return 1; } function main() returns (word) { return value(); }",
+                "comptime",
+            ),
+            (
+                "function id(value: word) returns (word) { return value; }",
+                "while",
+            ),
+            (
+                "function id(value: word) returns (word) { return value; }",
+                "mapping",
+            ),
+            (
+                "function id(value: word) returns (word) { return value; }",
+                "derive",
+            ),
+        ] {
+            let (mut world, uri) = world_with_main(source);
+            assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+            let position = world
+                .line_index(&uri)
+                .unwrap()
+                .byte_to_position(source.find("value").unwrap() as u32);
+            let edit = handle_rename(&world, &uri, position, new_name)
+                .unwrap_or_else(|| panic!("{source} -> {new_name}"));
+            apply_workspace_edit(&mut world, edit);
+            assert_no_error_diagnostics(&world, &[uri]);
         }
     }
 

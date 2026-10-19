@@ -1776,39 +1776,64 @@ fn find_adt<'db>(
     })
 }
 
+/// The declaration role constrains contextual names independently of their
+/// lexical validity. Use the actual parameter syntax: an explicit `comptime`
+/// modifier already disambiguates a following parameter named `comptime`.
+pub(crate) fn target_identifier_context(
+    db: &dyn hir_ty::Db,
+    target: &ReferenceTarget<'_>,
+) -> Option<parser::IdentifierContext> {
+    let ReferenceTarget::Param(param) = target else {
+        return Some(parser::IdentifierContext::Ordinary);
+    };
+    let file = param.body.def_id(db).file(db);
+    let module = parser::parse_file_to_hir(db, file).module(db);
+    match find_param_in_module(db, module, param.body, param.index.as_usize())? {
+        FuncParam::Typed { comptime, .. } | FuncParam::Untyped { comptime, .. } => {
+            Some(if comptime.is_some() {
+                parser::IdentifierContext::Ordinary
+            } else {
+                parser::IdentifierContext::RuntimeParameter
+            })
+        }
+        FuncParam::Error { .. } => None,
+    }
+}
+
 fn param_name_span<'db>(db: &'db dyn hir_ty::Db, param: ParamId<'db>) -> Option<AbsoluteSpan> {
     let file = param.body.def_id(db).file(db);
     let module = parser::parse_file_to_hir(db, file).module(db);
-    find_param_span_in_module(db, module, param.body, param.index.as_usize())
+    find_param_in_module(db, module, param.body, param.index.as_usize())
+        .and_then(|param| param_name_or_whole_span(db, &param))
         .map(|span| span.resolve_to_absolute(db))
 }
 
-fn find_param_span_in_module<'db>(
+fn find_param_in_module<'db>(
     db: &'db dyn hir_ty::Db,
     module: Module<'db>,
     body: FuncBody<'db>,
     index: usize,
-) -> Option<Span<'db>> {
+) -> Option<FuncParam<'db>> {
     for item in module.items(db) {
         match *item {
             Item::FunctionDef(function) => {
-                if let Some(span) = find_param_span_in_function(db, function, body, index) {
-                    return Some(span);
+                if let Some(param) = find_param_in_function(db, function, body, index) {
+                    return Some(param);
                 }
             }
             Item::ContractDef(contract) => {
                 for contract_item in contract.items(db) {
                     if let ContractItem::FunctionDef(function) = *contract_item
-                        && let Some(span) = find_param_span_in_function(db, function, body, index)
+                        && let Some(param) = find_param_in_function(db, function, body, index)
                     {
-                        return Some(span);
+                        return Some(param);
                     }
                 }
             }
             Item::InstanceDef(instance) => {
                 for function in instance.methods(db) {
-                    if let Some(span) = find_param_span_in_function(db, *function, body, index) {
-                        return Some(span);
+                    if let Some(param) = find_param_in_function(db, *function, body, index) {
+                        return Some(param);
                     }
                 }
             }
@@ -1825,30 +1850,25 @@ fn find_param_span_in_module<'db>(
     None
 }
 
-fn find_param_span_in_function<'db>(
+fn find_param_in_function<'db>(
     db: &'db dyn hir_ty::Db,
     function: FunctionDef<'db>,
     body: FuncBody<'db>,
     index: usize,
-) -> Option<Span<'db>> {
+) -> Option<FuncParam<'db>> {
     if function.body(db) == Some(body) {
-        return function
-            .sig(db)
-            .params
-            .atom()
-            .get(index)
-            .and_then(|param| param_name_or_whole_span(db, param));
+        return function.sig(db).params.atom().get(index).cloned();
     }
 
-    find_lambda_param_span(db, function.body(db)?, body, index)
+    find_lambda_param(db, function.body(db)?, body, index)
 }
 
-fn find_lambda_param_span<'db>(
+fn find_lambda_param<'db>(
     db: &'db dyn hir_ty::Db,
     root: FuncBody<'db>,
     body: FuncBody<'db>,
     index: usize,
-) -> Option<Span<'db>> {
+) -> Option<FuncParam<'db>> {
     let mut stack = vec![root];
     while let Some(current) = stack.pop() {
         for (_, expr) in current.exprs(db).iter() {
@@ -1859,10 +1879,7 @@ fn find_lambda_param_span<'db>(
             } = &expr.kind
             {
                 if *lambda_body == body {
-                    return params
-                        .atom()
-                        .get(index)
-                        .and_then(|param| param_name_or_whole_span(db, param));
+                    return params.atom().get(index).cloned();
                 }
                 stack.push(*lambda_body);
             }

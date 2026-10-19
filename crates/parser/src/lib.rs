@@ -26,6 +26,24 @@ mod types;
 #[salsa::db]
 pub trait Db: salsa::Database + HirDb {}
 
+/// Syntactic role of an identifier at its declaration.
+///
+/// Contextual keywords remain ordinary identifiers except where the grammar
+/// would consume them as a modifier instead of a name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentifierContext {
+    /// A name parsed with the ordinary identifier grammar.
+    Ordinary,
+    /// A parameter name without an explicit `comptime` modifier.
+    RuntimeParameter,
+}
+
+/// Validates an identifier in its syntactic declaration role.
+pub fn is_valid_identifier_in(text: &str, context: IdentifierContext) -> bool {
+    is_valid_identifier(text)
+        && !(context == IdentifierContext::RuntimeParameter && text == "comptime")
+}
+
 /// Returns whether `text` is one ordinary source identifier.
 ///
 /// This intentionally follows the lexer and the normal identifier grammar:
@@ -110,7 +128,32 @@ pub fn parse_diagnostics(db: &dyn Db, file: SourceFile) -> Vec<AnyDiagnostic> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_valid_identifier;
+    use super::{IdentifierContext, is_valid_identifier, is_valid_identifier_in};
+
+    #[test]
+    fn contextual_names_depend_on_the_declaration_role() {
+        assert!(is_valid_identifier_in(
+            "comptime",
+            IdentifierContext::Ordinary
+        ));
+        assert!(!is_valid_identifier_in(
+            "comptime",
+            IdentifierContext::RuntimeParameter
+        ));
+        for name in ["while", "mapping", "derive", "where", "value"] {
+            assert!(is_valid_identifier_in(
+                name,
+                IdentifierContext::RuntimeParameter
+            ));
+        }
+        for context in [
+            IdentifierContext::Ordinary,
+            IdentifierContext::RuntimeParameter,
+        ] {
+            assert!(!is_valid_identifier_in("return", context));
+            assert!(!is_valid_identifier_in("value-name", context));
+        }
+    }
 
     #[test]
     fn validates_identifiers_with_the_source_lexer() {

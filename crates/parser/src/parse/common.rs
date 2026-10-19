@@ -60,7 +60,7 @@ where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
     ident_parser().validate(|name, _, emitter| {
-        if name.0 == "comptime" {
+        if !crate::is_valid_identifier_in(name.0, crate::IdentifierContext::RuntimeParameter) {
             emitter.emit(Rich::custom(
                 name.1,
                 "`comptime` is a parameter modifier; expected parameter name",
