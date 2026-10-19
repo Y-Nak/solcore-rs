@@ -4798,3 +4798,166 @@ fn contextual_proofs_preserve_rigid_roots_across_flexible_child_goals() {
         }
     }
 }
+
+#[test]
+fn decreasing_instance_chains_prune_redundant_superclass_dictionaries() {
+    for depth in [12, 24] {
+        for reversed in [false, true] {
+            for ambiguous_leaf in [false, true] {
+                let db = TestDb::default();
+                let mut instances = vec![
+                    "impl C<word> {}",
+                    "impl<a> C<Box<a>> where a:C {}",
+                    "impl<a> Sub<Box<a>> where a:C {}",
+                ];
+                if ambiguous_leaf {
+                    instances.push("impl C<word> {}");
+                }
+                if reversed {
+                    instances.reverse();
+                }
+                let module = parse_module(
+                    &db,
+                    &format!(
+                        "trait C<a> {{}} trait Sub<a> where a:C {{}} enum Box<a> {{ Box(a) }} {}",
+                        instances.join(" ")
+                    ),
+                );
+                let resolution = hir_nameres::resolve_module(&db, module);
+                let env = trait_env(&db, module, &resolution);
+                let ty =
+                    (0..depth).fold(Ty::word(&db), |ty, _| adt_ty(&db, module, "Box", vec![ty]));
+                let report =
+                    solve_class_report(&db, env, class_id(&db, module, "C"), ty, Vec::new());
+                assert!(
+                    !report.exhausted,
+                    "{depth} {reversed} {ambiguous_leaf}: {report:?}"
+                );
+                if ambiguous_leaf {
+                    assert!(
+                        matches!(&report.solution, Solution::Ambiguous { candidates } if candidates.len() == 2),
+                        "{report:?}"
+                    );
+                } else {
+                    assert!(
+                        matches!(report.solution, Solution::Unique { .. }),
+                        "{report:?}"
+                    );
+                }
+                assert!(report.stats.answers_found < 30 * depth + 30, "{report:?}");
+                assert!(report.stats.generator_steps < 30 * depth + 30, "{report:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn decreasing_dictionary_roots_preserve_permuted_rigid_arguments() {
+    for depth in [12, 13, 24] {
+        for rigid_index in [0, 7] {
+            let db = TestDb::default();
+            let module = parse_module(
+                &db,
+                r#"
+trait C<a,b> {}
+trait Sub<a,b> where a:C<b> {}
+enum Box<a> { Box(a) }
+impl<a,b> C<Box<a>,Box<b>> where b:C<a> {}
+impl<a,b> Sub<Box<a>,Box<b>> where b:C<a> {}
+"#,
+            );
+            let resolution = hir_nameres::resolve_module(&db, module);
+            let base = trait_env(&db, module, &resolution);
+            let class = class_id(&db, module, "C");
+            let rigid = Ty::bound(&db, rigid_index);
+            let boolean = Ty::bool(&db);
+            let givens = [
+                Pred::in_class(&db, class, rigid, vec![boolean]),
+                Pred::in_class(&db, class, boolean, vec![rigid]),
+            ];
+            let env = trait_env_with_givens(&db, base, givens.to_vec());
+            let nest = |ty| (0..depth).fold(ty, |ty, _| adt_ty(&db, module, "Box", vec![ty]));
+            let report = solve_class_report(&db, env, class, nest(rigid), vec![nest(boolean)]);
+            assert!(!report.exhausted, "{depth} {rigid_index}: {report:?}");
+            let Solution::Unique { mut evidence, .. } = report.solution else {
+                panic!("{report:?}");
+            };
+            for _ in 0..depth {
+                let Evidence::Instance {
+                    mut sub_evidence, ..
+                } = evidence
+                else {
+                    panic!("a direct instance must outrank its superclass alternative");
+                };
+                assert_eq!(sub_evidence.len(), 1);
+                evidence = sub_evidence.pop().unwrap();
+            }
+            assert_eq!(
+                evidence,
+                Evidence::Builtin {
+                    pred: givens[depth % 2]
+                }
+            );
+            assert!(report.stats.answers_found < 30 * depth + 30);
+        }
+    }
+}
+
+#[test]
+fn decreasing_instance_chains_typecheck_through_aliases_and_function_values() {
+    for depth in [12, 24] {
+        let nested = format!("{}word{}", "Layer<".repeat(depth), ">".repeat(depth));
+        let source = format!(
+            r#"
+trait C<a> {{}}
+trait Sub<a> where a:C {{}}
+enum Box<a> {{ Box(a) }}
+type Layer(a) = Box<a>;
+impl C<word> {{}}
+impl<a> C<Layer<a>> where a:C {{}}
+impl<a> Sub<Layer<a>> where a:C {{}}
+function require<a>(x:a) returns(word) where a:C {{ return 1; }}
+function main(x:{nested}) returns(word) {{
+    let f = require;
+    return f(x);
+}}
+"#
+        );
+        let diagnostics = lowered_module_typeck_diagnostics(&source);
+        assert!(diagnostics.is_empty(), "{depth}: {diagnostics:?}");
+    }
+}
+
+#[test]
+fn solver_budget_bounds_successful_and_answerless_work() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        "trait Known<a> {} impl Known<word> {} trait Missing<a> {} trait Cycle<a> {} trait Other<a> {} impl<a> Cycle<a> where a:Other {} impl<a> Other<a> where a:Cycle {}",
+    );
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &resolution);
+    for (class, required, has_answer) in [
+        ("Known", 1, true),
+        ("Missing", 1, false),
+        ("Cycle", 2, false),
+    ] {
+        let goal = canonical_goal(
+            &db,
+            Pred::in_class(&db, class_id(&db, module, class), Ty::word(&db), Vec::new()),
+        );
+        for budget in 0..required {
+            let report = crate::solver::solve_report_with_fuel(&db, env, goal, budget);
+            assert!(report.exhausted, "{class} {budget}: {report:?}");
+            assert_eq!(report.fuel_remaining, 0);
+        }
+        let complete = crate::solver::solve_report_with_fuel(&db, env, goal, required);
+        assert!(!complete.exhausted, "{class}: {complete:?}");
+        assert_eq!(complete.fuel_remaining, 0);
+        if has_answer {
+            assert!(matches!(complete.solution, Solution::Unique { .. }));
+        } else {
+            assert!(matches!(complete.solution, Solution::NoSolution));
+        }
+    }
+}

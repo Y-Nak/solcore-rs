@@ -27,9 +27,8 @@ pub(super) enum DictionaryIdentity<'db> {
     },
 }
 
-/// A clause that can wrap a prerequisite dictionary. Type arguments are
-/// deliberately omitted: this over-approximates possible recursive conflicts
-/// when a proof is substituted beneath another clause.
+/// Conservative identity for a dictionary branch whose type arguments are
+/// still open. Such a branch may later match any instantiation of its clause.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(super) enum BranchOrigin<'db> {
     Instance(DefId<'db>),
@@ -37,9 +36,8 @@ pub(super) enum BranchOrigin<'db> {
     Derived(DerivedClauseKind<'db>),
 }
 
-/// Exact identity used by the simple-proof cycle check. Unlike a footprint,
-/// this retains the instantiation, so recursive instances at smaller types do
-/// not conflict with their callers.
+/// Exact dictionary identity for cycle checks and finite-proof footprints.
+/// Recursive instances at smaller types do not conflict with their callers.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(super) enum BranchRoot<'db> {
     Instance(DefId<'db>, Vec<Ty<'db>>),
@@ -47,13 +45,12 @@ pub(super) enum BranchRoot<'db> {
     Derived(DerivedClauseKind<'db>, Pred<'db>),
 }
 
-impl<'db> BranchOrigin<'db> {
-    pub(super) fn for_clause(origin: &ClauseOrigin<'db>) -> Option<Self> {
-        match origin {
-            ClauseOrigin::Instance { def, .. } => Some(Self::Instance(*def)),
-            ClauseOrigin::Superclass(class) => Some(Self::Superclass(*class)),
-            ClauseOrigin::Derived(kind) => Some(Self::Derived(*kind)),
-            ClauseOrigin::Builtin | ClauseOrigin::Given => None,
+impl<'db> BranchRoot<'db> {
+    pub(super) fn origin(&self) -> BranchOrigin<'db> {
+        match self {
+            Self::Instance(def, _) => BranchOrigin::Instance(*def),
+            Self::Superclass(class, _) => BranchOrigin::Superclass(*class),
+            Self::Derived(kind, _) => BranchOrigin::Derived(*kind),
         }
     }
 }

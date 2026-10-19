@@ -16,7 +16,10 @@
 //! given provenance. If different dictionaries share a logical answer, a
 //! second pass retains dictionary identity while pruning lower-priority choices
 //! justified by finite witnesses. A witness is safe in a consuming context when
-//! its non-leaf clause origins cannot repeat an ancestor. This keeps necessary
+//! its non-leaf dictionary roots cannot repeat an ancestor. Known type
+//! instantiations are distinguished; open roots conservatively retain their
+//! clause origins. Shared proof recipes answer finite-witness queries without
+//! enumerating every prerequisite combination. This keeps necessary
 //! recursive seeds inside cycles without multiplying dominated uses outside
 //! them. Superclass paths to the same predicate from one local given identify
 //! one dictionary. Both passes share the same work budget.
