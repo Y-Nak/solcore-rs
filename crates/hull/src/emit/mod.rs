@@ -42,6 +42,7 @@ mod contract;
 mod diagnostics;
 mod emitter;
 mod layout;
+mod layout_finiteness;
 mod match_compile;
 mod reachability;
 mod storage;
@@ -77,6 +78,7 @@ struct Emitter<'db> {
     scopes: ScopeStack<BTreeMap<String, Expr<'db>>>,
     function_names: BTreeSet<String>,
     layout_stack: Vec<(DefId<'db>, Vec<SemTy<'db>>)>,
+    layout_finiteness: layout_finiteness::LayoutFiniteness<'db>,
     if_stmt_spans: Vec<Span<'db>>,
     predeclared_lets: Vec<PredeclaredLet<'db>>,
     /// Runtime allocators for compile-time string literals, keyed by decoded

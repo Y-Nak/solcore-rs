@@ -29,6 +29,7 @@ impl<'db> Emitter<'db> {
             scopes: ScopeStack::new_root(BTreeMap::new()),
             function_names: BTreeSet::new(),
             layout_stack: Vec::new(),
+            layout_finiteness: layout_finiteness::LayoutFiniteness::default(),
             if_stmt_spans,
             predeclared_lets: Vec::new(),
             string_literals: BTreeMap::new(),

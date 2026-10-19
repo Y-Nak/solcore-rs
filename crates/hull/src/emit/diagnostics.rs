@@ -28,6 +28,7 @@ pub struct EmitDiagnostic<'db> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EmitDiagnosticKind {
     UnsupportedType { ty: String },
+    NonRegularRecursiveType { ty: String },
     UnsupportedLiteral { literal: String },
     UnsupportedMonoConstruct { construct: String },
     MissingAdtLayout { adt: String },
@@ -54,7 +55,9 @@ impl<'db> EmitDiagnostic<'db> {
 impl EmitDiagnosticKind {
     pub fn code(&self) -> &'static str {
         match self {
-            Self::UnsupportedType { .. } => DiagnosticCode::EMIT_UNSUPPORTED_TYPE,
+            Self::UnsupportedType { .. } | Self::NonRegularRecursiveType { .. } => {
+                DiagnosticCode::EMIT_UNSUPPORTED_TYPE
+            }
             Self::UnsupportedLiteral { .. } => DiagnosticCode::EMIT_UNSUPPORTED_LITERAL,
             Self::UnsupportedMonoConstruct { .. } => {
                 DiagnosticCode::EMIT_UNSUPPORTED_MONO_CONSTRUCT
@@ -74,6 +77,7 @@ impl EmitDiagnosticKind {
     fn primary_label(&self) -> &'static str {
         match self {
             Self::UnsupportedType { .. } => "unsupported type",
+            Self::NonRegularRecursiveType { .. } => "recursive type arguments grow without bound",
             Self::UnsupportedLiteral { .. } => "unsupported literal",
             Self::UnsupportedMonoConstruct { .. } => "unsupported construct",
             Self::MissingAdtLayout { .. } => "missing ADT layout",
@@ -101,6 +105,10 @@ impl fmt::Display for EmitDiagnosticKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnsupportedType { ty } => write!(f, "cannot lower type `{ty}` to Hull"),
+            Self::NonRegularRecursiveType { ty } => write!(
+                f,
+                "cannot lower `{ty}`: recursive type arguments grow without bound"
+            ),
             Self::UnsupportedLiteral { literal } => {
                 write!(f, "cannot lower literal `{literal}` to Hull")
             }

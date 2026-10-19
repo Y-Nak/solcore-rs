@@ -61,7 +61,11 @@ fn deeply_nested_constructor_and_match_layouts_emit_and_check() {
                 let entry = module_id_from_key(&db, &key);
                 let file = db.module_file(entry).expect("main source");
                 let module = parse_file_to_hir(&db, file).module(&db);
-                assert!(parser::parse_diagnostics(&db, file).is_empty());
+                assert!(
+                    parser::parse_diagnostics(&db, file).is_empty(),
+                    "{source}\n{:?}",
+                    parser::parse_diagnostics(&db, file)
+                );
                 let diagnostics = hir_ty::collect_frontend_diagnostics(&db, entry);
                 assert!(
                     diagnostics
@@ -82,4 +86,111 @@ fn deeply_nested_constructor_and_match_layouts_emit_and_check() {
             }
         }
     });
+}
+
+fn assert_layout_finiteness(source: &str, finite: bool) {
+    let source = source.to_owned();
+    run_in_large_stack(move || {
+        let mut db = TestDb::default();
+        let key = load_main_source(&mut db, &source);
+        let entry = module_id_from_key(&db, &key);
+        let file = db.module_file(entry).expect("main source");
+        let module = parse_file_to_hir(&db, file).module(&db);
+        assert!(
+            parser::parse_diagnostics(&db, file).is_empty(),
+            "{source}\n{:?}",
+            parser::parse_diagnostics(&db, file)
+        );
+        let diagnostics = hir_ty::collect_frontend_diagnostics(&db, entry);
+        assert!(
+            diagnostics
+                .iter()
+                .all(|d| d.level != hir::diag::DiagnosticLevel::Error),
+            "{source}\n{diagnostics:?}"
+        );
+        let specialized = specialize_module(&db, module, SpecializeOptions::default());
+        assert!(
+            specialized.diagnostics.is_empty(),
+            "{source}\n{:?}",
+            specialized.diagnostics
+        );
+        let emitted = emit_module(&db, &specialized.module, EmitOptions::default());
+        if finite {
+            assert!(
+                emitted.diagnostics.is_empty(),
+                "{source}\n{:?}",
+                emitted.diagnostics
+            );
+            assert!(check_program_with_db(&db, &emitted.program).is_empty());
+        } else {
+            assert!(
+                emitted.diagnostics.iter().any(|d| matches!(
+                    d.kind,
+                    solcore_hull::EmitDiagnosticKind::NonRegularRecursiveType { .. }
+                )),
+                "{source}\n{:?}",
+                emitted.diagnostics
+            );
+        }
+    });
+}
+
+#[test]
+fn growing_recursive_instantiations_are_diagnosed() {
+    for definitions in [
+        "enum Nest<a> { Nil, Cons(a, Nest<Box<a>>) }",
+        "type Wrapped(a) = Box<a>; enum Nest<a> { Nil, Cons(a, Nest<Wrapped<a>>) }",
+        "enum Nest<a> { Nil, Cons(Box<Box<Nest<Box<a>>>>) }",
+        "enum Nest<a> { Nil, Cons(a, (Nest<(a, a)>, word)) }",
+    ] {
+        assert_layout_finiteness(
+            &format!(
+                "enum Box<a> {{ Box(a) }} {definitions} function main(x: Nest<word>) returns (word) {{ return 0; }}"
+            ),
+            false,
+        );
+    }
+}
+
+#[test]
+fn growing_cycles_can_cross_alternative_constructors() {
+    assert_layout_finiteness(
+        "enum Box<a> { Box(a) }
+         enum Nest<a,b> { Nil, Left(Nest<Box<b>,word>), Right(Nest<word,a>) }
+         function main(x: Nest<word,bool>) returns (word) { return 0; }",
+        false,
+    );
+}
+
+#[test]
+fn regular_permuted_and_reset_recursion_remains_finite() {
+    for definitions in [
+        "enum Nest<a,b> { Nil, Next(a, Nest<a,b>) }",
+        "enum Nest<a,b> { Nil, Next(a, Nest<b,a>) }",
+        "enum Nest<a,b> { Nil, Next(a, Nest<Box<b>,word>) }",
+        "enum Nest<a,b> { Nil, Next(Box<Box<Nest<a,b>>>) }",
+        "enum Ignore<a> { Ignore } enum Nest<a,b> { Next(Ignore<Nest<Box<a>,b>>) }",
+    ] {
+        assert_layout_finiteness(
+            &format!(
+                "enum Box<a> {{ Box(a) }} {definitions} function main(x: Nest<word,bool>) returns (word) {{ return 0; }}"
+            ),
+            true,
+        );
+    }
+}
+
+#[test]
+fn fixed_recursive_arguments_are_checked_only_when_the_representation_uses_them() {
+    let definitions = "enum Box<a> { Box(a) } enum Ignore<a> { Ignore }
+        enum Grow<a> { Stop, Next(Grow<Box<a>>) }";
+    for (field, finite) in [("Box<Grow<word>>", false), ("Ignore<Grow<word>>", true)] {
+        assert_layout_finiteness(
+            &format!(
+                "{definitions} enum Root {{ Root({field}) }}
+            function main(x: Root) returns (word) {{ return 0; }}"
+            ),
+            finite,
+        );
+    }
 }
