@@ -12,6 +12,7 @@ use smallvec::{SmallVec, smallvec};
 use sonatina_ir::{
     BlockId, EmbedSymbol, I256, Immediate, Linkage, Module, Signature, Type, ValueId,
     builder::{FunctionBuilder, ModuleBuilder, ObjectBuilder, Variable},
+    cfg::ControlFlowGraph,
     func_cursor::InstInserter,
     inst::{
         arith::{Add, Mul, Sar, Shl, Shr, Sub},
@@ -1016,6 +1017,24 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         Ok(self.fb.use_var(result))
     }
 
+    /// Enter a continuation only when a path from the function entry reaches
+    /// it. A terminating body can still have `continue` edges, while a merge
+    /// block with predecessors can itself be unreachable. Neither syntactic
+    /// fallthrough nor predecessor count alone describes that distinction.
+    fn switch_to_reachable_block(&mut self, block: BlockId) -> bool {
+        let mut cfg = ControlFlowGraph::new();
+        cfg.compute(&self.fb.func);
+        let reachable = cfg.reachable_blocks()[block];
+        self.fb.switch_to_block(block);
+        if !reachable {
+            // Keep the allocated block well formed without constructing SSA
+            // uses for locals that have no reaching definition on this path.
+            self.fb
+                .insert_inst_no_result(Unreachable::new_unchecked(self.module.inst_set()));
+        }
+        reachable
+    }
+
     fn lower_for(
         &mut self,
         init: &[HullStmt<'db>],
@@ -1048,9 +1067,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             self.fb
                 .insert_inst_no_result(Jump::new(self.module.inst_set(), post_block));
         }
-        self.fb.switch_to_block(post_block);
-        let post_terminated = self.lower_stmts(post)?;
-        if !post_terminated {
+        if self.switch_to_reachable_block(post_block) && !self.lower_stmts(post)? {
             self.fb
                 .insert_inst_no_result(Jump::new(self.module.inst_set(), header));
         }
@@ -1697,9 +1714,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     self.fb
                         .insert_inst_no_result(Jump::new(self.module.inst_set(), post_block));
                 }
-                self.fb.switch_to_block(post_block);
-                let post_terminated = self.lower_yul_stmts(post)?;
-                if !post_terminated {
+                if self.switch_to_reachable_block(post_block) && !self.lower_yul_stmts(post)? {
                     self.fb
                         .insert_inst_no_result(Jump::new(self.module.inst_set(), header));
                 }
@@ -1743,8 +1758,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     self.fb
                         .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
                 }
-                self.fb.switch_to_block(done);
-                Ok(false)
+                Ok(!self.switch_to_reachable_block(done))
             }
             // Definitions are declared and lowered on entry to their lexical block.
             YulStmtKind::FunctionDef { .. } => Ok(false),

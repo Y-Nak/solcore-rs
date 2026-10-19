@@ -1394,6 +1394,29 @@ fn yul_function<'db>(
     }
 }
 
+#[test]
+fn loop_posts_and_switch_merges_require_reachable_control_flow() {
+    let (module, _) = lower_source_with_file_url_imports(include_str!(
+        "../../../tests/e2e/loop-post-reachability/main.sol"
+    ));
+    sonatina_codegen::EvmCompile::new(module)
+        .with_opt_level(sonatina_codegen::OptLevel::O0)
+        .compile()
+        .expect("compile loops with reachable and unreachable post blocks");
+}
+
+#[test]
+fn terminating_inline_yul_loop_bodies_do_not_lower_dead_post_uses() {
+    for terminator in ["return(0, 0)", "revert(0, 0)", "stop()", "invalid()"] {
+        lower_source(&format!(
+            "function main() returns (word) {{
+                assembly {{ for {{ let i := 0 }} lt(i, calldatasize()) {{ i := add(i, 1) }} {{ {terminator} }} }}
+                return 0;
+            }}"
+        ));
+    }
+}
+
 fn lower_source(source: &str) -> (Module, String) {
     lower_source_inner(source, false)
 }
