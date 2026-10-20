@@ -3361,6 +3361,51 @@ fn comptime_pattern_scope_fixture_specializes_for_runtime_dispatch() {
 }
 
 #[test]
+fn repeated_pattern_names_residualize_only_the_visible_declaration() {
+    for patterns in [
+        "match(known, true) { case(value, value)",
+        "match((known, true)) { case((value, value))",
+        "match(Box((known, true))) { case(Box((value, value)))",
+    ] {
+        let source = format!(
+            "enum Box<a> {{ Box(a) }}
+             function main(flag: bool) returns(bool) {{
+                 let known: word = 3;
+                 {patterns} {{ value = flag; return value; }} }}
+             }}"
+        );
+        let (db, output) = specialize_src(&source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        fn declarations<'db>(
+            statements: &[MonoStmt<'db>],
+            result: &mut Vec<solcore_specialize::MonoId<'db>>,
+        ) {
+            for statement in statements {
+                match &statement.kind {
+                    MonoStmtKind::Let { id, .. } if id.name == "value" => {
+                        result.push(id.clone());
+                    }
+                    MonoStmtKind::Block(body) => declarations(body, result),
+                    _ => {}
+                }
+            }
+        }
+        let mut bindings = Vec::new();
+        for item in &output.module.items {
+            if let MonoItem::Function(function) = item {
+                declarations(&function.body, &mut bindings);
+            }
+        }
+        assert_eq!(bindings.len(), 1, "{source}: {bindings:?}");
+        assert_eq!(
+            bindings[0].ty.ty(),
+            hir_ty::Ty::builtin(db, hir_ty::BuiltinTyCtor::Bool),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn folds_recursive_comptime_integer_function() {
     let (_db, output) = specialize_src(
         r#"

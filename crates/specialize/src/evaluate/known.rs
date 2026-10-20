@@ -161,13 +161,10 @@ where
     }
     // Name resolution gives the last occurrence of a repeated binder its
     // identity. A later runtime column must shadow an earlier static value.
-    let mut seen = FxHashSet::default();
     known.bindings = pattern_bindings(pats)
         .into_iter()
-        .rev()
-        .filter(|id| seen.insert(id.name.clone()) && known.env.contains_key(&id.name))
+        .filter(|id| known.env.contains_key(&id.name))
         .collect();
-    known.bindings.reverse();
     Some(known)
 }
 
@@ -202,6 +199,14 @@ pub(super) fn pattern_bindings<'db>(pats: &[MonoPat<'db>]) -> Vec<MonoId<'db>> {
     for pat in pats {
         bindings.visit_pat(pat);
     }
+    // Pattern names share one arm scope. Name resolution exposes only the
+    // final declaration of a repeated name, including across nested patterns
+    // and scrutinee columns. Keep that declaration's type and source identity
+    // wherever evaluation reconstructs the arm environment or runtime locals.
+    let mut seen = FxHashSet::default();
+    bindings.ids.reverse();
+    bindings.ids.retain(|id| seen.insert(id.name.clone()));
+    bindings.ids.reverse();
     bindings.ids
 }
 
