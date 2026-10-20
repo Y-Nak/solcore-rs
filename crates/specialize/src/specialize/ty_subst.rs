@@ -236,13 +236,17 @@ impl<'db> TySubst<'db> {
         }
     }
 
-    pub(super) fn apply_evidence(&self, db: &'db dyn Db, evidence: Evidence<'db>) -> Evidence<'db> {
+    pub(super) fn apply_evidence(
+        &self,
+        db: &'db dyn Db,
+        evidence: LogicalEvidence<'db>,
+    ) -> LogicalEvidence<'db> {
         match evidence {
-            Evidence::Instance {
+            LogicalEvidence::Instance {
                 instance,
                 args,
                 sub_evidence,
-            } => Evidence::Instance {
+            } => LogicalEvidence::Instance {
                 instance,
                 args: args.into_iter().map(|arg| self.apply_ty(db, arg)).collect(),
                 sub_evidence: sub_evidence
@@ -250,19 +254,19 @@ impl<'db> TySubst<'db> {
                     .map(|evidence| self.apply_evidence(db, evidence))
                     .collect(),
             },
-            Evidence::Builtin { pred } => Evidence::Builtin {
+            LogicalEvidence::Builtin { pred } => LogicalEvidence::Builtin {
                 pred: self.apply_pred(db, pred),
             },
-            Evidence::Superclass { class, pred, child } => Evidence::Superclass {
+            LogicalEvidence::Superclass { class, pred, child } => LogicalEvidence::Superclass {
                 class,
                 pred: self.apply_pred(db, pred),
                 child: Box::new(self.apply_evidence(db, *child)),
             },
-            Evidence::Derived {
+            LogicalEvidence::Derived {
                 kind,
                 pred,
                 sub_evidence,
-            } => Evidence::Derived {
+            } => LogicalEvidence::Derived {
                 kind,
                 pred: self.apply_pred(db, pred),
                 sub_evidence: sub_evidence

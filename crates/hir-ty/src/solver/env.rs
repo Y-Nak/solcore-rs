@@ -221,6 +221,53 @@ pub fn trait_env_with_givens<'db>(
     )
 }
 
+/// Instantiates the declared direct superclasses of a class predicate without
+/// selecting any instances. Method-body assumptions and executable dictionary
+/// capture must agree on this same superclass surface.
+#[salsa::tracked]
+pub fn direct_superclass_predicates<'db>(
+    db: &'db dyn Db,
+    base: BaseTraitEnvId<'db>,
+    predicate: Pred<'db>,
+) -> Vec<Pred<'db>> {
+    let PredKind::InClass {
+        class: ClassId::User(class),
+        ..
+    } = predicate.kind(db)
+    else {
+        return Vec::new();
+    };
+    let mut predicates = Vec::new();
+    let clause_sets = match base.source(db) {
+        BaseTraitEnvSource::Module(source) => source
+            .superclass_modules
+            .iter()
+            .map(|module| module_superclass_clause_set(db, *module))
+            .collect::<Vec<_>>(),
+        BaseTraitEnvSource::Resolved { clause_sets } => clause_sets.clone(),
+    };
+    for clause in clause_sets.iter().flat_map(|set| set.clauses(db)) {
+        if clause.origin != ClauseOrigin::Superclass(*class) {
+            continue;
+        }
+        let [child] = clause.conditions.as_slice() else {
+            continue;
+        };
+        // The solver clause projects Parent from Child. Reverse its shape only
+        // to instantiate Parent with Child's type arguments; no solving occurs.
+        let projection = ProgramClause {
+            binder_count: clause.binder_count,
+            head: *child,
+            conditions: vec![clause.head],
+            origin: ClauseOrigin::Builtin,
+        };
+        if let Some(parents) = clause_conditions_for_goal(db, &projection, predicate) {
+            predicates.extend(parents);
+        }
+    }
+    unique_preds(predicates)
+}
+
 #[salsa::tracked(returns(ref))]
 pub(super) fn base_trait_env_clauses<'db>(
     db: &'db dyn Db,

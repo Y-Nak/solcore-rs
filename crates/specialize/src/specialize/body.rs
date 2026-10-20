@@ -32,9 +32,10 @@ pub(super) struct BodyIndex<'db> {
     pat_resolutions: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), hir_nameres::Resolution<'db>>,
     call_evidence:
         FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, Id<Expr<'db>>), Vec<CallSiteEvidence<'db>>>,
-    function_value_evidence: FxHashMap<ValueEvidenceKey<'db>, Vec<(Pred<'db>, Evidence<'db>)>>,
-    class_method_value_evidence: FxHashMap<ValueEvidenceKey<'db>, Evidence<'db>>,
-    string_coercion_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), Evidence<'db>>,
+    function_value_evidence:
+        FxHashMap<ValueEvidenceKey<'db>, Vec<(Pred<'db>, LogicalEvidence<'db>)>>,
+    class_method_value_evidence: FxHashMap<ValueEvidenceKey<'db>, LogicalEvidence<'db>>,
+    string_coercion_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), LogicalEvidence<'db>>,
     first_builtin_int_evidence: Option<CallSiteEvidence<'db>>,
     comptime_let_stmts: FxHashSet<(FuncBody<'db>, Id<Stmt<'db>>)>,
     comptime_obligations: FxHashMap<FuncBody<'db>, Vec<ComptimeObligation<'db>>>,
@@ -279,9 +280,10 @@ pub(super) struct BinOpExpr<'db> {
 }
 
 impl<'a, 'db> BodyCtx<'a, 'db> {
-    pub(super) fn specialize_evidence(&self, evidence: Evidence<'db>) -> Evidence<'db> {
+    pub(super) fn specialize_evidence(&mut self, evidence: LogicalEvidence<'db>) -> Evidence<'db> {
         let evidence = self.subst.apply_evidence(self.driver.db, evidence);
-        replay_evidence_bindings(evidence, &self.evidence_bindings)
+        self.driver
+            .elaborate_evidence(self.info.module, evidence, &self.evidence_bindings)
     }
 
     pub(super) fn stmt(&mut self, stmt_id: Id<Stmt<'db>>) -> Option<MonoStmt<'db>> {
@@ -1296,15 +1298,18 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     }
 
     pub(super) fn call_evidence_bindings(
-        &self,
+        &mut self,
         call_expr: Id<Expr<'db>>,
         callee_expr: Id<Expr<'db>>,
     ) -> Vec<(Pred<'db>, Evidence<'db>)> {
-        self.index
+        let evidence = self
+            .index
             .call_evidence
             .get(&(self.body, call_expr, callee_expr))
+            .cloned()
+            .unwrap_or_default();
+        evidence
             .into_iter()
-            .flatten()
             .filter_map(|solved| {
                 let obligation = self.result.obligations.get(solved.obligation)?;
                 Some((
@@ -1316,19 +1321,22 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     }
 
     pub(super) fn function_value_evidence_bindings(
-        &self,
+        &mut self,
         expr: Id<Expr<'db>>,
         function: DefId<'db>,
     ) -> Vec<(Pred<'db>, Evidence<'db>)> {
-        self.index
+        let evidence = self
+            .index
             .function_value_evidence
             .get(&(self.body, expr, function))
+            .cloned()
+            .unwrap_or_default();
+        evidence
             .into_iter()
-            .flatten()
             .map(|(pred, evidence)| {
                 (
-                    self.subst.apply_pred(self.driver.db, *pred),
-                    self.specialize_evidence(evidence.clone()),
+                    self.subst.apply_pred(self.driver.db, pred),
+                    self.specialize_evidence(evidence),
                 )
             })
             .collect()
@@ -1338,14 +1346,14 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         &self,
         expr: Id<Expr<'db>>,
         class: DefId<'db>,
-    ) -> Option<Evidence<'db>> {
+    ) -> Option<LogicalEvidence<'db>> {
         self.index
             .class_method_value_evidence
             .get(&(self.body, expr, class))
             .cloned()
     }
 
-    fn string_coercion_evidence(&self, expr: Id<Expr<'db>>) -> Option<Evidence<'db>> {
+    fn string_coercion_evidence(&self, expr: Id<Expr<'db>>) -> Option<LogicalEvidence<'db>> {
         self.index
             .string_coercion_evidence
             .get(&(self.body, expr))

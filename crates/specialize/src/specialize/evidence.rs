@@ -9,11 +9,18 @@ impl<'db> Driver<'db> {
         call_span: Span<'db>,
         depth: usize,
     ) -> Option<String> {
+        let dictionary_identity = match &evidence {
+            Evidence::Instance { superclasses, .. } if !superclasses.is_empty() => Some(
+                evidence_hash_suffix(self.db, std::slice::from_ref(&evidence)),
+            ),
+            _ => None,
+        };
         match evidence {
             Evidence::Instance {
                 instance,
                 args,
                 sub_evidence,
+                superclasses,
             } => {
                 let info = self.instances.get(&instance)?.clone();
                 if info.preds.len() != sub_evidence.len() {
@@ -22,14 +29,40 @@ impl<'db> Driver<'db> {
                 let method_def = info.instance.methods(self.db).iter().find(|candidate| {
                     ident_text(self.db, &candidate.sig(self.db).name) == method
                 })?;
+                let selected_dictionary = Evidence::Instance {
+                    instance,
+                    args: args.clone(),
+                    sub_evidence: sub_evidence.clone(),
+                    superclasses: superclasses.clone(),
+                };
                 let subst = TySubst::from_args(args);
                 let head = subst.apply_pred(self.db, info.head);
-                let evidence_bindings = info
+                let mut evidence_bindings = info
                     .preds
                     .iter()
                     .zip(sub_evidence.iter())
                     .map(|(pred, evidence)| (subst.apply_pred(self.db, *pred), evidence.clone()))
                     .collect::<Vec<_>>();
+                if !superclasses.is_empty() {
+                    let dictionary = selected_dictionary;
+                    let PredKind::InClass {
+                        class: ClassId::User(class),
+                        ..
+                    } = head.kind(self.db)
+                    else {
+                        return None;
+                    };
+                    for (pred, _) in &superclasses {
+                        evidence_bindings.push((
+                            *pred,
+                            Evidence::Superclass {
+                                class: *class,
+                                pred: *pred,
+                                child: Box::new(dictionary.clone()),
+                            },
+                        ));
+                    }
+                }
                 let (class_name, head_tys) = class_method_name_parts(self.db, head);
                 if !self.ensure_specialization_type_size(&head_tys, Some(call_span))
                     || !self.ensure_specialization_type_size(&[target_ty], Some(call_span))
@@ -40,7 +73,10 @@ impl<'db> Driver<'db> {
                     "{class_name}_{method}_{}",
                     def_hash_suffix(self.db, method_def.def_id_value(self.db))
                 );
-                if !sub_evidence.is_empty() {
+                if let Some(identity) = dictionary_identity {
+                    method_base.push('_');
+                    method_base.push_str(&identity);
+                } else if !sub_evidence.is_empty() {
                     method_base.push('_');
                     method_base.push_str(&evidence_hash_suffix(self.db, &sub_evidence));
                 }
@@ -63,13 +99,7 @@ impl<'db> Driver<'db> {
                     return self
                         .resolve_class_method_call(method, evidence, target_ty, call_span, depth);
                 }
-                if let Some(evidence) = self.solve_closed_pred(pred, Some(call_span))
-                    && !matches!(evidence, Evidence::Superclass { .. })
-                {
-                    return self
-                        .resolve_class_method_call(method, evidence, target_ty, call_span, depth);
-                }
-                self.resolve_class_method_call(method, *child, target_ty, call_span, depth)
+                None
             }
             Evidence::Derived {
                 kind: DerivedClauseKind::Generic { adt },
@@ -91,6 +121,7 @@ impl<'db> Driver<'db> {
                     },
                 pred,
                 sub_evidence,
+                ..
             } => {
                 let PredKind::InClass {
                     class: ClassId::User(pred_class),
@@ -121,6 +152,7 @@ impl<'db> Driver<'db> {
                 kind: DerivedClauseKind::AbiAttribs { adt },
                 pred,
                 sub_evidence,
+                ..
             } => self.specialize_derived_abi(
                 DerivedAbiKey {
                     adt,
@@ -138,6 +170,7 @@ impl<'db> Driver<'db> {
                 kind: DerivedClauseKind::AbiEncode { adt },
                 pred,
                 sub_evidence,
+                ..
             } => self.specialize_derived_abi(
                 DerivedAbiKey {
                     adt,
@@ -155,6 +188,7 @@ impl<'db> Driver<'db> {
                 kind: DerivedClauseKind::AbiDecode { adt, word_reader },
                 pred,
                 sub_evidence,
+                ..
             } => self.specialize_derived_abi(
                 DerivedAbiKey {
                     adt,
@@ -172,6 +206,7 @@ impl<'db> Driver<'db> {
                 kind: DerivedClauseKind::StorageSize { adt },
                 pred,
                 sub_evidence,
+                ..
             } => self.specialize_derived_storage(
                 DerivedStorageKey {
                     adt,
@@ -189,6 +224,7 @@ impl<'db> Driver<'db> {
                 kind: DerivedClauseKind::CanStore { adt, storage_size },
                 pred,
                 sub_evidence,
+                ..
             } => self.specialize_derived_storage(
                 DerivedStorageKey {
                     adt,
@@ -223,49 +259,149 @@ impl<'db> Driver<'db> {
                 }
                 None
             }
+            Evidence::Unavailable { pred, failure, .. } => {
+                let kind = if failure == dictionary::SuperclassFailure::ProjectionDepthExceeded {
+                    SpecializeDiagnosticKind::InstantiationDepthExceeded {
+                        limit: self.options.max_depth,
+                    }
+                } else {
+                    SpecializeDiagnosticKind::MissingEvidence {
+                        context: format!(
+                            "superclass {}: {}",
+                            pred.display(self.db),
+                            failure.description()
+                        ),
+                    }
+                };
+                self.diagnostics.push(SpecializeDiagnostic {
+                    kind,
+                    span: Some(call_span),
+                });
+                None
+            }
             Evidence::Derived { .. } => None,
         }
     }
 
-    /// A superclass method belongs to its own instance, which can occur among
-    /// the selected child instance's prerequisites. For example, `Num<word>`
-    /// carries `Typedef<word, word>` evidence; `rep` is implemented there, not
-    /// by the `Num` instance itself.
-    fn superclass_instance_evidence(
-        &self,
+    /// Project a selected dictionary; never perform instance lookup in the
+    /// entry module and never substitute the child's same-named method.
+    pub(super) fn superclass_instance_evidence(
+        &mut self,
         pred: Pred<'db>,
         evidence: &Evidence<'db>,
     ) -> Option<Evidence<'db>> {
-        match evidence {
+        self.project_superclass(pred, evidence, &mut FxHashSet::default())
+    }
+
+    fn project_superclass(
+        &mut self,
+        pred: Pred<'db>,
+        evidence: &Evidence<'db>,
+        active: &mut FxHashSet<(Pred<'db>, Evidence<'db>)>,
+    ) -> Option<Evidence<'db>> {
+        if active.len() >= self.options.max_depth {
+            return Some(Evidence::Unavailable {
+                pred,
+                failure: dictionary::SuperclassFailure::ProjectionDepthExceeded,
+                source: Box::new(evidence.clone()),
+            });
+        }
+        let request = (pred, evidence.clone());
+        if !active.insert(request.clone()) {
+            return Some(Evidence::Unavailable {
+                pred,
+                failure: dictionary::SuperclassFailure::CyclicDictionary,
+                source: Box::new(evidence.clone()),
+            });
+        }
+        let result = match evidence {
             Evidence::Instance {
-                instance,
-                args,
                 sub_evidence,
-            } => {
-                let info = self.instances.get(instance)?;
-                let head = TySubst::from_args(args.clone()).apply_pred(self.db, info.head);
-                if head == pred {
-                    return Some(evidence.clone());
-                }
-                sub_evidence
-                    .iter()
-                    .find_map(|child| self.superclass_instance_evidence(pred, child))
+                superclasses,
+                ..
             }
-            Evidence::Derived {
-                pred: derived_pred,
+            | Evidence::Derived {
                 sub_evidence,
+                superclasses,
                 ..
             } => {
-                if *derived_pred == pred {
-                    return Some(evidence.clone());
-                }
-                sub_evidence
+                if self.dictionary_predicate(evidence) == Some(pred) {
+                    Some(evidence.clone())
+                } else if let Some(child) = sub_evidence
                     .iter()
-                    .find_map(|child| self.superclass_instance_evidence(pred, child))
+                    .find(|child| self.dictionary_predicate(child) == Some(pred))
+                {
+                    // A declared dictionary for this exact predicate is
+                    // authoritative, even if another prerequisite also has it
+                    // as a superclass with different provenance.
+                    self.project_superclass(pred, child, active)
+                } else if let Some((_, recipe)) = superclasses
+                    .iter()
+                    .find(|(super_pred, _)| *super_pred == pred)
+                {
+                    match &recipe.selection {
+                        Ok(proof) => {
+                            let selected = self.elaborate_dictionary(
+                                recipe.module,
+                                proof.clone(),
+                                &recipe.bindings,
+                                false,
+                            );
+                            self.project_superclass(pred, &selected, active)
+                        }
+                        Err(failure) => Some(Evidence::Unavailable {
+                            pred,
+                            failure: *failure,
+                            source: Box::new(evidence.clone()),
+                        }),
+                    }
+                } else {
+                    let mut unavailable = None;
+                    let mut selected = None;
+                    for child in sub_evidence {
+                        match self.project_superclass(pred, child, active) {
+                            Some(evidence @ Evidence::Unavailable { .. }) => {
+                                unavailable.get_or_insert(evidence);
+                            }
+                            Some(evidence) => {
+                                selected = Some(evidence);
+                                break;
+                            }
+                            None => {}
+                        }
+                    }
+                    selected.or(unavailable)
+                }
             }
-            Evidence::Superclass { child, .. } => self.superclass_instance_evidence(pred, child),
+
+            Evidence::Superclass {
+                pred: projected,
+                child,
+                ..
+            } => self
+                .project_superclass(*projected, child, active)
+                .and_then(|selected| {
+                    if *projected == pred {
+                        Some(selected)
+                    } else {
+                        self.project_superclass(pred, &selected, active)
+                    }
+                }),
+            Evidence::Unavailable {
+                pred: unavailable,
+                source,
+                ..
+            } => {
+                if *unavailable == pred {
+                    Some(evidence.clone())
+                } else {
+                    self.project_superclass(pred, source, active)
+                }
+            }
             Evidence::Builtin { .. } => None,
-        }
+        };
+        active.remove(&request);
+        result
     }
 
     fn derived_generic_evidence(&self, pred: Pred<'db>) -> Option<Evidence<'db>> {
@@ -298,6 +434,7 @@ impl<'db> Driver<'db> {
             kind: DerivedClauseKind::Generic { adt: *def },
             pred,
             sub_evidence: Vec::new(),
+            superclasses: Vec::new(),
         })
     }
 
@@ -333,7 +470,9 @@ impl<'db> Driver<'db> {
                 return None;
             };
             match solve(self.db, trait_env, canonical_goal(self.db, pred)) {
-                Solution::Unique { evidence, .. } => return Some(evidence),
+                Solution::Unique { evidence, .. } => {
+                    return Some(self.elaborate_evidence(module, evidence, &[]));
+                }
                 // A fallback environment supplies absent dictionaries; it
                 // must never resolve ambiguity in an earlier environment.
                 Solution::Ambiguous { .. } => return None,
@@ -362,6 +501,7 @@ impl<'db> Driver<'db> {
             else {
                 continue;
             };
+            let evidence = self.elaborate_evidence(module, evidence, &[]);
             if found.as_ref().is_some_and(|existing| existing != &evidence) {
                 return None;
             }
@@ -637,46 +777,5 @@ impl<'db> Driver<'db> {
         if recovered.match_ty(self.db, extras[0], concrete_rep) {
             subst.extend_consistent(recovered);
         }
-    }
-}
-
-pub(super) fn replay_evidence_bindings<'db>(
-    evidence: Evidence<'db>,
-    bindings: &[(Pred<'db>, Evidence<'db>)],
-) -> Evidence<'db> {
-    match evidence {
-        Evidence::Builtin { pred } => bindings
-            .iter()
-            .find_map(|(given, replacement)| (*given == pred).then(|| replacement.clone()))
-            .unwrap_or(Evidence::Builtin { pred }),
-        Evidence::Instance {
-            instance,
-            args,
-            sub_evidence,
-        } => Evidence::Instance {
-            instance,
-            args,
-            sub_evidence: sub_evidence
-                .into_iter()
-                .map(|evidence| replay_evidence_bindings(evidence, bindings))
-                .collect(),
-        },
-        Evidence::Superclass { class, pred, child } => Evidence::Superclass {
-            class,
-            pred,
-            child: Box::new(replay_evidence_bindings(*child, bindings)),
-        },
-        Evidence::Derived {
-            kind,
-            pred,
-            sub_evidence,
-        } => Evidence::Derived {
-            kind,
-            pred,
-            sub_evidence: sub_evidence
-                .into_iter()
-                .map(|evidence| replay_evidence_bindings(evidence, bindings))
-                .collect(),
-        },
     }
 }

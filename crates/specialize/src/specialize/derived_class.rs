@@ -354,7 +354,7 @@ impl<'db> Driver<'db> {
             .into_iter()
             .zip(key.sub_evidence.iter().cloned())
             .collect::<Vec<_>>();
-        Some(replay_evidence_bindings(evidence, &bindings))
+        Some(self.elaborate_evidence(adt_module, evidence, &bindings))
     }
 
     pub(super) fn resolve_generic_instance(
@@ -386,7 +386,10 @@ impl<'db> Driver<'db> {
             return None;
         }
         evidence = solution_subst.apply_evidence(self.db, evidence);
-        Some(GenericInstance { rep, evidence })
+        Some(GenericInstance {
+            rep,
+            evidence: self.elaborate_evidence(adt_info.module, evidence, &[]),
+        })
     }
 
     fn generic_class_for_module(&self, module: Module<'db>) -> Option<DefId<'db>> {

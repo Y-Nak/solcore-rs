@@ -6742,3 +6742,260 @@ fn constant_conditionals_still_fold_when_discarded_bindings_are_lexical() {
         }
     }
 }
+
+#[test]
+fn superclass_dictionaries_preserve_the_selecting_module_through_calls_and_values() {
+    solcore_test_utils::run_in_large_stack(|| {
+        for entry in ["main.sol", "reversed.sol"] {
+            let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/superclass_dictionaries")
+                .join(entry);
+            let (db, file, output) = specialize_fixture_with_db(&fixture);
+            let module = nameres::module_id_for_source_file(db, file).unwrap();
+            let diagnostics = hir_ty::collect_frontend_diagnostics(db, module);
+            assert!(diagnostics.is_empty(), "{entry}: {diagnostics:#?}");
+            assert!(
+                output.diagnostics.is_empty(),
+                "{entry}: {:?}",
+                output.diagnostics
+            );
+            let functions = output
+                .module
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    MonoItem::Function(function) => Some(function),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            for (module, suffix, expected) in [("a", "A", "1"), ("b", "B", "2")] {
+                for usage in ["value", "methodValue"] {
+                    let prefix = format!("{module}_{usage}{suffix}_");
+                    let mut function = functions
+                        .iter()
+                        .find(|function| function.name.starts_with(&prefix))
+                        .unwrap_or_else(|| {
+                            panic!("missing {prefix}: {:?}", function_names(&output))
+                        });
+                    let mut visited = BTreeSet::new();
+                    loop {
+                        assert!(visited.insert(&function.name), "cyclic return in {prefix}");
+                        let numbers = function_return_numbers(&output, &function.name);
+                        if !numbers.is_empty() {
+                            assert!(
+                                numbers.iter().all(|number| number == expected),
+                                "{entry}: wrong dictionary in {prefix}: {numbers:?}"
+                            );
+                            break;
+                        }
+                        let Some(MonoStmt {
+                            kind:
+                                MonoStmtKind::Return(Some(MonoExpr {
+                                    kind: MonoExprKind::Call { callee, .. },
+                                    ..
+                                })),
+                            ..
+                        }) = function.body.last()
+                        else {
+                            panic!(
+                                "unexpected return in {}: {:?}",
+                                function.name, function.body
+                            );
+                        };
+                        function = functions
+                            .iter()
+                            .find(|function| function.name == callee.name)
+                            .unwrap_or_else(|| panic!("missing {}", callee.name));
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn superclass_methods_require_an_actual_parent_implementation() {
+    for method in ["f", "g"] {
+        let source = format!(
+            r#"
+trait Parent<t> {{ function f(x:t) returns(word); }}
+trait Child<t> where t:Parent {{ function {method}(x:t) returns(word); }}
+impl Child<word> {{ function {method}(x:word) returns(word) {{ return 99; }} }}
+function run<t>(x:t) returns(word) where t:Child {{ return Parent.f(x); }}
+function main() returns(word) {{ let x:word=0; return run(x); }}
+"#
+        );
+        let (_, output) = specialize_src(&source);
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic.kind,
+                SpecializeDiagnosticKind::MissingEvidence { .. }
+            )),
+            "{method}: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn cyclic_superclass_dictionaries_preserve_repeated_projections() {
+    let (_, output) = specialize_src(
+        r#"
+trait Parent<t> where t:Child { function f(x:t) returns(word); }
+trait Child<t> where t:Parent { function g(x:t) returns(word); }
+impl Parent<word> { function f(x:word) returns(word) { return 1; } }
+impl Child<word> { function g(x:word) returns(word) { return 2; } }
+function fromChild<t>(x:t) returns(word) where t:Child { return Parent.f(x); }
+function fromParent<t>(x:t) returns(word) where t:Parent { return fromChild(x); }
+function relay<t>(x:t) returns(word) where t:Child { return fromParent(x); }
+function main() returns(word) { let x:word=0; return relay(x); }
+"#,
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(main_return_number(&output).as_deref(), Some("1"));
+}
+
+#[test]
+fn unused_superclass_selections_do_not_reject_child_methods() {
+    for parent in [
+        "trait Parent<t> { function f(x:t) returns(word); }",
+        "trait Parent<t> where t:Child { function f(x:t) returns(word); }",
+    ] {
+        let source = format!(
+            r#"
+{parent}
+trait Child<t> where t:Parent {{ function g(x:t) returns(word); }}
+trait Other<t> where t:Parent {{}}
+impl Child<word> {{ function g(x:word) returns(word) {{ return 99; }} }}
+impl Other<word> {{}}
+function main() returns(word) {{ let x:word=0; return Child.g(x); }}
+"#
+        );
+        let (_, output) = specialize_src(&source);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        assert_eq!(main_return_number(&output).as_deref(), Some("99"));
+    }
+}
+
+#[test]
+fn cyclic_superclass_projections_reuse_recursive_function_specializations() {
+    let (_, output) = specialize_src(
+        r#"
+trait Parent<t> where t:Child { function f(x:t) returns(word); }
+trait Child<t> where t:Parent { function g(x:t) returns(word); }
+impl Parent<word> { function f(x:word) returns(word) { return 1; } }
+impl Child<word> { function g(x:word) returns(word) { return 2; } }
+function decrement(n:word) returns(word) { let result:word; assembly { result := sub(n,1) } return result; }
+function recurse<t>(x:t,n:word) returns(word) where t:Child {
+  match (n) {
+    case (0) { return Parent.f(x); }
+    case (_) { return viaParent(x,decrement(n)); }
+  }
+}
+function viaParent<t>(x:t,n:word) returns(word) where t:Parent { return recurse(x,n); }
+function main(n:word) returns(word) { let x:word=0; return recurse(x,n); }
+"#,
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert!(
+        function_names(&output).len() < 10,
+        "equivalent dictionaries must reuse recursive specializations"
+    );
+}
+
+#[test]
+fn implicit_superclass_bindings_survive_recursive_instance_methods() {
+    let db = Box::leak(Box::new(TestDb::default()));
+    let source = r#"
+trait Parent<t> { function f(x:t) returns(word); }
+trait Child<t> where t:Parent { function g(x:t) returns(word); }
+impl Parent<word> { function f(x:word) returns(word) { return 1; } }
+function decrement(n:word) returns(word) { let result:word; assembly { result := sub(n,1) } return result; }
+impl Child<word> {
+  function g(x:word) returns(word) {
+    match (x) {
+      case (0) { return Parent.f(x); }
+      case (_) { return Child.g(decrement(x)); }
+    }
+  }
+}
+function main(n:word) returns(word) { return Child.g(n); }
+"#;
+    let output = specialize_module(
+        db,
+        parse_module(db, source),
+        SpecializeOptions {
+            max_depth: 16,
+            ..SpecializeOptions::default()
+        },
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert!(function_names(&output).len() < 10);
+}
+
+#[test]
+fn unused_unavailable_superclasses_have_finite_recursive_dictionary_identity() {
+    for parent in [
+        "trait Parent<t> { function f(x:t) returns(word); }",
+        "trait Parent<t> where t:Child { function f(x:t) returns(word); }",
+    ] {
+        for sibling in [
+            "",
+            "trait Sibling<t> where t:Parent {} impl Sibling<word> {}",
+        ] {
+            for result in ["99", "Parent.f(x)"] {
+                let db = Box::leak(Box::new(TestDb::default()));
+                let source = format!(
+                    r#"
+{parent}
+trait Child<t> where t:Parent {{ function g(x:t) returns(word); }}
+{sibling}
+function decrement(n:word) returns(word) {{ let result:word; assembly {{ result := sub(n,1) }} return result; }}
+impl Child<word> {{
+  function g(x:word) returns(word) {{
+    match (x) {{
+      case (0) {{ return {result}; }}
+      case (_) {{ return Child.g(decrement(x)); }}
+    }}
+  }}
+}}
+function main(n:word) returns(word) {{ return Child.g(n); }}
+"#
+                );
+                let output = specialize_module(
+                    db,
+                    parse_module(db, &source),
+                    SpecializeOptions {
+                        max_depth: 16,
+                        ..SpecializeOptions::default()
+                    },
+                );
+                if result == "99" {
+                    assert!(
+                        output.diagnostics.is_empty(),
+                        "{source}: {:?}",
+                        output.diagnostics
+                    );
+                } else {
+                    assert!(
+                        output.diagnostics.iter().any(|diagnostic| matches!(
+                            diagnostic.kind,
+                            SpecializeDiagnosticKind::MissingEvidence { .. }
+                        )),
+                        "{source}: {:?}",
+                        output.diagnostics
+                    );
+                }
+                assert!(
+                    !output.diagnostics.iter().any(|diagnostic| matches!(
+                        diagnostic.kind,
+                        SpecializeDiagnosticKind::InstantiationDepthExceeded { .. }
+                    )),
+                    "{source}: {:?}",
+                    output.diagnostics
+                );
+                assert!(function_names(&output).len() < 10, "{source}");
+            }
+        }
+    }
+}

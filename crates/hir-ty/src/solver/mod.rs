@@ -113,7 +113,7 @@ use derived_storage::{
 use display::{display_scheme_source, display_vars};
 use engine::{Answer, TabledEngine};
 pub use env::{
-    trait_env_for_module, trait_env_from_module_resolution,
+    direct_superclass_predicates, trait_env_for_module, trait_env_from_module_resolution,
     trait_env_from_module_resolution_and_imports, trait_env_with_givens,
 };
 use evidence::{apply_evidence, clause_evidence, solution_from_answers};

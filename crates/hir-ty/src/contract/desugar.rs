@@ -174,6 +174,7 @@ fn collect_desugar_plans<'db>(
                 function,
                 resolution,
                 inherited_type_vars,
+                &[],
                 out,
             );
         }
@@ -186,7 +187,13 @@ fn collect_desugar_plans<'db>(
             for item in contract.items(db) {
                 if let ContractItem::FunctionDef(function) = *item {
                     collect_function_desugar_plan(
-                        db, module, function, resolution, &inherited, out,
+                        db,
+                        module,
+                        function,
+                        resolution,
+                        &inherited,
+                        &[],
+                        out,
                     );
                 }
             }
@@ -197,8 +204,25 @@ fn collect_desugar_plans<'db>(
                 instance.def_id_value(db),
                 instance.type_var_elems(db),
             ));
+            let lowerer = TypeLowering::from_item_resolutions(
+                db,
+                &resolution.item_resolutions,
+                BinderEnv::from_type_vars(&inherited),
+            );
+            let mut normalizer = AliasNormalizer::new(db, module, &resolution.item_resolutions);
+            let mut givens = instance
+                .preds(db)
+                .iter()
+                .copied()
+                .map(|pred| normalizer.normalize_pred(lowerer.lower_pred(pred)))
+                .collect::<Vec<_>>();
+            let head = normalizer.normalize_pred(lowerer.lower_pred(instance.head(db)));
+            let env = desugar_trait_env(db, module, resolution);
+            givens.extend(crate::direct_superclass_predicates(db, env.base(db), head));
             for method in instance.methods(db) {
-                collect_function_desugar_plan(db, module, *method, resolution, &inherited, out);
+                collect_function_desugar_plan(
+                    db, module, *method, resolution, &inherited, &givens, out,
+                );
             }
         }
         Item::TypeAlias(_)
@@ -217,6 +241,7 @@ fn collect_function_desugar_plan<'db>(
     function: FunctionDef<'db>,
     resolution: &hir_nameres::ModuleResolutionMap<'db>,
     inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
+    inherited_givens: &[crate::Pred<'db>],
     out: &mut Vec<BodyDesugarPlan<'db>>,
 ) {
     let Some(body) = function.body(db) else {
@@ -242,6 +267,7 @@ fn collect_function_desugar_plan<'db>(
         resolution,
         body_map,
         inherited_type_vars,
+        inherited_givens,
     )
     .map(|result| {
         result
@@ -276,6 +302,24 @@ fn collect_function_desugar_plan<'db>(
     }
 }
 
+fn desugar_trait_env<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    resolution: &hir_nameres::ModuleResolutionMap<'db>,
+) -> crate::TraitEnvId<'db> {
+    let Some(module_id) = nameres::module_id_for_source_file(db, module.def_id_value(db).file(db))
+    else {
+        return trait_env_from_module_resolution(db, module, resolution);
+    };
+    let env = nameres::module_env_for_hir_module(db, module_id, module);
+    crate::trait_env_from_module_resolution_and_imports(
+        db,
+        module,
+        resolution,
+        &env.import_surface(),
+    )
+}
+
 fn desugar_inference_result<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
@@ -283,6 +327,7 @@ fn desugar_inference_result<'db>(
     resolution: &hir_nameres::ModuleResolutionMap<'db>,
     body_map: &hir_nameres::BodyResolutionMap<'db>,
     inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
+    inherited_givens: &[crate::Pred<'db>],
 ) -> Option<crate::InferenceResult<'db>> {
     if !body_map.diagnostics.is_empty() {
         return None;
@@ -305,12 +350,10 @@ fn desugar_inference_result<'db>(
         .map(|param| normalizer.normalize_ty(param))
         .collect();
     lowered.ret = normalizer.normalize_ty(lowered.ret);
-    let base_trait_env = trait_env_from_module_resolution(db, module, resolution);
-    let trait_env = trait_env_with_givens(
-        db,
-        base_trait_env,
-        lowered.scheme.body(db).preds(db).clone(),
-    );
+    let base_trait_env = desugar_trait_env(db, module, resolution);
+    let mut givens = lowered.scheme.body(db).preds(db).clone();
+    givens.extend_from_slice(inherited_givens);
+    let trait_env = trait_env_with_givens(db, base_trait_env, givens);
     let pre_typeck_desugar = crate::pre_typeck_desugar_body_tree(db, body);
     let ctx = BodyTyContext::new(
         module,

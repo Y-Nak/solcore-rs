@@ -4961,3 +4961,51 @@ fn solver_budget_bounds_successful_and_answerless_work() {
         }
     }
 }
+
+#[test]
+fn instance_method_bodies_assume_their_declared_superclasses() {
+    for name in ["f", "g"] {
+        let source = format!(
+            r#"
+trait Parent<t> {{ function f(x:t) returns(word); }}
+trait Child<t> where t:Parent {{ function {name}(x:t) returns(word); }}
+trait Sibling<t> where t:Parent {{}}
+impl Sibling<word> {{}}
+impl Child<word> {{ function {name}(x:word) returns(word) {{ return Parent.f(x); }} }}
+"#
+        );
+        let diagnostics = lowered_module_typeck_diagnostics(&source);
+        assert!(diagnostics.is_empty(), "{name}: {diagnostics:#?}");
+    }
+}
+
+#[test]
+fn direct_superclass_predicates_instantiate_aliases_and_secondary_arguments() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+type Alias(a) = a;
+trait Parent<a,b> {}
+trait Child<a,b> where a:Parent<Alias<b>> {}
+"#,
+    );
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &resolution);
+    let child = Pred::in_class(
+        &db,
+        class_id(&db, module, "Child"),
+        Ty::word(&db),
+        vec![Ty::bool(&db)],
+    );
+    let expected = Pred::in_class(
+        &db,
+        class_id(&db, module, "Parent"),
+        Ty::word(&db),
+        vec![Ty::bool(&db)],
+    );
+    assert_eq!(
+        crate::direct_superclass_predicates(&db, env.base(&db), child),
+        vec![expected]
+    );
+}

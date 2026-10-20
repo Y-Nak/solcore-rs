@@ -1005,6 +1005,13 @@ impl<'db> Driver<'db> {
             && let Some(instance) = self.instances.get(instance)
         {
             givens.extend(instance.preds.iter().copied());
+            if let Some(env) = self.try_module_trait_env(info.module) {
+                givens.extend(hir_ty::direct_superclass_predicates(
+                    self.db,
+                    env.base(self.db),
+                    instance.head,
+                ));
+            }
         }
         givens
     }

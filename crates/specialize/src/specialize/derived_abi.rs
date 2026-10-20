@@ -442,7 +442,7 @@ impl<'db> Driver<'db> {
             .into_iter()
             .zip(key.sub_evidence.iter().cloned())
             .collect::<Vec<_>>();
-        Some(replay_evidence_bindings(evidence, &bindings))
+        Some(self.elaborate_evidence(adt_module, evidence, &bindings))
     }
 }
 
