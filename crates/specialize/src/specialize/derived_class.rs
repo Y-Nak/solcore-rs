@@ -109,6 +109,11 @@ impl<'db> Driver<'db> {
         {
             return None;
         }
+        method_subst.refine_from_evidence(
+            self.db,
+            scheme.body(self.db).preds(self.db),
+            &key.method_bindings,
+        );
         let TyKind::Function {
             params: method_params,
             ret: method_ret,
@@ -164,6 +169,14 @@ impl<'db> Driver<'db> {
             self.derived_class_absurd_expr(*target_ret, span, depth)?
         } else {
             let generic = self.resolve_generic_instance(&adt_info, key.main)?;
+            let evidence = self.derived_method_evidence(
+                key,
+                scheme.body(self.db).preds(self.db),
+                &method_subst,
+                self_ty,
+                generic.rep,
+                span,
+            )?;
             self.derived_class_delegated_expr(
                 key,
                 method_params,
@@ -172,6 +185,7 @@ impl<'db> Driver<'db> {
                 &params,
                 *target_ret,
                 &generic,
+                evidence,
                 span,
                 depth,
             )?
@@ -208,6 +222,7 @@ impl<'db> Driver<'db> {
         params: &[MonoParam<'db>],
         target_ret: Ty<'db>,
         generic: &GenericInstance<'db>,
+        evidence: MethodEvidence<'db>,
         span: Span<'db>,
         depth: usize,
     ) -> Option<MonoExpr<'db>> {
@@ -260,23 +275,8 @@ impl<'db> Driver<'db> {
             strip_comptime_ty(self.db, method_ret) == strip_comptime_ty(self.db, self_ty);
         let delegated_ret = if returns_self { rep } else { target_ret };
         let delegated_ty = Ty::function(self.db, delegated_params, delegated_ret);
-        let evidence = self.solve_class_method_pred_with_givens(
-            key.class,
-            &key.method,
-            delegated_ty,
-            key,
-            Some(span),
-        )?;
-        let delegated_name = self.resolve_class_method_call(
-            &key.method,
-            MethodEvidence {
-                dictionary: evidence,
-                bindings: key.method_bindings.clone(),
-            },
-            delegated_ty,
-            span,
-            depth + 1,
-        )?;
+        let delegated_name =
+            self.resolve_class_method_call(&key.method, evidence, delegated_ty, span, depth + 1)?;
         let delegated = MonoExpr {
             span,
             ty: MonoTy::new_unchecked(delegated_ret),
@@ -311,68 +311,86 @@ impl<'db> Driver<'db> {
         })
     }
 
-    fn solve_class_method_pred_with_givens(
+    /// Instantiate the same method binders for the wrapper and its delegated
+    /// representation. Only Self changes; another method binder may happen to
+    /// have the same concrete type and must retain its caller-selected proof.
+    fn derived_method_evidence(
         &mut self,
-        class: DefId<'db>,
-        method: &str,
-        callee_ty: Ty<'db>,
         key: &DerivedClassKey<'db>,
-        span: Option<Span<'db>>,
-    ) -> Option<Evidence<'db>> {
+        predicates: &[Pred<'db>],
+        source_subst: &TySubst<'db>,
+        self_ty: Ty<'db>,
+        rep: Ty<'db>,
+        span: Span<'db>,
+    ) -> Option<MethodEvidence<'db>> {
+        let mut delegated_subst = TySubst::default();
+        if !delegated_subst.match_ty(self.db, self_ty, rep) {
+            return None;
+        }
+        delegated_subst.extend_consistent(source_subst.clone());
+        let (receiver, method_predicates) = predicates.split_first()?;
+        let receiver = delegated_subst.apply_pred(self.db, *receiver);
         let TyKind::Named { args, .. } = key.main.kind(self.db) else {
             return None;
         };
         if args.len() != key.sub_evidence.len() {
             return None;
         }
-        let givens = args
-            .iter()
-            .map(|arg| Pred::in_class(self.db, ClassId::User(class), *arg, Vec::new()))
-            .collect::<Vec<_>>();
-        let method_info = self.classes.get(&class)?.clone();
-        let method_sig = method_info
-            .class
-            .methods(self.db)
-            .iter()
-            .find(|candidate| ident_text(self.db, &candidate.name) == method)?;
-        let resolution = self
-            .module_resolutions
-            .get(&method_info.module.def_id_value(self.db))?;
-        let method_vars = hir_ty::class_method_type_vars(self.db, method_info.class, method_sig);
-        let lowerer = TypeLowering::from_item_resolutions(
-            self.db,
-            &resolution.item_resolutions,
-            BinderEnv::from_type_vars(&method_vars),
-        );
-        let mut normalizer =
-            AliasNormalizer::new(self.db, method_info.module, &resolution.item_resolutions);
-        let scheme =
-            normalizer.normalize_scheme(lowerer.lower_class_method(method_info.class, method_sig));
-        let mut subst = TySubst::default();
-        if !subst.match_ty(self.db, scheme.body(self.db).ty(self.db), callee_ty) {
-            return None;
+        let mut bindings = key.method_bindings.clone();
+        for (arg, evidence) in args.iter().zip(key.sub_evidence.iter().cloned()) {
+            let pred = Pred::in_class(self.db, ClassId::User(key.class), *arg, Vec::new());
+            if !bindings.iter().any(|(given, _)| *given == pred) {
+                bindings.push((pred, evidence));
+            }
         }
-        let goal = scheme
-            .body(self.db)
-            .preds(self.db)
-            .iter()
-            .map(|pred| subst.apply_pred(self.db, *pred))
-            .find(|pred| matches!(pred.kind(self.db), PredKind::InClass { class: ClassId::User(def), .. } if *def == class))?;
         let adt_module = self.adts.get(&key.adt)?.module;
         let base = self.try_module_trait_env(adt_module).or_else(|| {
-            self.push_missing_module_trait_env(span);
+            self.push_missing_module_trait_env(Some(span));
             None
         })?;
-        let env = trait_env_with_givens(self.db, base, givens.clone());
-        let Solution::Unique { evidence, .. } = solve(self.db, env, canonical_goal(self.db, goal))
-        else {
-            return None;
-        };
-        let bindings = givens
-            .into_iter()
-            .zip(key.sub_evidence.iter().cloned())
-            .collect::<Vec<_>>();
-        Some(self.elaborate_evidence(adt_module, evidence, &bindings))
+        let env = trait_env_with_givens(
+            self.db,
+            base,
+            bindings.iter().map(|(pred, _)| *pred).collect(),
+        );
+        let mut selected = Vec::new();
+        for predicate in std::iter::once(receiver).chain(
+            method_predicates
+                .iter()
+                .map(|pred| delegated_subst.apply_pred(self.db, *pred)),
+        ) {
+            // Unchanged method predicates retain the exact caller dictionary.
+            // A Self-dependent predicate instead denotes a new obligation in
+            // the ADT definition environment, with the wrapper's givens.
+            let evidence = if let Some((_, evidence)) =
+                bindings.iter().find(|(given, _)| *given == predicate)
+            {
+                evidence.clone()
+            } else {
+                let Solution::Unique { evidence, .. } =
+                    solve(self.db, env, canonical_goal(self.db, predicate))
+                else {
+                    self.diagnostics.push(SpecializeDiagnostic {
+                        kind: SpecializeDiagnosticKind::MissingEvidence {
+                            context: format!(
+                                "derived {}: {}",
+                                key.method,
+                                predicate.display(self.db)
+                            ),
+                        },
+                        span: Some(span),
+                    });
+                    return None;
+                };
+                self.elaborate_evidence(adt_module, evidence, &bindings)
+            };
+            selected.push((predicate, evidence));
+        }
+        let dictionary = selected.remove(0).1;
+        Some(MethodEvidence {
+            dictionary,
+            bindings: selected,
+        })
     }
 
     pub(super) fn resolve_generic_instance(

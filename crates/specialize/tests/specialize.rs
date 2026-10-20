@@ -7131,3 +7131,147 @@ function main(x:word,y:word) returns(word) { return C.f(x,y); }
             if matches!(function.origin, MonoFunctionOrigin::InstanceMethod { .. })
     )));
 }
+
+#[test]
+fn trait_instance_calls_keep_comptime_qualified_type_arguments() {
+    for call in ["C.f(x)", "indirect(x)"] {
+        let (_, output) = specialize_src(&format!(
+            r#"
+enum Box<a> {{ Box(a) }}
+trait C<t> {{ function f(x:t) returns(word); }}
+impl<a> C<Box<a>> {{ function f(x:Box<a>) returns(word) {{ return 7; }} }}
+function indirect<t>(x:t) returns(word) where t:C {{ return C.f(x); }}
+function main() returns(word) {{
+  let x:comptime<Box<comptime<word>>> = Box(3);
+  return {call};
+}}
+"#,
+        ));
+        assert!(
+            output.diagnostics.is_empty(),
+            "{call}: {:?}",
+            output.diagnostics
+        );
+        assert_eq!(main_return_number(&output), Some("7".to_owned()));
+    }
+}
+
+#[test]
+fn derived_methods_adapt_self_dependent_constraints() {
+    for call in [
+        "C.f(Box(7))",
+        "apply(C.f,Box(7))",
+        "apply(lam(x:Box)->word { return C.f(x); },Box(7))",
+    ] {
+        let (db, file, output) = specialize_src_with_std_and_db(&format!(
+            r#"
+import {{Generic}} from std.Generic;
+trait P<t> {{ function p(x:t) returns(word); }}
+trait C<t> {{ function f(x:t) returns(word) where t:P; }}
+impl P<word> {{ function p(x:word) returns(word) {{ return x; }} }}
+impl C<word> {{
+  function f(x:word) returns(word) where word:P {{ return P.p(x); }}
+}}
+#[derive(C)] enum Box {{ Box(word) }}
+impl P<Box> {{ function p(x:Box) returns(word) {{ return 99; }} }}
+function apply(f:function(Box) returns(word),x:Box) returns(word) {{ return f(x); }}
+function main() returns(word) {{ return {call}; }}
+"#,
+        ));
+        let module = nameres::module_id_for_source_file(db, file).unwrap();
+        assert!(hir_ty::collect_frontend_diagnostics(db, module).is_empty());
+        assert!(
+            output.diagnostics.is_empty(),
+            "{call}: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn derived_method_constraints_replace_self_binders_without_replacing_equal_method_arguments() {
+    let (db, file, output) = specialize_src_with_std_and_db(
+        r#"
+import {Generic} from std.Generic;
+trait P<t> { function p(x:t) returns(word); }
+trait C<t> { function f<u>(x:t,y:u) returns(word) where t:P,u:P; }
+impl P<word> { function p(x:word) returns(word) { return x; } }
+impl C<word> {
+  function f<u>(x:word,y:u) returns(word) where word:P,u:P {
+    return primAddWord(P.p(x),P.p(y));
+  }
+}
+#[derive(C)] enum Box { Box(word) }
+impl P<Box> { function p(x:Box) returns(word) { return 99; } }
+function main() returns(word) { return C.f(Box(7),Box(3)); }
+"#,
+    );
+    let module = nameres::module_id_for_source_file(db, file).unwrap();
+    assert!(
+        hir_ty::collect_frontend_diagnostics(db, module).is_empty(),
+        "{:?}",
+        hir_ty::collect_frontend_diagnostics(db, module)
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(main_return_number(&output), Some("106".to_owned()));
+}
+
+#[test]
+fn derived_method_constraints_adapt_nested_self_and_secondary_arguments() {
+    let (db, file, output) = specialize_src_with_std_and_db(
+        r#"
+import {Generic} from std.Generic;
+trait P<t,r> { function p(x:t) returns(word); }
+trait C<t> { function f<u,r>(x:t,y:u) returns(word) where (t,u):P<(t,r)>; }
+impl P<(word,word),(word,bool)> {
+  function p(x:(word,word)) returns(word) { return 7; }
+}
+impl C<word> {
+  function f<u,r>(x:word,y:u) returns(word) where (word,u):P<(word,r)> {
+    return P.p((x,y));
+  }
+}
+#[derive(C)] enum Box { Box(word) }
+impl P<(Box,word),(Box,bool)> {
+  function p(x:(Box,word)) returns(word) { return 99; }
+}
+function main() returns(word) { return C.f(Box(1),2); }
+"#,
+    );
+    let module = nameres::module_id_for_source_file(db, file).unwrap();
+    assert!(
+        hir_ty::collect_frontend_diagnostics(db, module).is_empty(),
+        "{:?}",
+        hir_ty::collect_frontend_diagnostics(db, module)
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(main_return_number(&output), Some("7".to_owned()));
+}
+
+#[test]
+fn derived_method_constraints_do_not_relabel_the_source_dictionary() {
+    let (db, file, output) = specialize_src_with_std_and_db(
+        r#"
+import {Generic} from std.Generic;
+trait P<t> { function p(x:t) returns(word); }
+trait C<t> { function f(x:t) returns(word) where t:P; }
+impl C<word> {
+  function f(x:word) returns(word) where word:P { return P.p(x); }
+}
+#[derive(C)] enum Box { Box(word) }
+impl P<Box> { function p(x:Box) returns(word) { return 99; } }
+function main() returns(word) { return C.f(Box(7)); }
+"#,
+    );
+    let module = nameres::module_id_for_source_file(db, file).unwrap();
+    assert!(
+        hir_ty::collect_frontend_diagnostics(db, module).is_empty(),
+        "{:?}",
+        hir_ty::collect_frontend_diagnostics(db, module)
+    );
+    assert!(output.diagnostics.iter().any(|diagnostic| matches!(
+        &diagnostic.kind,
+        SpecializeDiagnosticKind::MissingEvidence { context }
+            if context == "derived f: word: P"
+    )));
+}
