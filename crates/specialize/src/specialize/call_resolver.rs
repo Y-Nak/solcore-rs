@@ -61,6 +61,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             });
         };
 
+        let evidence = self.method_call_evidence(expr.expr_id, expr.expr_id, evidence);
         let Some(name) = self
             .driver
             .resolve_class_method_call(method, evidence, callee_ty, expr.span, self.depth)
@@ -126,6 +127,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 });
                 return Some(fallback());
             };
+            let evidence = self.method_call_evidence(expr_id, expr_id, evidence);
             let Some(name) = self
                 .driver
                 .resolve_class_method_call(method, evidence, callee_ty, span, self.depth)
@@ -422,6 +424,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                         self.driver
                             .solve_class_method_pred(class, &name, callee_ty, Some(span))
                     });
+                let evidence =
+                    evidence.map(|evidence| self.method_call_evidence(call_expr, callee, evidence));
                 if let Some(evidence) = evidence
                     && let Some(name) = self
                         .driver
@@ -485,6 +489,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                         let evidence = self
                             .call_evidence(call_expr, callee)
                             .map(|evidence| self.specialize_evidence(evidence.evidence));
+                        let evidence = evidence
+                            .map(|evidence| self.method_call_evidence(call_expr, callee, evidence));
                         if let Some(evidence) = evidence
                             && let Some(name) = self.driver.resolve_class_method_call(
                                 "invoke", evidence, callee_ty, span, self.depth,
@@ -530,6 +536,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                             self.driver
                                 .solve_class_method_pred(class, &name, callee_ty, Some(span))
                         });
+                    let evidence = evidence
+                        .map(|evidence| self.method_call_evidence(call_expr, callee, evidence));
                     if let Some(evidence) = evidence
                         && let Some(name) = self
                             .driver
@@ -865,6 +873,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             let key = SpecKey {
                 def,
                 ty: callee_ty,
+                subst,
                 base_name: name,
                 origin: MonoFunctionOrigin::Source,
                 evidence_bindings,

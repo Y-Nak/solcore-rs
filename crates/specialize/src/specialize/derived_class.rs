@@ -34,6 +34,16 @@ impl<'db> Driver<'db> {
             base_name.push('_');
             base_name.push_str(&evidence_hash_suffix(self.db, &key.sub_evidence));
         }
+        if !key.method_bindings.is_empty() {
+            base_name.push('_');
+            base_name.push_str(&evidence_hash_suffix(
+                self.db,
+                &key.method_bindings
+                    .iter()
+                    .map(|(_, evidence)| evidence.clone())
+                    .collect::<Vec<_>>(),
+            ));
+        }
         let name = specialize_name(self.db, &base_name, &[key.target_ty]);
         self.derived_classes.insert(key.clone(), name.clone());
         self.derived_class_order.push(key.clone());
@@ -257,8 +267,16 @@ impl<'db> Driver<'db> {
             key,
             Some(span),
         )?;
-        let delegated_name =
-            self.resolve_class_method_call(&key.method, evidence, delegated_ty, span, depth + 1)?;
+        let delegated_name = self.resolve_class_method_call(
+            &key.method,
+            MethodEvidence {
+                dictionary: evidence,
+                bindings: key.method_bindings.clone(),
+            },
+            delegated_ty,
+            span,
+            depth + 1,
+        )?;
         let delegated = MonoExpr {
             span,
             ty: MonoTy::new_unchecked(delegated_ret),
@@ -474,6 +492,7 @@ impl<'db> Driver<'db> {
             def,
             ty: callee_ty,
             base_name: specialize_name(self.db, &base, &args),
+            subst,
             origin: MonoFunctionOrigin::Source,
             evidence_bindings: Vec::new(),
         };

@@ -5,6 +5,14 @@ pub(super) struct TySubst<'db> {
     vars: FxHashMap<u32, Ty<'db>>,
 }
 
+impl Hash for TySubst<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let mut vars = self.vars.iter().collect::<Vec<_>>();
+        vars.sort_by_key(|(index, _)| **index);
+        vars.hash(state);
+    }
+}
+
 impl<'db> TySubst<'db> {
     pub(super) fn from_args(args: Vec<Ty<'db>>) -> Self {
         let vars = args

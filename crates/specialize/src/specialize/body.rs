@@ -23,6 +23,7 @@ pub(super) struct BodyCtx<'a, 'db> {
 
 /// A value expression and the function or class whose dictionary it requires.
 type ValueEvidenceKey<'db> = (FuncBody<'db>, Id<Expr<'db>>, DefId<'db>);
+type LogicalEvidenceBindings<'db> = Vec<(Pred<'db>, LogicalEvidence<'db>)>;
 
 pub(super) struct BodyIndex<'db> {
     expr_tys: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), Ty<'db>>,
@@ -32,9 +33,10 @@ pub(super) struct BodyIndex<'db> {
     pat_resolutions: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), hir_nameres::Resolution<'db>>,
     call_evidence:
         FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, Id<Expr<'db>>), Vec<CallSiteEvidence<'db>>>,
-    function_value_evidence:
-        FxHashMap<ValueEvidenceKey<'db>, Vec<(Pred<'db>, LogicalEvidence<'db>)>>,
+    function_value_evidence: FxHashMap<ValueEvidenceKey<'db>, LogicalEvidenceBindings<'db>>,
     class_method_value_evidence: FxHashMap<ValueEvidenceKey<'db>, LogicalEvidence<'db>>,
+    class_method_value_bindings:
+        FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), LogicalEvidenceBindings<'db>>,
     string_coercion_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), LogicalEvidence<'db>>,
     first_builtin_int_evidence: Option<CallSiteEvidence<'db>>,
     comptime_let_stmts: FxHashSet<(FuncBody<'db>, Id<Stmt<'db>>)>,
@@ -56,6 +58,7 @@ impl<'db> BodyIndex<'db> {
             call_evidence: FxHashMap::default(),
             function_value_evidence: FxHashMap::default(),
             class_method_value_evidence: FxHashMap::default(),
+            class_method_value_bindings: FxHashMap::default(),
             string_coercion_evidence: FxHashMap::default(),
             first_builtin_int_evidence: None,
             comptime_let_stmts: FxHashSet::default(),
@@ -145,6 +148,11 @@ impl<'db> BodyIndex<'db> {
             let hir_ty::ObligationSource::ClassMethod { body, expr } = obligation.source else {
                 continue;
             };
+            index
+                .class_method_value_bindings
+                .entry((body, expr))
+                .or_default()
+                .push((obligation.pred, solved.evidence.clone()));
             let PredKind::InClass {
                 class: ClassId::User(class),
                 ..
@@ -579,6 +587,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                                     )
                                 });
                             if let Some(specialized) = evidence.and_then(|evidence| {
+                                let evidence = self.method_value_evidence(expr_id, evidence);
                                 self.driver.resolve_class_method_call(
                                     &name, evidence, ty, expr.span, self.depth,
                                 )
@@ -1318,6 +1327,44 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 ))
             })
             .collect()
+    }
+
+    pub(super) fn method_call_evidence(
+        &mut self,
+        call_expr: Id<Expr<'db>>,
+        callee_expr: Id<Expr<'db>>,
+        dictionary: Evidence<'db>,
+    ) -> MethodEvidence<'db> {
+        MethodEvidence {
+            dictionary,
+            bindings: self.call_evidence_bindings(call_expr, callee_expr),
+        }
+    }
+
+    fn method_value_evidence(
+        &mut self,
+        expr: Id<Expr<'db>>,
+        dictionary: Evidence<'db>,
+    ) -> MethodEvidence<'db> {
+        let proofs = self
+            .index
+            .class_method_value_bindings
+            .get(&(self.body, expr))
+            .cloned()
+            .unwrap_or_default();
+        let bindings = proofs
+            .into_iter()
+            .map(|(pred, proof)| {
+                (
+                    self.subst.apply_pred(self.driver.db, pred),
+                    self.specialize_evidence(proof),
+                )
+            })
+            .collect();
+        MethodEvidence {
+            dictionary,
+            bindings,
+        }
     }
 
     pub(super) fn function_value_evidence_bindings(

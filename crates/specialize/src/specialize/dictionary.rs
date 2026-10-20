@@ -1,5 +1,22 @@
 use super::*;
 
+/// A method instantiation needs both its receiver dictionary and the
+/// independently selected dictionaries for the method's own constraints.
+#[derive(Debug, Clone)]
+pub(super) struct MethodEvidence<'db> {
+    pub dictionary: Evidence<'db>,
+    pub bindings: Vec<(Pred<'db>, Evidence<'db>)>,
+}
+
+impl<'db> From<Evidence<'db>> for MethodEvidence<'db> {
+    fn from(dictionary: Evidence<'db>) -> Self {
+        Self {
+            dictionary,
+            bindings: Vec::new(),
+        }
+    }
+}
+
 /// An executable dictionary retains the environment in which each implicit
 /// superclass was selected. Solver proofs only describe declared prerequisites.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

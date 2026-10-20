@@ -6999,3 +6999,135 @@ function main(n:word) returns(word) {{ return Child.g(n); }}
         }
     }
 }
+
+#[test]
+fn trait_methods_preserve_method_local_dictionaries_and_binders() {
+    solcore_test_utils::run_in_large_stack(|| {
+        for entry in ["main.sol", "reversed.sol"] {
+            let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/trait_method_instantiations")
+                .join(entry);
+            let (db, file, output) = specialize_fixture_with_db(&fixture);
+            let module = nameres::module_id_for_source_file(db, file).unwrap();
+            assert!(hir_ty::collect_frontend_diagnostics(db, module).is_empty());
+            assert!(
+                output.diagnostics.is_empty(),
+                "{entry}: {:?}",
+                output.diagnostics
+            );
+            let functions = output
+                .module
+                .items
+                .iter()
+                .filter_map(|item| {
+                    if let MonoItem::Function(function) = item {
+                        Some(function)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            let methods = functions
+                .iter()
+                .filter(|function| {
+                    matches!(
+                        &function.origin,
+                        MonoFunctionOrigin::InstanceMethod { method, .. } if method == "choose"
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                methods.len(),
+                2,
+                "one recursive method clone per selected dictionary: {methods:#?}"
+            );
+            assert_ne!(methods[0].name, methods[1].name);
+            let local_methods = functions
+                .iter()
+                .filter(|function| {
+                    matches!(
+                        &function.origin,
+                        MonoFunctionOrigin::InstanceMethod { method, .. } if method == "local"
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(local_methods.len(), 2);
+            assert_ne!(local_methods[0].name, local_methods[1].name);
+            assert_eq!(
+                local_methods[0]
+                    .params
+                    .iter()
+                    .map(|param| param.ty)
+                    .collect::<Vec<_>>(),
+                local_methods[1]
+                    .params
+                    .iter()
+                    .map(|param| param.ty)
+                    .collect::<Vec<_>>()
+            );
+            let names = functions
+                .iter()
+                .map(|function| &function.name)
+                .collect::<BTreeSet<_>>();
+            assert_eq!(
+                names.len(),
+                functions.len(),
+                "duplicate specialization symbols"
+            );
+            assert!(
+                functions
+                    .iter()
+                    .all(|function| !function.body.iter().any(stmt_has_closure_dispatch))
+            );
+        }
+    });
+}
+
+#[test]
+fn trait_method_symbols_include_method_local_type_arguments() {
+    let (_, output) = specialize_src(
+        r#"
+trait C<t> { function f<u>(x:t,y:u) returns(u); }
+impl C<word> { function f<u>(x:word,y:u) returns(u) { assembly { mstore(0,x) } return y; } }
+function main(x:word,y:word) returns(word) {
+  let scalar:word=C.f(x,y);
+  let pair:(word,word)=C.f(x,(x,y));
+  match(pair) { case((p,q)) { return primAddWord(scalar,q); } }
+}
+"#,
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let methods = output
+        .module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            MonoItem::Function(function)
+                if matches!(function.origin, MonoFunctionOrigin::InstanceMethod { .. }) =>
+            {
+                Some(function)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(methods.len(), 2);
+    assert_ne!(methods[0].name, methods[1].name);
+    assert_ne!(methods[0].ret, methods[1].ret);
+}
+
+#[test]
+fn trait_methods_allow_unused_method_type_parameters() {
+    let (_, output) = specialize_src(
+        r#"
+trait C<t> { function f<unused,u>(x:t,y:u) returns(u); }
+impl C<word> { function f<unused,u>(x:word,y:u) returns(u) { return y; } }
+function main(x:word,y:word) returns(word) { return C.f(x,y); }
+"#,
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert!(output.module.items.iter().any(|item| matches!(
+        item,
+        MonoItem::Function(function)
+            if matches!(function.origin, MonoFunctionOrigin::InstanceMethod { .. })
+    )));
+}

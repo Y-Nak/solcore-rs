@@ -72,7 +72,7 @@ mod ty_subst;
 
 use body::{BinOpExpr, BodyCtx, BodyIndex};
 pub use diagnostics::{SpecializeDiagnostic, SpecializeDiagnosticKind};
-use dictionary::Evidence;
+use dictionary::{Evidence, MethodEvidence};
 use driver::{
     AdtInfo, DerivedAbiFamily, DerivedAbiKey, DerivedClassKey, DerivedStorageFamily,
     DerivedStorageKey, Driver, FunctionInfo, SpecKey, SyntheticKey,

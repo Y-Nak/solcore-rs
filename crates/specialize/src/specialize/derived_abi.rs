@@ -604,6 +604,7 @@ impl<'db> Driver<'db> {
                 def,
                 ty,
                 base_name: specialize_name(self.db, &base, &subst.specialization_args()),
+                subst,
                 origin: MonoFunctionOrigin::Source,
                 evidence_bindings,
             },

@@ -76,6 +76,8 @@ pub(super) struct AdtInfo<'db> {
 pub(super) struct SpecKey<'db> {
     pub(super) def: DefId<'db>,
     pub(super) ty: Ty<'db>,
+    /// Preserve binders recovered from dictionaries as well as the value type.
+    pub(super) subst: TySubst<'db>,
     pub(super) base_name: String,
     pub(super) origin: MonoFunctionOrigin<'db>,
     pub(super) evidence_bindings: Vec<(Pred<'db>, Evidence<'db>)>,
@@ -98,6 +100,7 @@ pub(super) struct DerivedClassKey<'db> {
     pub(super) main: Ty<'db>,
     pub(super) target_ty: Ty<'db>,
     pub(super) sub_evidence: Vec<Evidence<'db>>,
+    pub(super) method_bindings: Vec<(Pred<'db>, Evidence<'db>)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -671,6 +674,7 @@ impl<'db> Driver<'db> {
         Some(SpecKey {
             def,
             ty,
+            subst: TySubst::default(),
             base_name: name,
             origin: MonoFunctionOrigin::Source,
             evidence_bindings: Vec::new(),
@@ -735,7 +739,7 @@ impl<'db> Driver<'db> {
         let Some(lowered) = self.try_lower_normalized_function(&info) else {
             return;
         };
-        let mut subst = TySubst::default();
+        let mut subst = pending.key.subst.clone();
         if !subst.match_ty(
             self.db,
             lowered.scheme.body(self.db).ty(self.db),

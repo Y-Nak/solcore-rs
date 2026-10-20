@@ -4,11 +4,15 @@ impl<'db> Driver<'db> {
     pub(super) fn resolve_class_method_call(
         &mut self,
         method: &str,
-        evidence: Evidence<'db>,
+        evidence: impl Into<MethodEvidence<'db>>,
         target_ty: Ty<'db>,
         call_span: Span<'db>,
         depth: usize,
     ) -> Option<String> {
+        let MethodEvidence {
+            dictionary: evidence,
+            bindings: method_bindings,
+        } = evidence.into();
         let dictionary_identity = match &evidence {
             Evidence::Instance { superclasses, .. } if !superclasses.is_empty() => Some(
                 evidence_hash_suffix(self.db, std::slice::from_ref(&evidence)),
@@ -35,7 +39,18 @@ impl<'db> Driver<'db> {
                     sub_evidence: sub_evidence.clone(),
                     superclasses: superclasses.clone(),
                 };
-                let subst = TySubst::from_args(args);
+                let instance_binders = args.len();
+                let mut subst = TySubst::from_args(args);
+                let method_info = self
+                    .functions
+                    .get(&method_def.def_id_value(self.db))?
+                    .clone();
+                let lowered = self.try_lower_normalized_function(&method_info)?;
+                if !subst.match_ty(self.db, lowered.scheme.body(self.db).ty(self.db), target_ty) {
+                    return None;
+                }
+                let method_preds = lowered.scheme.body(self.db).preds(self.db);
+                subst.refine_from_evidence(self.db, method_preds, &method_bindings);
                 let head = subst.apply_pred(self.db, info.head);
                 let mut evidence_bindings = info
                     .preds
@@ -63,8 +78,41 @@ impl<'db> Driver<'db> {
                         ));
                     }
                 }
-                let (class_name, head_tys) = class_method_name_parts(self.db, head);
-                if !self.ensure_specialization_type_size(&head_tys, Some(call_span))
+                let mut selected_method_bindings = Vec::new();
+                for pred in method_preds {
+                    let pred = subst.apply_pred(self.db, *pred);
+                    let selected = method_bindings
+                        .iter()
+                        .chain(&evidence_bindings)
+                        .find(|(given, _)| *given == pred)
+                        .map(|(_, evidence)| evidence.clone());
+                    let Some(selected) = selected else {
+                        if matches!(pred.kind(self.db), PredKind::InClass { .. }) {
+                            self.diagnostics.push(SpecializeDiagnostic {
+                                kind: SpecializeDiagnosticKind::MissingEvidence {
+                                    context: format!("{method}: {}", pred.display(self.db)),
+                                },
+                                span: Some(call_span),
+                            });
+                            return None;
+                        }
+                        continue;
+                    };
+                    // Method-local givens precede inherited instance givens
+                    // in inference, so retain the same dictionary precedence.
+                    evidence_bindings.retain(|(given, _)| *given != pred);
+                    evidence_bindings.push((pred, selected.clone()));
+                    selected_method_bindings.push(selected);
+                }
+                let (class_name, mut type_args) = class_method_name_parts(self.db, head);
+                for index in instance_binders..method_info.type_vars.len() {
+                    // Unused method binders need no concrete instantiation.
+                    // Keep their positions in the identity; runtime types and
+                    // method predicates are checked independently.
+                    let ty = subst.apply_ty(self.db, Ty::bound(self.db, index as u32));
+                    type_args.push(ty);
+                }
+                if !self.ensure_specialization_type_size(&type_args, Some(call_span))
                     || !self.ensure_specialization_type_size(&[target_ty], Some(call_span))
                 {
                     return None;
@@ -80,10 +128,15 @@ impl<'db> Driver<'db> {
                     method_base.push('_');
                     method_base.push_str(&evidence_hash_suffix(self.db, &sub_evidence));
                 }
-                let base = specialize_name(self.db, &method_base, head_tys.as_slice());
+                if !selected_method_bindings.is_empty() {
+                    method_base.push('_');
+                    method_base.push_str(&evidence_hash_suffix(self.db, &selected_method_bindings));
+                }
+                let base = specialize_name(self.db, &method_base, &type_args);
                 let key = SpecKey {
                     def: method_def.def_id_value(self.db),
                     ty: target_ty,
+                    subst,
                     base_name: base,
                     origin: MonoFunctionOrigin::InstanceMethod {
                         instance,
@@ -96,8 +149,16 @@ impl<'db> Driver<'db> {
             }
             Evidence::Superclass { pred, child, .. } => {
                 if let Some(evidence) = self.superclass_instance_evidence(pred, &child) {
-                    return self
-                        .resolve_class_method_call(method, evidence, target_ty, call_span, depth);
+                    return self.resolve_class_method_call(
+                        method,
+                        MethodEvidence {
+                            dictionary: evidence,
+                            bindings: method_bindings,
+                        },
+                        target_ty,
+                        call_span,
+                        depth,
+                    );
                 }
                 None
             }
@@ -134,6 +195,23 @@ impl<'db> Driver<'db> {
                 if *pred_class != class || !args.is_empty() {
                     return None;
                 }
+                let predicates = self.class_method_predicates(
+                    class,
+                    method,
+                    target_ty,
+                    &method_bindings,
+                    Some(call_span),
+                )?;
+                let method_bindings = predicates
+                    .into_iter()
+                    .skip(1)
+                    .filter_map(|pred| {
+                        method_bindings
+                            .iter()
+                            .find(|(given, _)| *given == pred)
+                            .cloned()
+                    })
+                    .collect();
                 self.specialize_derived_class(
                     DerivedClassKey {
                         adt,
@@ -143,6 +221,7 @@ impl<'db> Driver<'db> {
                         main: *main,
                         target_ty,
                         sub_evidence,
+                        method_bindings,
                     },
                     call_span,
                     depth,
@@ -254,8 +333,16 @@ impl<'db> Driver<'db> {
                 if let Some(evidence) = replacement
                     && !matches!(evidence, Evidence::Builtin { .. })
                 {
-                    return self
-                        .resolve_class_method_call(method, evidence, target_ty, call_span, depth);
+                    return self.resolve_class_method_call(
+                        method,
+                        MethodEvidence {
+                            dictionary: evidence,
+                            bindings: method_bindings,
+                        },
+                        target_ty,
+                        call_span,
+                        depth,
+                    );
                 }
                 None
             }
@@ -547,6 +634,24 @@ impl<'db> Driver<'db> {
         callee_ty: Ty<'db>,
         span: Option<Span<'db>>,
     ) -> Option<Pred<'db>> {
+        self.class_method_predicates(class, method, callee_ty, &[], span)?
+            .into_iter()
+            .find(|pred| {
+                matches!(
+                    pred.kind(self.db),
+                    PredKind::InClass { class: ClassId::User(def), .. } if *def == class
+                )
+            })
+    }
+
+    fn class_method_predicates(
+        &mut self,
+        class: DefId<'db>,
+        method: &str,
+        callee_ty: Ty<'db>,
+        bindings: &[(Pred<'db>, Evidence<'db>)],
+        span: Option<Span<'db>>,
+    ) -> Option<Vec<Pred<'db>>> {
         let info = self.classes.get(&class)?.clone();
         let method_sig = info
             .class
@@ -571,20 +676,15 @@ impl<'db> Driver<'db> {
         if !subst.match_ty(self.db, scheme.body(self.db).ty(self.db), callee_ty) {
             return None;
         }
-        scheme
-            .body(self.db)
-            .preds(self.db)
-            .iter()
-            .map(|pred| subst.apply_pred(self.db, *pred))
-            .find(|pred| {
-                matches!(
-                    pred.kind(self.db),
-                    PredKind::InClass {
-                        class: ClassId::User(def),
-                        ..
-                    } if *def == class
-                )
-            })
+        subst.refine_from_evidence(self.db, scheme.body(self.db).preds(self.db), bindings);
+        Some(
+            scheme
+                .body(self.db)
+                .preds(self.db)
+                .iter()
+                .map(|pred| subst.apply_pred(self.db, *pred))
+                .collect(),
+        )
     }
 
     pub(super) fn close_class_method_callee_ty(
