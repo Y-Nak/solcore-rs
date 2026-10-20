@@ -64,6 +64,44 @@ fn top_function<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> Functi
 }
 
 #[test]
+fn type_identifier_context_preserves_the_parsed_named_type() {
+    for name in ["mapping", "comptime", "while", "derive", "Value"] {
+        let mut needs_type_context = false;
+        for qualified in [false, true] {
+            for (type_arguments, suffix) in [(0, ""), (1, "<word>"), (2, "<word, bool>")] {
+                let db = TestDb::default();
+                let qualifier = if qualified { "M." } else { "" };
+                let source = format!("type Check = {qualifier}{name}{suffix};");
+                let (file, module) = parse_module(&db, "type_name_context", &source);
+                let preserves_named_type = diagnostics(&db, file).is_empty()
+                    && module.items(&db).iter().any(|item| {
+                        matches!(item, Item::TypeAlias(alias)
+                            if matches!(alias.ty(&db).kind(&db), TypeRefKind::Named { name: parsed, .. }
+                                if parsed.atom().text(&db) == name))
+                    });
+                needs_type_context |= !preserves_named_type;
+                assert_eq!(
+                    solcore_parser::is_valid_identifier_in(
+                        name,
+                        solcore_parser::IdentifierContext::TypeReference {
+                            qualified,
+                            type_arguments,
+                        },
+                    ),
+                    preserves_named_type,
+                    "{source}"
+                );
+            }
+        }
+        assert_eq!(
+            solcore_parser::requires_type_identifier_context(name),
+            needs_type_context,
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn subtraction_spacing_does_not_change_parsing_and_pragmas_keep_hyphens() {
     for expression in ["a-b", "a -b", "a- b", "a - b", "a-b-c", "a-(b-c)"] {
         let db = TestDb::default();

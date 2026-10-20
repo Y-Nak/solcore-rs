@@ -1776,10 +1776,77 @@ fn find_adt<'db>(
     })
 }
 
+/// Check both the declaration and every type reference that rename will edit.
+/// A name legal at its declaration can still reparse as contextual syntax at
+/// a use site. Semantic occurrence identity also covers imported aliases and
+/// type parameters without imposing type-name restrictions on value names.
+pub(crate) fn target_accepts_identifier<'db>(
+    world: &'db WorldState,
+    target: &ReferenceTarget<'db>,
+    new_name: &str,
+) -> bool {
+    let db = world.db();
+    let Some(context) = target_identifier_context(db, target) else {
+        return false;
+    };
+    if !parser::is_valid_identifier_in(new_name, context) {
+        return false;
+    }
+    if !parser::requires_type_identifier_context(new_name) {
+        return true;
+    }
+    let declaration = target_declaration_span(db, target);
+    for module_id in reference_search_modules(world, db) {
+        let Some(file) = db.module_file(module_id) else {
+            continue;
+        };
+        let module = parser::parse_file_to_hir(db, file).module(db);
+        let env = nameres::module_env(db, module_id);
+        let module_map = hir_nameres::resolve_module_with_imports_and_policy(
+            db,
+            module,
+            hir_nameres::item_scope(db, module),
+            &env,
+            hir_nameres::NameresDiagnosticPolicy::Emit,
+        );
+        for entry in module_map
+            .item_resolutions
+            .facts
+            .types
+            .iter()
+            .chain(module_map.bodies.iter().flat_map(|body| &body.types))
+        {
+            let TypeRefKind::Named {
+                qualifier,
+                name,
+                args,
+            } = entry.ty.kind(db)
+            else {
+                continue;
+            };
+            // Trait heads contain synthesized type references at their type
+            // parameter declarations. Those names use declaration grammar.
+            if Some(name.span(db).resolve_to_absolute(db)) != declaration
+                && resolution_matches_target(db, name.span(db), &entry.resolution, target)
+                && !parser::is_valid_identifier_in(
+                    new_name,
+                    parser::IdentifierContext::TypeReference {
+                        qualified: qualifier.is_some(),
+                        type_arguments: args.atom().len(),
+                    },
+                )
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// The declaration role constrains contextual names independently of their
 /// lexical validity. Use the actual parameter syntax: an explicit `comptime`
 /// modifier already disambiguates a following parameter named `comptime`.
-pub(crate) fn target_identifier_context(
+fn target_identifier_context(
     db: &dyn hir_ty::Db,
     target: &ReferenceTarget<'_>,
 ) -> Option<parser::IdentifierContext> {

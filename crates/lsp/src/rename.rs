@@ -10,7 +10,7 @@ use lsp_types::{Location, Position, PrepareRenameResponse, Range, TextEdit, Url,
 use crate::{
     LineIndexExt,
     references::{
-        collect_reference_locations, reference_target_at, target_identifier_context,
+        collect_reference_locations, reference_target_at, target_accepts_identifier,
         target_supports_text_rename,
     },
     state::WorldState,
@@ -47,8 +47,7 @@ pub fn handle_rename(
     new_name: &str,
 ) -> Option<WorkspaceEdit> {
     let target = reference_target_at(world, uri, position)?;
-    let context = target_identifier_context(world.db(), &target)?;
-    if !parser::is_valid_identifier_in(new_name, context) {
+    if !target_accepts_identifier(world, &target, new_name) {
         return None;
     }
 
@@ -399,6 +398,195 @@ function main() returns (word) { let x: word = 7; return Echo.echo(x); }
                 .unwrap_or_else(|| panic!("{source} -> {new_name}"));
             apply_workspace_edit(&mut world, edit);
             assert_no_error_diagnostics(&world, &[uri]);
+        }
+    }
+
+    #[test]
+    fn rename_rejects_contextual_type_syntax_at_unqualified_references() {
+        for (source, new_name) in [
+            (
+                "type Original = word; function id(value: Original) returns (Original) { return value; }",
+                "mapping",
+            ),
+            (
+                "enum Original { Value } function id(value: Original) returns (Original) { return value; }",
+                "mapping",
+            ),
+            (
+                "function id<Original>(value: Original) returns (Original) { return value; }",
+                "mapping",
+            ),
+            ("type Identity(Original) = (Original, word);", "mapping"),
+            (
+                "trait Identity<Original> { function id(value: Original) returns (Original); }",
+                "mapping",
+            ),
+            (
+                "type Original = word; function main(value: word) returns (word) { let local: Original = value; return local; }",
+                "mapping",
+            ),
+            (
+                "type Original = word; function main(value: word) returns (word) { let f = lam (item: Original) -> Original { return item; }; return f(value); }",
+                "mapping",
+            ),
+            (
+                "import * from std; import * from std.dispatch; contract C { type Original = word; function id(value: Original) returns (Original) { return value; } }",
+                "mapping",
+            ),
+            (
+                "type Original(a) = a; function id(value: Original<word>) returns (Original<word>) { return value; }",
+                "comptime",
+            ),
+            (
+                "enum Original<a> { Value(a) } function id(value: Original<word>) returns (Original<word>) { return value; }",
+                "comptime",
+            ),
+        ] {
+            let (world, uri) = world_with_main(source);
+            assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+            for offset in [
+                source.find("Original").unwrap(),
+                source.rfind("Original").unwrap(),
+            ] {
+                let position = world
+                    .line_index(&uri)
+                    .unwrap()
+                    .byte_to_position(offset as u32);
+                assert!(
+                    handle_prepare_rename(&world, &uri, position).is_some(),
+                    "{source}"
+                );
+                assert!(
+                    handle_rename(&world, &uri, position, new_name).is_none(),
+                    "{source} -> {new_name}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rename_validates_imported_type_alias_uses_and_unqualified_consumers() {
+        let math = "type Box(a) = a; export {Box};";
+        for import in [
+            "import {Box as Original} from math;",
+            "import {Box} from math;",
+        ] {
+            let name = if import.contains(" as ") {
+                "Original"
+            } else {
+                "Box"
+            };
+            let main = format!(
+                "{import} function id(value: {name}<word>) returns (word) {{ return value; }}"
+            );
+            let (world, main_uri, math_uri) = world_with_main_and_math(&main, math);
+            assert_no_error_diagnostics(&world, &[main_uri.clone(), math_uri.clone()]);
+            for offset in [main.find(name).unwrap(), main.rfind(name).unwrap()] {
+                let position = world
+                    .line_index(&main_uri)
+                    .unwrap()
+                    .byte_to_position(offset as u32);
+                assert!(handle_prepare_rename(&world, &main_uri, position).is_some());
+                for new_name in ["mapping", "comptime"] {
+                    assert!(
+                        handle_rename(&world, &main_uri, position, new_name).is_none(),
+                        "{main} -> {new_name}"
+                    );
+                }
+            }
+            if name == "Box" {
+                let position = world
+                    .line_index(&math_uri)
+                    .unwrap()
+                    .byte_to_position(math.find(name).unwrap() as u32);
+                assert!(handle_rename(&world, &math_uri, position, "mapping").is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn rename_preserves_legal_contextual_type_and_value_names() {
+        for (source, new_name) in [
+            (
+                "type Original = word; function id(value: Original) returns (Original) { return value; }",
+                "comptime",
+            ),
+            (
+                "type Original(a, b) = (a, b); function id(value: Original<word, bool>) returns (Original<word, bool>) { return value; }",
+                "comptime",
+            ),
+            (
+                "function Original() returns (word) { return 7; } function main() returns (word) { return Original(); }",
+                "mapping",
+            ),
+            ("type Original = word;", "mapping"),
+            ("trait Empty<Original> {}", "mapping"),
+            (
+                "function id<Original>(value: Original) returns (Original) { return value; }",
+                "comptime",
+            ),
+            (
+                "trait Original<t> { function id(value: t) returns (t); } impl Original<word> { function id(value: word) returns (word) { return value; } }",
+                "mapping",
+            ),
+        ] {
+            let (mut world, uri) = world_with_main(source);
+            assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+            let position = world
+                .line_index(&uri)
+                .unwrap()
+                .byte_to_position(source.find("Original").unwrap() as u32);
+            let edit = handle_rename(&world, &uri, position, new_name)
+                .unwrap_or_else(|| panic!("{source} -> {new_name}"));
+            apply_workspace_edit(&mut world, edit);
+            assert_no_error_diagnostics(&world, &[uri]);
+        }
+
+        let math = "type Original(a) = a; export {Original};";
+        let main = "import * as M from math; function id(value: M.Original<word>) returns (M.Original<word>) { return value; }";
+        for new_name in ["mapping", "comptime"] {
+            for from_use in [false, true] {
+                let (mut world, main_uri, math_uri) = world_with_main_and_math(main, math);
+                assert_no_error_diagnostics(&world, &[main_uri.clone(), math_uri.clone()]);
+                let (uri, source) = if from_use {
+                    (&main_uri, main)
+                } else {
+                    (&math_uri, math)
+                };
+                let position = world
+                    .line_index(uri)
+                    .unwrap()
+                    .byte_to_position(source.find("Original").unwrap() as u32);
+                let edit =
+                    handle_rename(&world, uri, position, new_name).expect("qualified type rename");
+                apply_workspace_edit(&mut world, edit);
+                assert!(
+                    world
+                        .document_text(&main_uri)
+                        .unwrap()
+                        .contains(&format!("M.{new_name}<word>"))
+                );
+                assert_no_error_diagnostics(&world, &[main_uri, math_uri]);
+            }
+        }
+
+        let main = "import {Original as Alias} from math; function id(value: Alias<word>) returns (word) { return value; }";
+        for new_name in ["mapping", "comptime"] {
+            let (mut world, main_uri, math_uri) = world_with_main_and_math(main, math);
+            let position = world
+                .line_index(&math_uri)
+                .unwrap()
+                .byte_to_position(math.find("Original").unwrap() as u32);
+            let edit = handle_rename(&world, &math_uri, position, new_name)
+                .expect("provider rename preserves a consumer alias");
+            apply_workspace_edit(&mut world, edit);
+            assert!(
+                world
+                    .document_text(&main_uri)
+                    .unwrap()
+                    .contains("Alias<word>")
+            );
+            assert_no_error_diagnostics(&world, &[main_uri, math_uri]);
         }
     }
 
