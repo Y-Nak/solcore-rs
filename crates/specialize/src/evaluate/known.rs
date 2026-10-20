@@ -2,7 +2,7 @@ use hir::string_literal::encode_string_literal;
 use hir::{ast::function::LitKind, span::Span};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::{CEnv, TypeReg, VEnv, assigned::AssignedNames, value::BigInt};
+use super::{TypeReg, VEnv, value::BigInt};
 use crate::{
     decode_string_literal,
     ir::{
@@ -282,30 +282,6 @@ fn literal_bigint(lit: &LitKind) -> Option<BigInt> {
         LitKind::Hex(text) => BigInt::from_hex_str(text),
         LitKind::String(_) | LitKind::Error => None,
     }
-}
-
-pub(super) fn remove_assigned<'db>(mut env: VEnv<'db>, assigned: &AssignedNames) -> VEnv<'db> {
-    match assigned {
-        AssignedNames::All => env.clear(),
-        AssignedNames::Names(names) => {
-            for name in names {
-                env.remove(name);
-            }
-        }
-    }
-    env
-}
-
-pub(super) fn remove_comptime_assigned(mut env: CEnv, assigned: &AssignedNames) -> CEnv {
-    match assigned {
-        AssignedNames::All => env.clear(),
-        AssignedNames::Names(names) => {
-            for name in names {
-                env.remove(name);
-            }
-        }
-    }
-    env
 }
 
 pub(super) fn lvalue_root_name(expr: &MonoExpr<'_>) -> Option<String> {
