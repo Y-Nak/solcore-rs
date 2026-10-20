@@ -484,6 +484,106 @@ function main() returns (word) { let x: word = 7; return Echo.echo(x); }
     }
 
     #[test]
+    fn rename_rejects_source_bindings_that_capture_edited_references() {
+        for source in [
+            "function main(value: word) returns (word) { { let renamed: word = 7; assembly { value := add(value, renamed) } } return value; }",
+            "function main(value: word) returns (word) { { let renamed: word = 7; value = primAddWord(value, renamed); } return value; }",
+            "function main(value: word, flag: bool) returns (word) { if (flag) { let renamed: word = 7; } assembly { value := add(value, renamed) } return value; }",
+            "function main(value: word) returns (word) { for (; false; let renamed: word = 7) { assembly { value := renamed } } return value; }",
+            "function main(value: word) returns (word) { match (value) { case (renamed) { assembly { value := add(value, renamed) } } } return value; }",
+            "function main(value: word) returns (word) { let f = lam (renamed: word) -> word { return primAddWord(value, renamed); }; return f(7); }",
+            "function main(value: word) returns (word) { let f = lam (renamed: word) -> word { let out: word; assembly { out := add(value, renamed) } return out; }; return f(7); }",
+        ] {
+            let (world, uri) = world_with_main(source);
+            assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+            for (offset, _) in source.match_indices("value") {
+                let position = world
+                    .line_index(&uri)
+                    .unwrap()
+                    .byte_to_position(offset as u32);
+                assert!(
+                    handle_rename(&world, &uri, position, "renamed").is_none(),
+                    "{source}"
+                );
+                assert!(
+                    handle_rename(&world, &uri, position, "safeName").is_some(),
+                    "{source}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rename_rejects_capture_of_unedited_source_and_assembly_references() {
+        for source in [
+            "function main(renamed: word) returns (word) { let value: word = 7; return primAddWord(value, renamed); }",
+            "function main(renamed: word) returns (word) { let value: word = 7; assembly { renamed := add(renamed, value) } return renamed; }",
+            "function main(renamed: word) returns (word) { let value: word = 7; return renamed; }",
+            "function main(renamed: word) returns (word) { let value: word = 7; let f = lam () -> word { return renamed; }; return f(); }",
+            "function main(renamed: word) returns (word) { match (renamed) { case (value) { return renamed; } } }",
+            "function main(renamed: word) returns (word) { let f = lam (value: word) -> word { return renamed; }; return f(7); }",
+            "function renamed() returns (word) { return 42; } function main() returns (word) { let value: word = 7; return renamed(); }",
+            "import * from std; import * from std.dispatch; contract C { renamed: word; function read() returns (word) { let value: word = 7; return renamed; } }",
+        ] {
+            let (world, uri) = world_with_main(source);
+            assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+            let position = world
+                .line_index(&uri)
+                .unwrap()
+                .byte_to_position(source.find("value").unwrap() as u32);
+            assert!(
+                handle_rename(&world, &uri, position, "renamed").is_none(),
+                "{source}"
+            );
+            assert!(
+                handle_rename(&world, &uri, position, "safeName").is_some(),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn rename_cannot_capture_an_imported_module_qualifier() {
+        let main = "import * as renamed from math; function main() returns (word) { let value: word = 7; return renamed.read(); }";
+        let math = "export {read}; function read() returns (word) { return 42; }";
+        let (world, uri, math_uri) = world_with_main_and_math(main, math);
+        assert_no_error_diagnostics(&world, &[uri.clone(), math_uri]);
+        let position = world
+            .line_index(&uri)
+            .unwrap()
+            .byte_to_position(main.find("value").unwrap() as u32);
+        assert!(handle_rename(&world, &uri, position, "renamed").is_none());
+        assert!(handle_rename(&world, &uri, position, "safeName").is_some());
+    }
+
+    #[test]
+    fn rename_preserves_initializer_and_disjoint_scope_lookup() {
+        for source in [
+            "function main(value: word) returns (word) { let renamed: word = value; return renamed; }",
+            "function main(value: word) returns (word) { { let renamed: word = value; assembly { pop(renamed) } } return value; }",
+            "function main(value: word) returns (word) { { let renamed: word = 7; assembly { pop(renamed) } } return value; }",
+            "function main(value: word) returns (word) { let f = lam () -> word { let renamed: word = value; return renamed; }; return f(); }",
+            "function main(value: word) returns (word) { assembly { pop(value) } let renamed: word = 7; return renamed; }",
+            "function main(value: word) returns (word) { for (; false; let renamed: word = value) { assembly { pop(renamed) } } return renamed; }",
+            "function main(value: word) returns (word) { match (7) { case (renamed) { assembly { pop(renamed) } } } return value; }",
+        ] {
+            let (mut world, uri) = world_with_main(source);
+            assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+            let position = world
+                .line_index(&uri)
+                .unwrap()
+                .byte_to_position(source.find("value").unwrap() as u32);
+            let edit = handle_rename(&world, &uri, position, "renamed").expect(source);
+            apply_workspace_edit(&mut world, edit);
+            assert_eq!(
+                world.document_text(&uri),
+                Some(source.replace("value", "renamed").as_str())
+            );
+            assert_no_error_diagnostics(&world, &[uri]);
+        }
+    }
+
+    #[test]
     fn rename_respects_runtime_parameter_contexts() {
         for source in [
             "function id(value: word) returns (word) { return value; }",

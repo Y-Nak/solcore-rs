@@ -2,6 +2,8 @@
 
 use std::collections::HashSet;
 
+mod rename_capture;
+
 use hir::{
     anchor::{DefId, resolve_def_location},
     ast::{
@@ -1819,6 +1821,13 @@ pub(crate) fn target_accepts_identifier<'db>(
             &env,
             hir_nameres::NameresDiagnosticPolicy::Emit,
         );
+        if module_map
+            .bodies
+            .iter()
+            .any(|body| !rename_capture::preserves_local_bindings(db, body, target, new_name))
+        {
+            return false;
+        }
         if module_map
             .bodies
             .iter()
