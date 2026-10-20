@@ -394,6 +394,11 @@ pub struct InferenceResult<'db> {
     pub expr_tys: Vec<ExprTy<'db>>,
     /// Pattern type table.
     pub pat_tys: Vec<PatTy<'db>>,
+    /// Expression names whose constructor identity required an expected type.
+    /// These complete the `DotCtorDeferred` entries from name resolution.
+    pub inferred_expr_resolutions: Vec<hir_nameres::BodyExprResolution<'db>>,
+    /// Pattern names whose constructor identity required a scrutinee type.
+    pub inferred_pat_resolutions: Vec<hir_nameres::BodyPatResolution<'db>>,
     /// Let binding type table.
     pub let_tys: Vec<LetTy<'db>>,
     /// Deferred obligations that the future solver must resolve.
@@ -496,11 +501,41 @@ struct ClosureSig<'db> {
 enum DotCtorLookup<'db> {
     Match {
         ty: InferTy<'db>,
-        callee: CallSiteCallee<'db>,
+        constructor: ConstructorIdentity<'db>,
     },
     NoExpected,
     NoMatch,
     Ambiguous(Vec<String>),
+}
+
+enum ConstructorIdentity<'db> {
+    Adt {
+        ty: DefId<'db>,
+        index: hir_nameres::CtorIndex,
+    },
+    Builtin(hir_nameres::BuiltinKind),
+}
+
+impl<'db> ConstructorIdentity<'db> {
+    fn resolution(&self) -> hir_nameres::Resolution<'db> {
+        match self {
+            Self::Adt { ty, index } => hir_nameres::Resolution::Ctor {
+                ty: *ty,
+                index: *index,
+            },
+            Self::Builtin(kind) => hir_nameres::Resolution::Builtin(*kind),
+        }
+    }
+
+    fn callee(&self) -> CallSiteCallee<'db> {
+        match self {
+            Self::Adt { ty, index } => CallSiteCallee::AdtCtor {
+                ty: *ty,
+                index: *index,
+            },
+            Self::Builtin(kind) => CallSiteCallee::Builtin(*kind),
+        }
+    }
 }
 
 impl<'db> BodyTyContext<'db> {

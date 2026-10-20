@@ -449,8 +449,27 @@ impl<'db> InferCtx<'db> {
             return InferTy::Error;
         };
         match self.ctor_for_expected(name, expected.clone()) {
-            DotCtorLookup::Match { ty, callee } => {
-                self.apply_ctor_expr_scheme(body, expr, ty, args, expected, Some(callee))
+            DotCtorLookup::Match { ty, constructor } => {
+                // Calls with a deferred bare constructor name are inferred at
+                // the call, but the semantic occurrence belongs to its callee.
+                let occurrence = match body.exprs(self.db).get(expr).kind {
+                    ExprKind::Call { callee, .. } => callee,
+                    _ => expr,
+                };
+                self.inferred_expr_resolutions
+                    .push(hir_nameres::BodyExprResolution {
+                        body,
+                        expr: occurrence,
+                        resolution: constructor.resolution(),
+                    });
+                self.apply_ctor_expr_scheme(
+                    body,
+                    expr,
+                    ty,
+                    args,
+                    expected,
+                    Some(constructor.callee()),
+                )
             }
             DotCtorLookup::NoExpected => {
                 for arg in args {
@@ -628,7 +647,7 @@ impl<'db> InferCtx<'db> {
                 let ctor_ty = self.accept_instantiated(instantiated);
                 DotCtorLookup::Match {
                     ty: ctor_ty,
-                    callee: CallSiteCallee::AdtCtor {
+                    constructor: ConstructorIdentity::Adt {
                         ty: entry.ty,
                         index: entry.index,
                     },
@@ -748,7 +767,7 @@ impl<'db> InferCtx<'db> {
             let ctor_ty = self.accept_instantiated(instantiated);
             DotCtorLookup::Match {
                 ty: ctor_ty,
-                callee: CallSiteCallee::Builtin(kind),
+                constructor: ConstructorIdentity::Builtin(kind),
             }
         } else {
             DotCtorLookup::NoMatch
@@ -983,7 +1002,13 @@ impl<'db> InferCtx<'db> {
                     return InferTy::Error;
                 };
                 match self.ctor_for_expected(name, expected.clone()) {
-                    DotCtorLookup::Match { ty, .. } => {
+                    DotCtorLookup::Match { ty, constructor } => {
+                        self.inferred_pat_resolutions
+                            .push(hir_nameres::BodyPatResolution {
+                                body,
+                                pat,
+                                resolution: constructor.resolution(),
+                            });
                         self.apply_ctor_pat_scheme(body, pat, args, ty, expected)
                     }
                     DotCtorLookup::NoExpected => {

@@ -10,7 +10,7 @@ use lsp_types::{Location, Position, PrepareRenameResponse, Range, TextEdit, Url,
 use crate::{
     LineIndexExt,
     references::{
-        collect_reference_locations, preserves_pattern_resolutions, reference_target_at,
+        collect_reference_locations, preserves_resolutions, reference_target_at,
         target_accepts_identifier, target_supports_text_rename,
     },
     state::WorldState,
@@ -56,7 +56,7 @@ pub fn handle_rename(
     }
     let locations = editable_reference_locations(world, &target)?;
     let changes = text_edits_by_uri(locations, new_name)?;
-    if !preserves_pattern_resolutions(world, &changes) {
+    if !preserves_resolutions(world, &changes) {
         return None;
     }
 
@@ -321,6 +321,255 @@ function main() returns (word) { let x: word = 7; return Echo.echo(x); }
                 "{uri}: {diagnostics:?}"
             );
         }
+    }
+
+    #[test]
+    fn constructor_rename_includes_expected_type_expression_and_pattern_references() {
+        for (expression, pattern) in [
+            ("Choice.Pick(7)", "Choice.Pick(n)"),
+            (".Pick(7)", "Choice.Pick(n)"),
+            ("Choice.Pick(7)", ".Pick(n)"),
+            (".Pick(7)", ".Pick(n)"),
+        ] {
+            let source = format!(
+                "// 日本語 🦀: source offsets must survive UTF-16 conversion.\n\
+                 enum Choice {{ Pick(word), Other }}\n\
+                 function main() returns (word) {{\n\
+                 let x: Choice = {expression};\n\
+                 match (x) {{ case {pattern} {{ return n; }} default {{ return 0; }} }}\n\
+                 }}"
+            );
+            for (offset, _) in source.match_indices("Pick") {
+                let (mut world, uri) = world_with_main(&source);
+                assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+                let position = world
+                    .line_index(&uri)
+                    .unwrap()
+                    .byte_to_position(offset as u32);
+                let references =
+                    crate::handle_references(&world, &uri, position, true).expect("references");
+                assert_eq!(references.len(), 3, "{source}");
+                let definition = crate::handle_definition(&world, &uri, position);
+                let Some(lsp_types::GotoDefinitionResponse::Scalar(definition)) = definition else {
+                    panic!("missing constructor definition: {source}");
+                };
+                assert_eq!(definition.uri, uri);
+                assert_eq!(
+                    definition.range.start,
+                    world
+                        .line_index(&uri)
+                        .unwrap()
+                        .byte_to_position(source.find("Pick").unwrap() as u32)
+                );
+                assert!(handle_prepare_rename(&world, &uri, position).is_some());
+                let edit = handle_rename(&world, &uri, position, "Selected").expect(&source);
+                apply_workspace_edit(&mut world, edit);
+                assert_eq!(
+                    world.document_text(&uri),
+                    Some(source.replace("Pick", "Selected").as_str())
+                );
+                assert_no_error_diagnostics(&world, &[uri]);
+            }
+        }
+    }
+
+    #[test]
+    fn constructor_rename_follows_inference_across_imports_aliases_and_lambdas() {
+        let math = "export {Choice(Pick, Other)};\nenum Choice { Pick(word), Other }\n";
+        let main = "import {Choice as Renamed} from math;\n\
+            type Alias = Renamed;\n\
+            function main() returns (word) {\n\
+                let make = lam (x: word) -> Alias { return .Pick(x); };\n\
+                let value: Alias = make(7);\n\
+                match (value) { case .Pick(n) { return n; } case .Other { return 0; } }\n\
+            }\n";
+        for from_pattern in [false, true] {
+            let (mut world, main_uri, math_uri) = world_with_main_and_math(main, math);
+            assert_no_error_diagnostics(&world, &[main_uri.clone(), math_uri.clone()]);
+            let (uri, offset) = if from_pattern {
+                (&main_uri, main.rfind("Pick").unwrap())
+            } else {
+                (&math_uri, math.rfind("Pick").unwrap())
+            };
+            let position = world
+                .line_index(uri)
+                .unwrap()
+                .byte_to_position(offset as u32);
+            let edit = handle_rename(&world, uri, position, "Selected").expect("constructor");
+            apply_workspace_edit(&mut world, edit);
+            assert_eq!(
+                world.document_text(&main_uri),
+                Some(main.replace("Pick", "Selected").as_str())
+            );
+            assert_eq!(
+                world.document_text(&math_uri),
+                Some(math.replace("Pick", "Selected").as_str())
+            );
+            assert_no_error_diagnostics(&world, &[main_uri, math_uri]);
+        }
+    }
+
+    #[test]
+    fn constructor_rename_preserves_generic_impl_and_method_contexts() {
+        for source in [
+            "enum Choice<a> { Pick(a), Other }\n\
+             trait Maker<a> { function make(x: a) returns (Choice<a>); function take(x: Choice<a>, defaultValue: a) returns (a); }\n\
+             impl<a> Maker<a> {\n\
+                 function make(x: a) returns (Choice<a>) { return .Pick(x); }\n\
+                 function take(x: Choice<a>, defaultValue: a) returns (a) { match (x) { case .Pick(y) { return y; } case .Other { return defaultValue; } } }\n\
+             }",
+            "enum Choice<a> { Pick(a), Other }\n\
+             trait Maker<a> { function make<b>(x: a, y: b) returns (Choice<b>); }\n\
+             impl<a> Maker<a> {\n\
+                 function make<b>(x: a, y: b) returns (Choice<b>) { return .Pick(y); }\n\
+             }",
+            "enum Choice<a> { Pick(a), Other }\n\
+             enum Box<a> { Box(a) }\n\
+             trait Mapper<a> { function map(x: a) returns (a); }\n\
+             trait Maker<a> where a: Mapper { function make(x: a) returns (Choice<a>); }\n\
+             impl<a> Mapper<Box<a>> where a: Mapper { function map(x: Box<a>) returns (Box<a>) { return x; } }\n\
+             impl<a> Maker<Box<a>> where a: Mapper {\n\
+                 function make(x: Box<a>) returns (Choice<Box<a>>) { return .Pick(Mapper.map(x)); }\n\
+             }",
+        ] {
+            for (offset, _) in source.match_indices("Pick") {
+                let (mut world, uri) = world_with_main(source);
+                assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+                let position = world
+                    .line_index(&uri)
+                    .unwrap()
+                    .byte_to_position(offset as u32);
+                let edit = handle_rename(&world, &uri, position, "Selected").expect(source);
+                apply_workspace_edit(&mut world, edit);
+                assert_eq!(
+                    world.document_text(&uri),
+                    Some(source.replace("Pick", "Selected").as_str())
+                );
+                assert_no_error_diagnostics(&world, &[uri]);
+            }
+        }
+    }
+
+    #[test]
+    fn type_rename_preserves_type_parameter_and_alias_bindings() {
+        for source in [
+            "type Target = word; function id<a>(x: Target, y: a) returns (Target) { return x; } function main() returns (word) { return id(7, true); }",
+            "enum Target { Pick } function id<a>(x: Target, y: a) returns (Target) { return x; }",
+            "type Target = word; type Wrap(a) = (Target, a);",
+            "type Target = word; enum Wrap<a> { Pick(Target, a) }",
+            "type Target = word; trait Wrap<a> { function value(x: Target) returns (a); }",
+        ] {
+            let (world, uri) = world_with_main(source);
+            assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+            let position = world
+                .line_index(&uri)
+                .unwrap()
+                .byte_to_position(source.find("Target").unwrap() as u32);
+            assert!(
+                handle_rename(&world, &uri, position, "a").is_none(),
+                "{source}"
+            );
+            assert!(
+                handle_rename(&world, &uri, position, "SafeName").is_some(),
+                "{source}"
+            );
+        }
+        // Renaming a type parameter can also capture an untouched outer type.
+        let source =
+            "type Target = word; function id<a>(x: Target, y: a) returns (Target) { return x; }";
+        let (world, uri) = world_with_main(source);
+        let position = world
+            .line_index(&uri)
+            .unwrap()
+            .byte_to_position(source.find("<a>").unwrap() as u32 + 1);
+        assert!(handle_rename(&world, &uri, position, "Target").is_none());
+        assert!(handle_rename(&world, &uri, position, "b").is_some());
+    }
+
+    #[test]
+    fn imported_rename_rejects_global_collisions_even_without_references() {
+        let math = "export {target}; function target() returns (word) { return 1; }";
+        for main in [
+            "import {target} from math; function renamed() returns (word) { return 2; } function main() returns (word) { return target(); }",
+            "import * from math; function renamed() returns (word) { return 2; } function main() returns (word) { return target(); }",
+            "import {target} from math; function renamed() returns (word) { return 2; }",
+        ] {
+            let (world, main_uri, math_uri) = world_with_main_and_math(main, math);
+            assert_no_error_diagnostics(&world, &[main_uri, math_uri.clone()]);
+            let position = world
+                .line_index(&math_uri)
+                .unwrap()
+                .byte_to_position(math.rfind("target").unwrap() as u32);
+            assert!(
+                handle_rename(&world, &math_uri, position, "renamed").is_none(),
+                "{main}"
+            );
+            assert!(
+                handle_rename(&world, &math_uri, position, "safeName").is_some(),
+                "{main}"
+            );
+        }
+        // An explicit alias protects the consumer's namespace from provider renames.
+        let main = "import {target as kept} from math; function renamed() returns (word) { return 2; } function main() returns (word) { return kept(); }";
+        let (mut world, main_uri, math_uri) = world_with_main_and_math(main, math);
+        let position = world
+            .line_index(&math_uri)
+            .unwrap()
+            .byte_to_position(math.rfind("target").unwrap() as u32);
+        let edit = handle_rename(&world, &math_uri, position, "renamed").expect("alias protection");
+        apply_workspace_edit(&mut world, edit);
+        assert_no_error_diagnostics(&world, &[main_uri, math_uri]);
+    }
+
+    #[test]
+    fn rename_rejects_global_capture_of_untouched_references_and_imported_type_capture() {
+        let math = "export {value}; function value() returns (word) { return 1; }";
+        let main = "import * from math; function local() returns (word) { return 2; } function main() returns (word) { return value(); }";
+        let (world, main_uri, _) = world_with_main_and_math(main, math);
+        let position = world
+            .line_index(&main_uri)
+            .unwrap()
+            .byte_to_position(main.find("local").unwrap() as u32);
+        assert!(handle_rename(&world, &main_uri, position, "value").is_none());
+
+        let math = "export {Target}; type Target = word;";
+        for (selector, spelling, rename_from_provider) in [
+            ("Target", "Target", true),
+            ("Target as Kept", "Kept", false),
+        ] {
+            let main = format!(
+                "import {{{selector}}} from math; function id<a>(x: {spelling}, y: a) returns ({spelling}) {{ return x; }}"
+            );
+            let (world, main_uri, math_uri) = world_with_main_and_math(&main, math);
+            assert_no_error_diagnostics(&world, &[main_uri.clone(), math_uri.clone()]);
+            let (uri, offset) = if rename_from_provider {
+                (&math_uri, math.rfind("Target").unwrap())
+            } else {
+                (&main_uri, main.find("Kept").unwrap())
+            };
+            let position = world
+                .line_index(uri)
+                .unwrap()
+                .byte_to_position(offset as u32);
+            assert!(handle_rename(&world, uri, position, "a").is_none());
+            assert!(handle_rename(&world, uri, position, "SafeType").is_some());
+        }
+    }
+
+    #[test]
+    fn rename_preserves_unrelated_existing_errors() {
+        let source = "function value() returns (word) { return 7; }\nfunction broken() returns (word) { return missing; }\nfunction main() returns (word) { return value(); }";
+        let (mut world, uri) = world_with_main(source);
+        let position = world
+            .line_index(&uri)
+            .unwrap()
+            .byte_to_position(source.find("value").unwrap() as u32);
+        let edit = handle_rename(&world, &uri, position, "longerName").expect("unrelated error");
+        apply_workspace_edit(&mut world, edit);
+        assert_eq!(
+            world.document_text(&uri),
+            Some(source.replace("value", "longerName").as_str())
+        );
     }
 
     #[test]

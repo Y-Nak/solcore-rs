@@ -2,10 +2,9 @@
 
 use std::collections::HashSet;
 
-mod rename_capture;
-mod rename_patterns;
+mod rename_semantics;
 
-pub(crate) use rename_patterns::preserves_pattern_resolutions;
+pub(crate) use rename_semantics::preserves_resolutions;
 
 use hir::{
     anchor::{DefId, resolve_def_location},
@@ -188,13 +187,7 @@ pub fn collect_reference_locations<'db>(
         let module = parser::parse_file_to_hir(db, file).module(db);
         let env = nameres::module_env(db, module_id);
         let scope = hir_nameres::item_scope(db, module);
-        let module_map = hir_nameres::resolve_module_with_imports_and_policy(
-            db,
-            module,
-            scope,
-            &env,
-            hir_nameres::NameresDiagnosticPolicy::Emit,
-        );
+        let module_map = module_reference_resolutions(db, module, scope, &env);
 
         collect_item_resolution_locations(
             world,
@@ -1014,15 +1007,116 @@ fn body_resolution_map<'db>(
         module,
         enclosing_contract,
         params: hir_nameres::param_bindings(sig.params.atom()),
-        type_vars,
+        type_vars: type_vars.clone(),
     };
-    hir_nameres::resolve_body_with_imports_and_policy(
+    let mut resolutions = hir_nameres::resolve_body_with_imports_and_policy(
         db,
         root_body,
         &context,
         imports,
         hir_nameres::NameresDiagnosticPolicy::Emit,
-    )
+    );
+    if !has_deferred_constructors(&resolutions) {
+        return resolutions;
+    }
+    crate::analysis::with_analysis_stack(|| {
+        let item_facts = hir_nameres::resolve_item_type_facts_with_imports(
+            db,
+            module,
+            &hir_nameres::item_scope_facts(db, module),
+            imports,
+        );
+        let entry = nameres::module_id_for_source_file(db, module.def_id_value(db).file(db));
+        let lowered = hir_ty::lower_normalized_function_with_inferred_signature(
+            db,
+            module,
+            &item_facts,
+            function,
+            &type_vars,
+            Some(&resolutions),
+            entry,
+        );
+        let mut context = hir_ty::BodyTyContext::new(
+            module,
+            resolutions.clone(),
+            type_vars,
+            lowered.params,
+            Some(lowered.ret),
+        )
+        .with_param_names(
+            hir_nameres::param_bindings(sig.params.atom())
+                .iter()
+                .map(|param| param.name.atom().text(db).to_owned())
+                .collect(),
+        )
+        .with_pre_typeck_desugar(hir_ty::pre_typeck_desugar_body_tree(db, root_body));
+        if let Some(entry) = entry {
+            context = context.with_entry_module(entry);
+        }
+        let inferred = hir_ty::infer_body(db, root_body, context);
+        for entry in &mut resolutions.exprs {
+            if let Some(resolved) = inferred
+                .inferred_expr_resolutions
+                .iter()
+                .find(|resolved| resolved.body == entry.body && resolved.expr == entry.expr)
+            {
+                entry.resolution = resolved.resolution.clone();
+            }
+        }
+        for entry in &mut resolutions.pats {
+            if let Some(resolved) = inferred
+                .inferred_pat_resolutions
+                .iter()
+                .find(|resolved| resolved.body == entry.body && resolved.pat == entry.pat)
+            {
+                entry.resolution = resolved.resolution.clone();
+            }
+        }
+        resolutions
+    })
+}
+
+fn has_deferred_constructors(body: &hir_nameres::BodyResolutionMap<'_>) -> bool {
+    body.exprs
+        .iter()
+        .map(|entry| &entry.resolution)
+        .chain(body.pats.iter().map(|entry| &entry.resolution))
+        .any(|resolution| matches!(resolution, Resolution::DotCtorDeferred))
+}
+
+/// Complete source occurrence identities using inference only for bodies that
+/// need expected-type constructor lookup. Every reference consumer sees the
+/// same identities, including rename's speculative workspace.
+fn module_reference_resolutions<'db>(
+    db: &'db dyn hir_ty::Db,
+    module: Module<'db>,
+    scope: hir_nameres::ItemScope<'db>,
+    imports: &dyn hir_nameres::ImportedNames<'db>,
+) -> hir_nameres::ModuleResolutionMap<'db> {
+    let mut map = hir_nameres::resolve_module_with_imports_and_policy(
+        db,
+        module,
+        scope,
+        imports,
+        hir_nameres::NameresDiagnosticPolicy::Emit,
+    );
+    if map.bodies.iter().any(has_deferred_constructors) {
+        map.bodies = function_contexts(db, module)
+            .into_iter()
+            .map(|context| {
+                body_resolution_map(
+                    db,
+                    module,
+                    context.function,
+                    context.root_body,
+                    context.enclosing_contract,
+                    context.inherited_type_vars,
+                    imports,
+                )
+            })
+            .collect();
+    }
+    map
 }
 
 fn collect_item_resolution_locations<'db>(
@@ -1795,8 +1889,6 @@ fn find_adt<'db>(
 /// A name legal at its declaration can still reparse as contextual syntax at
 /// a use site. Semantic occurrence identity also covers imported aliases and
 /// type parameters without imposing type-name restrictions on value names.
-/// Assembly references must also remain outside the scope of Yul locals with
-/// the proposed name, otherwise a rename would silently change their binding.
 pub(crate) fn target_accepts_identifier<'db>(
     world: &'db WorldState,
     target: &ReferenceTarget<'db>,
@@ -1809,7 +1901,9 @@ pub(crate) fn target_accepts_identifier<'db>(
     if !parser::is_valid_identifier_in(new_name, context) {
         return false;
     }
-    let check_type_context = parser::requires_type_identifier_context(new_name);
+    if !parser::requires_type_identifier_context(new_name) {
+        return true;
+    }
     let declaration = target_declaration_span(db, target);
     for module_id in reference_search_modules(world, db) {
         let Some(file) = db.module_file(module_id) else {
@@ -1824,27 +1918,6 @@ pub(crate) fn target_accepts_identifier<'db>(
             &env,
             hir_nameres::NameresDiagnosticPolicy::Emit,
         );
-        if module_map
-            .bodies
-            .iter()
-            .any(|body| !rename_capture::preserves_bindings(db, body, target, new_name))
-        {
-            return false;
-        }
-        if module_map
-            .bodies
-            .iter()
-            .flat_map(|body| &body.assembly)
-            .any(|entry| {
-                resolution_matches_target(db, entry.span, &entry.resolution, target)
-                    && entry.shadowing_names.iter().any(|name| name == new_name)
-            })
-        {
-            return false;
-        }
-        if !check_type_context {
-            continue;
-        }
         for entry in module_map
             .item_resolutions
             .facts
