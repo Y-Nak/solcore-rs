@@ -1,5 +1,6 @@
 ---
 source: crates/yul/tests/snapshots.rs
+assertion_line: 166
 expression: "render_source(\"dispatch_basic_shape\",\nr#\"\nimport * from std;\nimport * from std.dispatch;\n\ncontract DispatchBasicShape {\n  function id(x : uint256) public returns (uint256) {\n    return x;\n  }\n\n  function answer() public returns (uint256) {\n    return uint256(42);\n  }\n}\n\"#,)"
 ---
 object "DispatchBasicShapeDeploy" {
@@ -255,7 +256,7 @@ object "DispatchBasicShapeDeploy" {
                                         _v34 := usr$opcodes_callvalue_d4847a28f()
                                         let _v35
                                         _v35 := usr$Eq_eq_d6d5d59e2$word(_v34, 0)
-                                        usr$std_require_d22809541(_v35, _v31, _v32, _v33)
+                                        usr$std_require_d22809541(_v35, false, 0xb5988ea3, 911)
                                       }
                                       {
                                         let _v36
@@ -270,7 +271,7 @@ object "DispatchBasicShapeDeploy" {
                                         src$rets_70 := 42
                                         let src$ptr_71
                                         let _v38
-                                        _v38 := usr$std_abi_encode_d3b55212b_pf53eab52cb3ebeea$uint256_d2edb4603(src$rets_70)
+                                        _v38 := usr$std_abi_encode_d3b55212b_pf53eab52cb3ebeea$uint256_d2edb4603(42)
                                         src$ptr_71 := _v38
                                         let _v39
                                         _v39 := usr$MemoryPointer_ptr_dbc7e9939$memory_dda73d3aeLbytes_dc4f6af34J(src$ptr_71)
@@ -300,7 +301,7 @@ object "DispatchBasicShapeDeploy" {
                                 _v44 := usr$opcodes_callvalue_d4847a28f()
                                 let _v45
                                 _v45 := usr$Eq_eq_d6d5d59e2$word(_v44, 0)
-                                usr$std_require_d22809541(_v45, _v41, _v42, _v43)
+                                usr$std_require_d22809541(_v45, false, 0xb5988ea3, 911)
                               }
                               {
                                 let _v46
@@ -312,7 +313,7 @@ object "DispatchBasicShapeDeploy" {
                                 src$ptr_72 := 4
                                 let src$args_73
                                 let _v48
-                                _v48 := usr$std_abi_decode_debc005b9_p88856831ae5400d8$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(src$ptr_72)
+                                _v48 := usr$std_abi_decode_debc005b9_p88856831ae5400d8$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(4)
                                 src$args_73 := _v48
                                 let src$rets_74
                                 let _v49
@@ -347,7 +348,7 @@ object "DispatchBasicShapeDeploy" {
               _v56 := usr$opcodes_callvalue_d4847a28f()
               let _v57
               _v57 := usr$Eq_eq_d6d5d59e2$word(_v56, 0)
-              usr$std_require_d22809541(_v57, _v53, _v54, _v55)
+              usr$std_require_d22809541(_v57, false, 0xb5988ea3, 911)
             }
             {
               let _v58
@@ -355,7 +356,7 @@ object "DispatchBasicShapeDeploy" {
               let _v60
               _v58 := false
               _v59 := 0x4924aef0
-              usr$std_revertWithError_d94ee902a(_v58, _v59, _v60)
+              usr$std_revertWithError_d94ee902a(false, 0x4924aef0, 911)
             }
             stop()
           }
@@ -372,7 +373,7 @@ object "DispatchBasicShapeDeploy" {
         _v63 := usr$opcodes_shr_d588bcc8e(224, _v62)
         src$selector_77 := _v63
         let _v64
-        _v64 := usr$Eq_eq_d6d5d59e2$word(src$selector_77, src$candidate_76)
+        _v64 := usr$Eq_eq_d6d5d59e2$word(src$selector_77, 2101100744)
         _v61 := _v64
         leave
       }
@@ -386,7 +387,7 @@ object "DispatchBasicShapeDeploy" {
         _v67 := usr$opcodes_shr_d588bcc8e(224, _v66)
         src$selector_79 := _v67
         let _v68
-        _v68 := usr$Eq_eq_d6d5d59e2$word(src$selector_79, src$candidate_78)
+        _v68 := usr$Eq_eq_d6d5d59e2$word(src$selector_79, 2243657065)
         _v65 := _v68
         leave
       }

@@ -1,5 +1,6 @@
 ---
 source: crates/yul/tests/snapshots.rs
+assertion_line: 107
 expression: "render_source(\"doc_id\",\nr#\"\nimport * from std;\nimport * from std.dispatch;\n\ncontract IdDoc {\n  function id(x : uint256) public returns (uint256) {\n    return x;\n  }\n}\n\"#,)"
 ---
 object "IdDocDeploy" {
@@ -204,7 +205,7 @@ object "IdDocDeploy" {
         _v26 := usr$opcodes_shr_d588bcc8e(224, _v25)
         src$selector_66 := _v26
         let _v27
-        _v27 := usr$Eq_eq_d6d5d59e2$word(src$selector_66, src$candidate_65)
+        _v27 := usr$Eq_eq_d6d5d59e2$word(src$selector_66, 2101100744)
         _v24 := _v27
         leave
       }
@@ -257,7 +258,7 @@ object "IdDocDeploy" {
                                 _v36 := usr$opcodes_callvalue_d4847a28f()
                                 let _v37
                                 _v37 := usr$Eq_eq_d6d5d59e2$word(_v36, 0)
-                                usr$std_require_d22809541(_v37, _v33, _v34, _v35)
+                                usr$std_require_d22809541(_v37, false, 0xb5988ea3, 911)
                               }
                               {
                                 let _v38
@@ -269,7 +270,7 @@ object "IdDocDeploy" {
                                 src$ptr_69 := 4
                                 let src$args_70
                                 let _v40
-                                _v40 := usr$std_abi_decode_debc005b9_p88856831ae5400d8$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(src$ptr_69)
+                                _v40 := usr$std_abi_decode_debc005b9_p88856831ae5400d8$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(4)
                                 src$args_70 := _v40
                                 let src$rets_71
                                 let _v41
@@ -304,7 +305,7 @@ object "IdDocDeploy" {
               _v48 := usr$opcodes_callvalue_d4847a28f()
               let _v49
               _v49 := usr$Eq_eq_d6d5d59e2$word(_v48, 0)
-              usr$std_require_d22809541(_v49, _v45, _v46, _v47)
+              usr$std_require_d22809541(_v49, false, 0xb5988ea3, 911)
             }
             {
               let _v50
@@ -312,7 +313,7 @@ object "IdDocDeploy" {
               let _v52
               _v50 := false
               _v51 := 0x4924aef0
-              usr$std_revertWithError_d94ee902a(_v50, _v51, _v52)
+              usr$std_revertWithError_d94ee902a(false, 0x4924aef0, 911)
             }
             stop()
           }
