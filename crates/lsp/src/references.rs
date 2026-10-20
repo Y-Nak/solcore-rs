@@ -3,6 +3,9 @@
 use std::collections::HashSet;
 
 mod rename_capture;
+mod rename_patterns;
+
+pub(crate) use rename_patterns::preserves_pattern_resolutions;
 
 use hir::{
     anchor::{DefId, resolve_def_location},
@@ -1824,7 +1827,7 @@ pub(crate) fn target_accepts_identifier<'db>(
         if module_map
             .bodies
             .iter()
-            .any(|body| !rename_capture::preserves_local_bindings(db, body, target, new_name))
+            .any(|body| !rename_capture::preserves_bindings(db, body, target, new_name))
         {
             return false;
         }

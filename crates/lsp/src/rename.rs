@@ -10,8 +10,8 @@ use lsp_types::{Location, Position, PrepareRenameResponse, Range, TextEdit, Url,
 use crate::{
     LineIndexExt,
     references::{
-        collect_reference_locations, reference_target_at, target_accepts_identifier,
-        target_supports_text_rename,
+        collect_reference_locations, preserves_pattern_resolutions, reference_target_at,
+        target_accepts_identifier, target_supports_text_rename,
     },
     state::WorldState,
 };
@@ -56,6 +56,9 @@ pub fn handle_rename(
     }
     let locations = editable_reference_locations(world, &target)?;
     let changes = text_edits_by_uri(locations, new_name)?;
+    if !preserves_pattern_resolutions(world, &changes) {
+        return None;
+    }
 
     Some(WorkspaceEdit {
         changes: Some(changes),
@@ -554,6 +557,255 @@ function main() returns (word) { let x: word = 7; return Echo.echo(x); }
             .byte_to_position(main.find("value").unwrap() as u32);
         assert!(handle_rename(&world, &uri, position, "renamed").is_none());
         assert!(handle_rename(&world, &uri, position, "safeName").is_some());
+    }
+
+    #[test]
+    fn rename_items_and_fields_rejects_capture_by_source_bindings() {
+        for source in [
+            "function target() returns (word) { return 1; } function main() returns (word) { let renamed = lam () -> word { return 2; }; return target(); }",
+            "function target() returns (word) { return 1; } function main() returns (word) { let run = lam (renamed: word) -> word { return target(); }; return run(2); }",
+            "import * from std; import * from std.dispatch; contract C { target: word; function read() returns (word) { let renamed: word = 2; return target; } }",
+        ] {
+            let (world, uri) = world_with_main(source);
+            assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+            for (offset, _) in source.match_indices("target") {
+                let position = world
+                    .line_index(&uri)
+                    .unwrap()
+                    .byte_to_position(offset as u32);
+                assert!(
+                    handle_rename(&world, &uri, position, "renamed").is_none(),
+                    "{source}"
+                );
+                assert!(
+                    handle_rename(&world, &uri, position, "safeName").is_some(),
+                    "{source}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rename_imported_items_and_aliases_rejects_capture_at_consumer() {
+        let math = "export {target}; function target() returns (word) { return 1; }";
+        for import in [
+            "import {target} from math;",
+            "import {target as alias} from math;",
+            "import * as M from math;",
+        ] {
+            let (name, expression) = if import.contains("alias") {
+                ("alias", "alias()")
+            } else if import.contains("as M") {
+                ("M", "M.target()")
+            } else {
+                ("target", "target()")
+            };
+            let main = format!(
+                "{import} function main() returns (word) {{ let renamed = lam () -> word {{ return 2; }}; return {expression}; }}"
+            );
+            let (world, uri, math_uri) = world_with_main_and_math(&main, math);
+            assert_no_error_diagnostics(&world, &[uri.clone(), math_uri.clone()]);
+            let position = world
+                .line_index(&uri)
+                .unwrap()
+                .byte_to_position(main.find(name).unwrap() as u32);
+            assert!(
+                handle_rename(&world, &uri, position, "renamed").is_none(),
+                "{main}"
+            );
+            assert!(
+                handle_rename(&world, &uri, position, "safeName").is_some(),
+                "{main}"
+            );
+            if name == "alias" {
+                // Renaming the provider leaves the alias spelling unchanged.
+                let position = world
+                    .line_index(&math_uri)
+                    .unwrap()
+                    .byte_to_position(math.find("target").unwrap() as u32);
+                assert!(handle_rename(&world, &math_uri, position, "renamed").is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn rename_function_preserves_initializer_and_disjoint_scope_lookup() {
+        for source in [
+            "function target() returns (word) { return 1; } function main() returns (word) { let renamed = target(); return renamed; }",
+            "function target() returns (word) { return 1; } function main() returns (word) { { let renamed: word = 2; } return target(); }",
+            "function target() returns (word) { return 1; } function main() returns (word) { let out = target(); let renamed: word = 2; return out; }",
+        ] {
+            let (mut world, uri) = world_with_main(source);
+            assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+            let position = world
+                .line_index(&uri)
+                .unwrap()
+                .byte_to_position(source.find("target").unwrap() as u32);
+            let edit = handle_rename(&world, &uri, position, "renamed").expect(source);
+            apply_workspace_edit(&mut world, edit);
+            assert_no_error_diagnostics(&world, &[uri]);
+        }
+    }
+
+    #[test]
+    fn rename_pattern_binder_preserves_its_role_in_every_pattern_form() {
+        for (declarations, input, pattern) in [
+            ("enum Choice { Choice, Other }", "input: Choice", "(value)"),
+            (
+                "enum Choice { Choice, Other }",
+                "input: (Choice, word)",
+                "((value, other))",
+            ),
+            (
+                "enum Choice { Choice, Other } enum Box { Box(Choice) }",
+                "input: Box",
+                "Box(value)",
+            ),
+        ] {
+            let source = format!(
+                "{declarations} function main({input}) returns (word) {{ match (input) {{ case {pattern} {{ return 7; }} default {{ return 9; }} }} }}"
+            );
+            let (mut world, uri) = world_with_main(&source);
+            assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+            let position = world
+                .line_index(&uri)
+                .unwrap()
+                .byte_to_position(source.find("value").unwrap() as u32);
+            for constructor in ["Choice", "Other"] {
+                assert!(
+                    handle_rename(&world, &uri, position, constructor).is_none(),
+                    "{source}"
+                );
+            }
+            let edit =
+                handle_rename(&world, &uri, position, "renamed").expect("safe pattern rename");
+            apply_workspace_edit(&mut world, edit);
+            assert_no_error_diagnostics(&world, &[uri]);
+        }
+    }
+
+    #[test]
+    fn rename_pattern_binder_observes_imported_and_contract_constructor_visibility() {
+        let math = "enum Choice { Choice, Other } export {Choice(Choice, Other)};";
+        for main in [
+            "import {Choice} from math; function main(input: Choice) returns (word) { match (input) { case (value) { return 7; } } }",
+            "import * from std; import * from std.dispatch; contract C { enum Choice { Choice, Other } function main() returns (word) { match (Choice()) { case (value) { return 7; } } } }",
+        ] {
+            let (world, uri, math_uri) = world_with_main_and_math(main, math);
+            assert_no_error_diagnostics(&world, &[uri.clone(), math_uri]);
+            let position = world
+                .line_index(&uri)
+                .unwrap()
+                .byte_to_position(main.find("value").unwrap() as u32);
+            assert!(
+                handle_rename(&world, &uri, position, "Choice").is_none(),
+                "{main}"
+            );
+            assert!(
+                handle_rename(&world, &uri, position, "Other").is_none(),
+                "{main}"
+            );
+            assert!(
+                handle_rename(&world, &uri, position, "renamed").is_some(),
+                "{main}"
+            );
+        }
+    }
+
+    #[test]
+    fn rename_constructor_cannot_capture_an_unedited_pattern_binder() {
+        let math = "enum Choice { Pick, Other } export {Choice(Pick, Other)};";
+        for import in ["import {Choice} from math;", "import * from math;"] {
+            let main = format!(
+                "{import} function main(input: Choice) returns (word) {{ match (input) {{ case (value) {{ return 7; }} }} }}"
+            );
+            let (world, uri, math_uri) = world_with_main_and_math(&main, math);
+            assert_no_error_diagnostics(&world, &[uri, math_uri.clone()]);
+            let position = world
+                .line_index(&math_uri)
+                .unwrap()
+                .byte_to_position(math.find("Pick").unwrap() as u32);
+            assert!(handle_rename(&world, &math_uri, position, "value").is_none());
+            assert!(handle_rename(&world, &math_uri, position, "Renamed").is_some());
+        }
+    }
+
+    #[test]
+    fn rename_type_preserves_unqualified_constructor_pattern_roles() {
+        let source = "enum Choice { Choice, Other } function main(input: Choice) returns (word) { match (input) { case (Choice) { return 7; } default { return 9; } } }";
+        let (world, uri) = world_with_main(source);
+        assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+        let position = world
+            .line_index(&uri)
+            .unwrap()
+            .byte_to_position(source.find("Choice").unwrap() as u32);
+        assert!(handle_rename(&world, &uri, position, "Renamed").is_none());
+        assert_eq!(world.document_text(&uri), Some(source));
+    }
+
+    #[test]
+    fn rename_constructor_respects_hidden_and_contract_local_visibility() {
+        for (main, math) in [
+            (
+                "import {Choice} from math; function main(input: Choice) returns (word) { match (input) { case (value) { return 7; } } }",
+                "enum Choice { Pick, Other } export {Choice};",
+            ),
+            (
+                "import * from std; import * from std.dispatch; contract C { enum Choice { Pick, Other } } function main(input: word) returns (word) { match (input) { case (value) { return 7; } } }",
+                "",
+            ),
+        ] {
+            let (mut world, uri, math_uri) = world_with_main_and_math(main, math);
+            assert_no_error_diagnostics(&world, &[uri.clone(), math_uri.clone()]);
+            let pattern_position = world
+                .line_index(&uri)
+                .unwrap()
+                .byte_to_position(main.find("value").unwrap() as u32);
+            assert!(
+                handle_rename(&world, &uri, pattern_position, "Pick").is_some(),
+                "hidden constructors must not restrict a binder's name"
+            );
+            let (source, target_uri) = if math.is_empty() {
+                (main, &uri)
+            } else {
+                (math, &math_uri)
+            };
+            let position = world
+                .line_index(target_uri)
+                .unwrap()
+                .byte_to_position(source.find("Pick").unwrap() as u32);
+            let edit = handle_rename(&world, target_uri, position, "value")
+                .expect("constructor is not visible at the pattern");
+            apply_workspace_edit(&mut world, edit);
+            assert_no_error_diagnostics(&world, &[uri, math_uri]);
+        }
+    }
+
+    #[test]
+    fn rename_pattern_validation_maps_unicode_and_length_changing_edits() {
+        let source = "// 🦀\nenum Choice { Choice, Other } function fλ(input: Choice) returns (word) { match (input) { case (value) { return 7; } } } function main() returns (word) { return fλ(Choice()); }";
+        let (mut world, uri) = world_with_main(source);
+        assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+        for (old_name, new_name) in [("fλ", "renamed漢"), ("value", "bindingλ")] {
+            let before = world.document_text(&uri).unwrap().to_owned();
+            let position = world
+                .line_index(&uri)
+                .unwrap()
+                .byte_to_position(before.find(old_name).unwrap() as u32);
+            let edit =
+                handle_rename(&world, &uri, position, new_name).expect("mapped pattern identities");
+            assert_eq!(
+                world.document_text(&uri),
+                Some(before.as_str()),
+                "validation must not edit the live document"
+            );
+            apply_workspace_edit(&mut world, edit);
+            assert_eq!(
+                world.document_text(&uri),
+                Some(before.replace(old_name, new_name).as_str())
+            );
+            assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+        }
     }
 
     #[test]

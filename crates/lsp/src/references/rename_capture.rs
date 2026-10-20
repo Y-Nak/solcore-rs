@@ -1,4 +1,4 @@
-//! Preserve lexical binding identities when renaming a source variable.
+//! Preserve lexical binding identities when renaming a source symbol.
 //!
 //! Name resolution already records each declaration's scope and introduction
 //! point. Replaying lookup over those facts checks both the edited references
@@ -7,40 +7,28 @@
 
 use super::*;
 
-pub(super) fn preserves_local_bindings<'db>(
+pub(super) fn preserves_bindings<'db>(
     db: &'db dyn hir_ty::Db,
     body: &hir_nameres::BodyResolutionMap<'db>,
     target: &ReferenceTarget<'db>,
     new_name: &str,
 ) -> bool {
-    let target = match target {
-        ReferenceTarget::Param(param) => Resolution::Param(*param),
-        ReferenceTarget::Local(
-            local @ (LocalBinding::Let { .. } | LocalBinding::Pattern { .. }),
-        ) => Resolution::Local(local.clone()),
-        _ => return true,
-    };
-    if !body
-        .scoped_bindings
-        .iter()
-        .any(|binding| binding.resolution == target)
-    {
-        return true;
-    }
-
     let preserves = |name: &str, span: Span<'db>, resolution: &Resolution<'db>| {
-        let edited = resolution == &target;
+        // Import aliases share the provider's resolution, but rename only
+        // edits occurrences belonging to that alias.
+        let edited = resolution_matches_target(db, span, resolution, target);
         if !edited && name != new_name {
             return true;
         }
         let name = if edited { new_name } else { name };
         let occurrence = span.resolve_to_absolute(db);
         let selected = body.scoped_bindings.iter().rev().find(|binding| {
-            let binding_name = if binding.resolution == target {
-                new_name
-            } else {
-                binding.name.as_str()
-            };
+            let binding_name =
+                if target_from_resolution(&binding.resolution).as_ref() == Some(target) {
+                    new_name
+                } else {
+                    binding.name.as_str()
+                };
             if binding_name != name {
                 return false;
             }
@@ -54,9 +42,14 @@ pub(super) fn preserves_local_bindings<'db>(
         });
         match selected {
             Some(binding) => &binding.resolution == resolution,
-            // An edited local reference must still resolve to its declaration.
-            // An unaffected item/field reference remains outside local lookup.
-            None => !edited,
+            // Parameters and locals must still select their declaration.
+            // Items, fields and module qualifiers resolve outside local lookup
+            // but may not acquire a local binding after their name is edited.
+            None => !matches!(
+                resolution,
+                Resolution::Param(_)
+                    | Resolution::Local(LocalBinding::Let { .. } | LocalBinding::Pattern { .. })
+            ),
         }
     };
 
