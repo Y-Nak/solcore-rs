@@ -247,13 +247,16 @@ impl<'db> Driver<'db> {
             }
         }
 
-        let module = MonoModule {
+        let mut module = MonoModule {
             module: self.module.def_id_value(self.db),
             frontend_desugar: frontend_desugar_plan(self.db, self.module),
             entry_points: root_names,
             items,
         };
-        let (mut module, mut eval_diagnostics) = evaluate_module(
+        // Install canonical ABI selectors before partial evaluation can
+        // propagate the candidate into comparisons or inline the helper.
+        patch_runtime_dispatch_selectors(self.db, &mut module, &self.dispatch_selector_overrides);
+        let (module, mut eval_diagnostics) = evaluate_module(
             self.db,
             module,
             EvaluateOptions {
@@ -261,7 +264,6 @@ impl<'db> Driver<'db> {
                 inline_depth: self.options.max_depth,
             },
         );
-        patch_runtime_dispatch_selectors(&mut module, &self.dispatch_selector_overrides);
         self.diagnostics.append(&mut eval_diagnostics);
 
         SpecializeOutput {
@@ -1175,12 +1177,18 @@ impl<'db> Driver<'db> {
     }
 }
 
-fn patch_runtime_dispatch_selectors(module: &mut MonoModule<'_>, selectors: &[(String, String)]) {
+fn patch_runtime_dispatch_selectors<'db>(
+    db: &'db dyn Db,
+    module: &mut MonoModule<'db>,
+    selectors: &[(String, String)],
+) {
     for item in &mut module.items {
         let MonoItem::Function(function) = item else {
             continue;
         };
-        if !function.name.starts_with("dispatch_selector_matches") {
+        if !function.source.is_some_and(|def| {
+            is_canonical_std_module_def_named(db, def, "dispatch", "selector_matches")
+        }) {
             continue;
         }
         let Some((_, _, selector)) = selectors
@@ -1202,11 +1210,21 @@ fn patch_runtime_dispatch_selectors(module: &mut MonoModule<'_>, selectors: &[(S
 fn replace_selector_candidate(stmts: &mut [MonoStmt<'_>], replacement: &str) -> bool {
     for stmt in stmts {
         let replaced = match &mut stmt.kind {
-            MonoStmtKind::Let { id, init, .. } if id.name == "candidate" => init
-                .as_mut()
-                .is_some_and(|expr| replace_selector_value(expr, replacement)),
-            MonoStmtKind::Assign { lhs, rhs, .. } if matches!(&lhs.kind, MonoExprKind::Var(id) if id.name == "candidate") => {
-                replace_selector_value(rhs, replacement)
+            MonoStmtKind::Let { id, init, .. } if id.name == "candidate" => {
+                if let Some(expr) = init {
+                    expr.kind = MonoExprKind::Lit(hir::ast::function::LitKind::Number(
+                        replacement.to_owned(),
+                    ));
+                    true
+                } else {
+                    false
+                }
+            }
+            MonoStmtKind::Assign { lhs, rhs, .. } if matches!(&lhs.kind, MonoExprKind::Var(id) if id.name == "candidate") =>
+            {
+                rhs.kind =
+                    MonoExprKind::Lit(hir::ast::function::LitKind::Number(replacement.to_owned()));
+                true
             }
             MonoStmtKind::Match { arms, .. } => arms
                 .iter_mut()
@@ -1243,15 +1261,4 @@ fn replace_selector_candidate(stmts: &mut [MonoStmt<'_>], replacement: &str) -> 
         }
     }
     false
-}
-
-fn replace_selector_value(expr: &mut MonoExpr<'_>, replacement: &str) -> bool {
-    match &mut expr.kind {
-        MonoExprKind::Lit(hir::ast::function::LitKind::Number(value)) => {
-            *value = replacement.to_owned();
-            true
-        }
-        MonoExprKind::TypeAnnot { expr, .. } => replace_selector_value(expr, replacement),
-        _ => false,
-    }
 }
