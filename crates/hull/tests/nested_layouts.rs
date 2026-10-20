@@ -142,6 +142,10 @@ fn growing_recursive_instantiations_are_diagnosed() {
         "type Wrapped(a) = Box<a>; enum Nest<a> { Nil, Cons(a, Nest<Wrapped<a>>) }",
         "enum Nest<a> { Nil, Cons(Box<Box<Nest<Box<a>>>>) }",
         "enum Nest<a> { Nil, Cons(a, (Nest<(a, a)>, word)) }",
+        "enum Nest<a> { Nil, Next(Nest<comptime<a>>) }",
+        "enum Nest<a> { Nil, Next(Nest<comptime<comptime<a>>>) }",
+        "type Qualified(a) = comptime<a>; enum Nest<a> { Nil, Next(Nest<Qualified<a>>) }",
+        "enum Nest<a> { Nil, Next(Box<Nest<comptime<a>>>) }",
     ] {
         assert_layout_finiteness(
             &format!(
@@ -154,12 +158,16 @@ fn growing_recursive_instantiations_are_diagnosed() {
 
 #[test]
 fn growing_cycles_can_cross_alternative_constructors() {
-    assert_layout_finiteness(
-        "enum Box<a> { Box(a) }
-         enum Nest<a,b> { Nil, Left(Nest<Box<b>,word>), Right(Nest<word,a>) }
-         function main(x: Nest<word,bool>) returns (word) { return 0; }",
-        false,
-    );
+    for wrapper in ["Box<b>", "comptime<b>"] {
+        assert_layout_finiteness(
+            &format!(
+                "enum Box<a> {{ Box(a) }}
+                 enum Nest<a,b> {{ Nil, Left(Nest<{wrapper},word>), Right(Nest<word,a>) }}
+                 function main(x: Nest<word,bool>) returns (word) {{ return 0; }}"
+            ),
+            false,
+        );
+    }
 }
 
 #[test]
@@ -168,8 +176,11 @@ fn regular_permuted_and_reset_recursion_remains_finite() {
         "enum Nest<a,b> { Nil, Next(a, Nest<a,b>) }",
         "enum Nest<a,b> { Nil, Next(a, Nest<b,a>) }",
         "enum Nest<a,b> { Nil, Next(a, Nest<Box<b>,word>) }",
+        "enum Nest<a,b> { Nil, Next(a, Nest<comptime<b>,word>) }",
+        "enum Nest<a,b> { Nil, Next(a, Nest<comptime<word>,b>) }",
         "enum Nest<a,b> { Nil, Next(Box<Box<Nest<a,b>>>) }",
         "enum Ignore<a> { Ignore } enum Nest<a,b> { Next(Ignore<Nest<Box<a>,b>>) }",
+        "enum Ignore<a> { Ignore } enum Nest<a,b> { Next(Ignore<Nest<comptime<a>,b>>) }",
     ] {
         assert_layout_finiteness(
             &format!(

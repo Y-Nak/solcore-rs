@@ -1,6 +1,7 @@
 //! Decide whether expanding ADT representations creates finitely many type
 //! instantiations. A recursive parameter flow may permute or discard arguments;
-//! it becomes infinite only when a cycle also wraps an argument in a constructor.
+//! it becomes infinite only when a cycle also wraps an argument in a constructor
+//! or qualifier retained by the semantic type keys used during expansion.
 //!
 //! Arguments are lazy substitutions carrying their caller's expansion path.
 //! Expanding `Box<Box<a>>` therefore consumes a finite input type instead of
@@ -184,7 +185,11 @@ impl<'db> Analysis<'_, 'db> {
                 }
                 self.argument_flows(*ret, env, target, true);
             }
-            SemTyKind::Comptime(inner) => self.argument_flows(*inner, env, target, wrapped),
+            // Lowering erases a top-level comptime qualifier, but an ADT's
+            // argument is substituted and keyed before that lowering occurs.
+            // Repeatedly wrapping the argument therefore grows the expansion
+            // just like any other constructor retained in its semantic key.
+            SemTyKind::Comptime(inner) => self.argument_flows(*inner, env, target, true),
             SemTyKind::Error | SemTyKind::Unknown => {}
         }
     }
@@ -252,27 +257,17 @@ mod tests {
             )
         };
         let param = SemTy::bound(&db, 0);
-        for growing in [false, true] {
+        for argument in [param, named(defs[2], param), SemTy::comptime(&db, param)] {
             let plans = HashMap::from([
                 (defs[0], named(defs[1], param)),
-                (
-                    defs[1],
-                    named(
-                        defs[0],
-                        if growing {
-                            named(defs[2], param)
-                        } else {
-                            param
-                        },
-                    ),
-                ),
+                (defs[1], named(defs[0], argument)),
                 (defs[2], param),
             ]);
             for root in [defs[0], defs[1]] {
                 assert_eq!(
                     LayoutFiniteness::default()
                         .check(&db, root, 1, &|def| plans.get(&def).copied()),
-                    !growing
+                    argument == param
                 );
             }
         }
