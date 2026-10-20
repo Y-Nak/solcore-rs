@@ -917,6 +917,129 @@ contract Batch {
 }
 
 #[test]
+fn external_array_abi_rejects_selected_manual_element_layout() {
+    for element in ["uint256", "()", "calldata<array<uint256>>"] {
+        let source = format!(
+            r#"
+import * from std;
+import * from std.dispatch;
+impl ABIElementAttribs<{element}> {{
+  function headSize(p:Proxy<{element}>) returns (word) {{ return 64; }}
+}}
+contract C {{
+  function take(values:calldata<array<{element}>>) public returns (uint256) {{
+    return uint256(0);
+  }}
+}}
+"#
+        );
+        let (mut db, key) = db_with_main(&source);
+        insert_real_std_modules(&mut db);
+        let diagnostics = diagnostics_for_module(&db, &key);
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_deref() == Some("SC0231")
+                    && diagnostic.message.contains("manual `ABIElementAttribs`")
+            }),
+            "{element}: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| { diagnostic.code.as_deref() == Some("SC0231") }),
+            "{element}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
+fn external_nested_array_abi_rejects_imported_manual_element_layout() {
+    let (mut db, key) = db_with_main(
+        r#"
+import * from std;
+import * from std.dispatch;
+import * from layout;
+contract C {
+  function take(values:calldata<array<calldata<array<uint256>>>>) public {}
+}
+"#,
+    );
+    insert_real_std_modules(&mut db);
+    insert_module_source(
+        &mut db,
+        ModuleKey {
+            library: LibraryId::Main,
+            logical_path: vec!["layout".into()],
+        },
+        "/main/layout.sol",
+        r#"
+import * from std;
+export {};
+impl ABIElementAttribs<uint256> {
+  function headSize(p:Proxy<uint256>) returns (word) { return 64; }
+}
+"#,
+    );
+    let diagnostics = diagnostics_for_module(&db, &key);
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some("SC0231")
+                && diagnostic.message.contains("manual `ABIElementAttribs`")
+        }),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn external_array_abi_rejects_selected_manual_element_signature() {
+    let (mut db, key) = db_with_main(
+        r#"
+import * from std;
+import * from std.dispatch;
+impl ABITypeString<uint256> {
+  function typeStr(p:Proxy<uint256>) returns (string) { return "bytes32"; }
+}
+contract C {
+  function take(values:calldata<array<calldata<array<uint256>>>>) public {}
+}
+"#,
+    );
+    insert_real_std_modules(&mut db);
+    let diagnostics = diagnostics_for_module(&db, &key);
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some("SC0231")
+                && diagnostic.message.contains("manual `ABITypeString`")
+        }),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn unselected_manual_element_metadata_remains_available_to_internal_code() {
+    let (mut db, key) = db_with_main(
+        r#"
+import * from std;
+import * from std.dispatch;
+impl ABIElementAttribs<address> {
+  function headSize(p:Proxy<address>) returns (word) { return 64; }
+}
+impl ABITypeString<address> {
+  function typeStr(p:Proxy<address>) returns (string) { return "bytes32"; }
+}
+function privateLayout() returns (word) { return ABIElementAttribs.headSize(@address); }
+function privateSignature() returns (string) { return ABITypeString.typeStr(@address); }
+contract C {
+  function take(values:calldata<array<uint256>>) public {}
+}
+"#,
+    );
+    insert_real_std_modules(&mut db);
+    let diagnostics = diagnostics_for_module(&db, &key);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
 fn calldata_tuple_array_uses_canonical_signature_and_json_components() {
     let (mut db, key) = db_with_main(
         r#"

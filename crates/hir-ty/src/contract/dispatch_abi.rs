@@ -99,8 +99,8 @@ fn sort_abi_roots<'db>(db: &'db dyn Db, args: Ty<'db>, roots: &mut [(AbiEvidence
             unreachable!("ABI roots are canonical class predicates")
         };
         let order = match AbiClass::from_def(db, *class).expect("canonical ABI root") {
-            AbiClass::SigString => 0,
-            AbiClass::Attribs => 1,
+            AbiClass::SigString | AbiClass::TypeString => 0,
+            AbiClass::Attribs | AbiClass::ElementAttribs => 1,
             AbiClass::Encode => 2,
             AbiClass::Decode => 3,
             AbiClass::Generic => unreachable!("Generic is checked by exposed ADT identity"),

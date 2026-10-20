@@ -68,11 +68,16 @@ impl StdAbiModule {
     }
 }
 
+/// Canonical dictionaries that determine an external ABI. Include value-context
+/// helpers as well as the top-level signature and codec traits: their selected
+/// implementations are dependencies of the same dispatch evidence graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum AbiClass {
     Generic,
     SigString,
+    TypeString,
     Attribs,
+    ElementAttribs,
     Encode,
     Decode,
 }
@@ -82,7 +87,9 @@ impl AbiClass {
         match self {
             Self::Generic => "Generic",
             Self::SigString => "SigString",
+            Self::TypeString => "ABITypeString",
             Self::Attribs => "ABIAttribs",
+            Self::ElementAttribs => "ABIElementAttribs",
             Self::Encode => "ABIEncode",
             Self::Decode => "ABIDecode",
         }
@@ -91,16 +98,18 @@ impl AbiClass {
     fn module(self) -> StdAbiModule {
         match self {
             Self::Generic => StdAbiModule::Generic,
-            Self::SigString => StdAbiModule::Dispatch,
-            Self::Attribs | Self::Encode | Self::Decode => StdAbiModule::Std,
+            Self::SigString | Self::TypeString => StdAbiModule::Dispatch,
+            Self::Attribs | Self::ElementAttribs | Self::Encode | Self::Decode => StdAbiModule::Std,
         }
     }
 
     pub(crate) fn evidence_role(self) -> Option<AbiEvidenceRole> {
         match self {
             Self::Generic => None,
-            Self::SigString => Some(AbiEvidenceRole::Signature),
-            Self::Attribs | Self::Encode | Self::Decode => Some(AbiEvidenceRole::Codec),
+            Self::SigString | Self::TypeString => Some(AbiEvidenceRole::Signature),
+            Self::Attribs | Self::ElementAttribs | Self::Encode | Self::Decode => {
+                Some(AbiEvidenceRole::Codec)
+            }
         }
     }
 
@@ -109,7 +118,9 @@ impl AbiClass {
         [
             Self::Generic,
             Self::SigString,
+            Self::TypeString,
             Self::Attribs,
+            Self::ElementAttribs,
             Self::Encode,
             Self::Decode,
         ]
