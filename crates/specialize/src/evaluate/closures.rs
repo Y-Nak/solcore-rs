@@ -6,15 +6,35 @@
 use super::*;
 use crate::evaluate::{
     effects::{function_is_comptime_pure, function_is_pure},
+    erasure::{strip_comptime, ty_is_function},
     known::collect_pat_binders,
 };
 use crate::ir::{MonoFunctionOrigin, MonoParam, ParamMode, visit::walk_expr};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(super) struct ClosureCloneKey {
+pub(super) struct ClosureCloneKey<'db> {
     callee: String,
     // Capture values are runtime arguments, not part of specialization identity.
-    bindings: Vec<(usize, String)>,
+    bindings: Vec<(usize, StaticCallableKey<'db>)>,
+}
+
+/// The static structure retained by a callable specialization. Constructor
+/// choices and explicitly static fields matter just as callable identities do;
+/// ordinary payloads are excluded so recursive calls reuse a clone.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum StaticCallableKey<'db> {
+    Callable(String),
+    Constructor(String, Vec<Self>),
+    Tuple(Vec<Self>),
+    Literal(LitKind),
+    Proxy(MonoTy<'db>),
+    Runtime(MonoTy<'db>),
+}
+
+struct ParameterizedCallable<'db> {
+    key: StaticCallableKey<'db>,
+    value: MonoExpr<'db>,
+    payload: Vec<(MonoId<'db>, MonoExpr<'db>)>,
 }
 
 pub(super) struct LiftedClosure<'db> {
@@ -24,9 +44,33 @@ pub(super) struct LiftedClosure<'db> {
 }
 
 impl<'db> Evaluator<'db> {
+    /// Callable identities have no runtime representation, including when they
+    /// occur inside a statically known product or constructor. Such values stay
+    /// in the evaluator; only their captured runtime payload is materialized.
+    pub(super) fn value_contains_callable(&self, expr: &MonoExpr<'db>) -> bool {
+        match &expr.kind {
+            MonoExprKind::Lambda { .. } => true,
+            MonoExprKind::Var(id) => self.functions.contains_key(&id.name),
+            MonoExprKind::Con { args, .. } | MonoExprKind::Tuple(args) => {
+                args.iter().any(|arg| self.value_contains_callable(arg))
+            }
+            MonoExprKind::TypeAnnot { expr, .. } => self.value_contains_callable(expr),
+            _ => false,
+        }
+    }
+
     pub(super) fn capture_closure_value(
         &mut self,
         expr: MonoExpr<'db>,
+    ) -> (MonoExpr<'db>, Vec<MonoStmt<'db>>) {
+        let materialize_payload = self.value_contains_callable(&expr);
+        self.capture_static_value(expr, materialize_payload)
+    }
+
+    fn capture_static_value(
+        &mut self,
+        expr: MonoExpr<'db>,
+        materialize_payload: bool,
     ) -> (MonoExpr<'db>, Vec<MonoStmt<'db>>) {
         let expr = match expr {
             MonoExpr {
@@ -34,7 +78,7 @@ impl<'db> Evaluator<'db> {
                 ty,
                 kind: MonoExprKind::Con { ctor, args },
             } => {
-                let (args, bindings) = self.capture_closure_values(args);
+                let (args, bindings) = self.capture_closure_values(args, materialize_payload);
                 return (
                     MonoExpr {
                         span,
@@ -49,7 +93,7 @@ impl<'db> Evaluator<'db> {
                 ty,
                 kind: MonoExprKind::Tuple(elems),
             } => {
-                let (elems, bindings) = self.capture_closure_values(elems);
+                let (elems, bindings) = self.capture_closure_values(elems, materialize_payload);
                 return (
                     MonoExpr {
                         span,
@@ -68,7 +112,7 @@ impl<'db> Evaluator<'db> {
                         ty: annotation,
                     },
             } => {
-                let (expr, bindings) = self.capture_closure_value(*expr);
+                let (expr, bindings) = self.capture_static_value(*expr, materialize_payload);
                 return (
                     MonoExpr {
                         span,
@@ -84,6 +128,10 @@ impl<'db> Evaluator<'db> {
             expr => expr,
         };
         let MonoExprKind::Lambda { params, body, .. } = &expr.kind else {
+            if materialize_payload && !self.expr_is_known_value(&expr) {
+                let (value, binding) = self.materialize_callable_payload(expr);
+                return (value, vec![binding]);
+            }
             return (expr, Vec::new());
         };
         if self.closure_captures(params, body).is_empty() {
@@ -95,21 +143,9 @@ impl<'db> Evaluator<'db> {
         let mut bindings = Vec::new();
         let mut values = Vec::new();
         for capture in captures {
-            let id = MonoId {
-                name: self.fresh_clone_name("$captured"),
-                ty: capture.ty,
-                span: capture.span,
-            };
-            values.push(var_expr(id.clone()));
-            bindings.push(MonoStmt {
-                span: capture.span,
-                kind: MonoStmtKind::Let {
-                    mode: crate::ir::LetMode::Runtime,
-                    ty: Some(id.ty),
-                    id,
-                    init: Some(capture),
-                },
-            });
+            let (value, binding) = self.materialize_callable_payload(capture);
+            values.push(value);
+            bindings.push(binding);
         }
         // Capture the value at closure construction, before a later assignment
         // or shadowing declaration can change what its free variable denotes.
@@ -119,15 +155,39 @@ impl<'db> Evaluator<'db> {
         )
     }
 
+    fn materialize_callable_payload(
+        &mut self,
+        value: MonoExpr<'db>,
+    ) -> (MonoExpr<'db>, MonoStmt<'db>) {
+        let id = MonoId {
+            name: self.fresh_clone_name("$captured"),
+            ty: value.ty,
+            span: value.span,
+        };
+        (
+            var_expr(id.clone()),
+            MonoStmt {
+                span: value.span,
+                kind: MonoStmtKind::Let {
+                    mode: crate::ir::LetMode::Runtime,
+                    ty: Some(id.ty),
+                    id,
+                    init: Some(value),
+                },
+            },
+        )
+    }
+
     fn capture_closure_values(
         &mut self,
         values: Vec<MonoExpr<'db>>,
+        materialize_payload: bool,
     ) -> (Vec<MonoExpr<'db>>, Vec<MonoStmt<'db>>) {
         let mut bindings = Vec::new();
         let values = values
             .into_iter()
             .map(|value| {
-                let (value, mut captures) = self.capture_closure_value(value);
+                let (value, mut captures) = self.capture_static_value(value, materialize_payload);
                 bindings.append(&mut captures);
                 value
             })
@@ -148,13 +208,21 @@ impl<'db> Evaluator<'db> {
         if self.function_is_std_dispatch(&function) || function.params.len() != args.len() {
             return None;
         }
+        let mut used_names = build_type_reg(&function.params, &function.body)
+            .into_keys()
+            .collect::<FxHashSet<_>>();
         let mut bindings = Vec::new();
         for (index, (param, arg)) in function.params.iter().zip(args).enumerate() {
-            if ty_is_function(self.db, param.ty.ty()) {
+            if ty_is_function(self.db, param.ty.ty()) || self.value_contains_callable(arg) {
                 // Unknown function parameters remain in the unspecialized body.
                 // A caller with a concrete closure creates a separate definition.
-                let (target, captures) = self.lift_closure(arg)?;
-                bindings.push((index, target, captures));
+                let value = self.parameterize_callable_value(
+                    arg,
+                    index,
+                    param_is_comptime(self.db, param),
+                    &mut used_names,
+                )?;
+                bindings.push((index, value));
             }
         }
         if bindings.is_empty() {
@@ -164,34 +232,19 @@ impl<'db> Evaluator<'db> {
             callee: callee.name.clone(),
             bindings: bindings
                 .iter()
-                .map(|(index, target, _)| (*index, target.name.clone()))
+                .map(|(index, value)| (*index, value.key.clone()))
                 .collect(),
         };
         let mut params = Vec::new();
         let mut clone_args = Vec::new();
         let mut env = VEnv::default();
-        let mut used_names = build_type_reg(&function.params, &function.body)
-            .into_keys()
-            .collect::<FxHashSet<_>>();
         for (index, (param, arg)) in function.params.iter().zip(args).enumerate() {
-            let Some((_, target, captures)) = bindings.iter().find(|(i, _, _)| *i == index) else {
+            let Some((_, value)) = bindings.iter().find(|(i, _)| *i == index) else {
                 params.push(param.clone());
                 clone_args.push(arg.clone());
                 continue;
             };
-            let mut bound_captures = Vec::new();
-            for (capture_index, capture) in captures.iter().enumerate() {
-                // `$` is outside the source identifier alphabet. These parameters
-                // cannot capture a wrapper's source locals or lambda parameters.
-                let mut name = format!("$capture{index}_{capture_index}");
-                while !used_names.insert(name.clone()) {
-                    name.push('_');
-                }
-                let id = MonoId {
-                    name,
-                    ty: capture.ty,
-                    span: capture.span,
-                };
+            for (id, capture) in &value.payload {
                 params.push(MonoParam {
                     name: id.name.clone(),
                     mode: ParamMode::Runtime,
@@ -199,12 +252,8 @@ impl<'db> Evaluator<'db> {
                     span: id.span,
                 });
                 clone_args.push(capture.clone());
-                bound_captures.push(var_expr(id));
             }
-            env.insert(
-                param.name.clone(),
-                self.bound_closure(target, bound_captures, arg.ty, arg.span),
-            );
+            env.insert(param.name.clone(), value.value.clone());
         }
         let clone_ty = function_ty(self.db, &params, function.ret);
         let name = if let Some(name) = self.closure_clone_names.get(&key) {
@@ -238,6 +287,132 @@ impl<'db> Evaluator<'db> {
                 origin: MonoCallOrigin::ByName,
             },
         })
+    }
+
+    /// Keep callable identities and product structure static, passing each
+    /// captured value or ordinary runtime field as an explicit clone parameter.
+    fn parameterize_callable_value(
+        &mut self,
+        expr: &MonoExpr<'db>,
+        index: usize,
+        static_payload: bool,
+        used_names: &mut FxHashSet<String>,
+    ) -> Option<ParameterizedCallable<'db>> {
+        let mut payload = Vec::new();
+        let (key, value) = self.parameterize_callable_value_inner(
+            expr,
+            index,
+            static_payload,
+            used_names,
+            &mut payload,
+        )?;
+        Some(ParameterizedCallable {
+            key,
+            value,
+            payload,
+        })
+    }
+
+    fn parameterize_callable_value_inner(
+        &mut self,
+        expr: &MonoExpr<'db>,
+        index: usize,
+        static_payload: bool,
+        used_names: &mut FxHashSet<String>,
+        payload: &mut Vec<(MonoId<'db>, MonoExpr<'db>)>,
+    ) -> Option<(StaticCallableKey<'db>, MonoExpr<'db>)> {
+        let static_payload = static_payload
+            || ty_is_comptime(self.db, expr.ty.ty())
+            || ty_is_comptime_string(self.db, expr.ty.ty())
+            || ty_is_builtin(self.db, expr.ty.ty(), BuiltinTyCtor::Integer);
+        if !static_payload
+            && !self.value_contains_callable(expr)
+            && !matches!(&expr.kind, MonoExprKind::Proxy(_))
+        {
+            if ty_is_function(self.db, expr.ty.ty()) {
+                return None;
+            }
+            return Some((
+                StaticCallableKey::Runtime(expr.ty),
+                callable_payload_parameter(expr.clone(), index, used_names, payload),
+            ));
+        }
+        let mut value = expr.clone();
+        let key = match &expr.kind {
+            MonoExprKind::Con { ctor, args } => {
+                let (keys, values): (Vec<_>, Vec<_>) = args
+                    .iter()
+                    .map(|arg| {
+                        self.parameterize_callable_value_inner(
+                            arg,
+                            index,
+                            static_payload,
+                            used_names,
+                            payload,
+                        )
+                    })
+                    .collect::<Option<Vec<_>>>()?
+                    .into_iter()
+                    .unzip();
+                value.kind = MonoExprKind::Con {
+                    ctor: ctor.clone(),
+                    args: values,
+                };
+                StaticCallableKey::Constructor(ctor.name.clone(), keys)
+            }
+            MonoExprKind::Tuple(args) => {
+                let (keys, values): (Vec<_>, Vec<_>) = args
+                    .iter()
+                    .map(|arg| {
+                        self.parameterize_callable_value_inner(
+                            arg,
+                            index,
+                            static_payload,
+                            used_names,
+                            payload,
+                        )
+                    })
+                    .collect::<Option<Vec<_>>>()?
+                    .into_iter()
+                    .unzip();
+                value.kind = MonoExprKind::Tuple(values);
+                StaticCallableKey::Tuple(keys)
+            }
+            MonoExprKind::TypeAnnot { expr, ty } => {
+                let (key, inner) = self.parameterize_callable_value_inner(
+                    expr,
+                    index,
+                    static_payload,
+                    used_names,
+                    payload,
+                )?;
+                value.kind = MonoExprKind::TypeAnnot {
+                    expr: Box::new(inner),
+                    ty: *ty,
+                };
+                key
+            }
+            MonoExprKind::Lit(lit) => StaticCallableKey::Literal(lit.clone()),
+            MonoExprKind::Proxy(ty) => StaticCallableKey::Proxy(*ty),
+            _ => {
+                if let Some((target, bound)) = self.lift_closure(expr) {
+                    let values = bound
+                        .into_iter()
+                        .map(|capture| {
+                            callable_payload_parameter(capture, index, used_names, payload)
+                        })
+                        .collect();
+                    value = self.bound_closure(&target, values, expr.ty, expr.span);
+                    StaticCallableKey::Callable(target.name)
+                } else if !ty_is_function(self.db, expr.ty.ty()) {
+                    value = callable_payload_parameter(expr.clone(), index, used_names, payload);
+                    StaticCallableKey::Runtime(expr.ty)
+                } else {
+                    return None;
+                }
+            }
+        };
+        Some((key, value))
     }
 
     pub(super) fn lift_closure(
@@ -280,7 +455,8 @@ impl<'db> Evaluator<'db> {
                 lifted.captures.iter().cloned().map(var_expr).collect(),
             ));
         }
-        let TyKind::Function { ret, .. } = expr.ty.ty().kind(self.db) else {
+        let TyKind::Function { ret, .. } = strip_comptime(self.db, expr.ty.ty()).kind(self.db)
+        else {
             return None;
         };
         let ret = MonoTy::new_unchecked(*ret);
@@ -342,7 +518,7 @@ impl<'db> Evaluator<'db> {
         let TyKind::Function {
             params: param_tys,
             ret,
-        } = ty.ty().kind(self.db)
+        } = strip_comptime(self.db, ty.ty()).kind(self.db)
         else {
             unreachable!("function parameter")
         };
@@ -442,6 +618,27 @@ impl<'db> Evaluator<'db> {
         visitor.stmts(body);
         visitor.captures.into_values().collect()
     }
+}
+
+fn callable_payload_parameter<'db>(
+    value: MonoExpr<'db>,
+    index: usize,
+    used_names: &mut FxHashSet<String>,
+    payload: &mut Vec<(MonoId<'db>, MonoExpr<'db>)>,
+) -> MonoExpr<'db> {
+    // `$` is outside the source identifier alphabet. These parameters cannot
+    // capture a wrapper's source locals or lambda parameters.
+    let mut name = format!("$capture{index}_{}", payload.len());
+    while !used_names.insert(name.clone()) {
+        name.push('_');
+    }
+    let id = MonoId {
+        name,
+        ty: value.ty,
+        span: value.span,
+    };
+    payload.push((id.clone(), value));
+    var_expr(id)
 }
 
 fn function_ty<'db>(db: &'db dyn Db, params: &[MonoParam<'db>], ret: MonoTy<'db>) -> MonoTy<'db> {

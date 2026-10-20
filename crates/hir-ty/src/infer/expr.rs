@@ -1202,8 +1202,8 @@ impl<'db> InferCtx<'db> {
         let Some(expected) = expected else {
             return (None, None);
         };
-        let expected = self.normalize_aliases(expected);
-        match self.engine.resolve(expected.clone()) {
+        let expected = self.expected_shape_ty(expected);
+        match expected.clone() {
             InferTy::Function { params, ret } => {
                 if params.len() != param_count {
                     self.diagnostics.push(TypeckDiagnostic::WrongArity {

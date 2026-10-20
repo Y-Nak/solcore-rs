@@ -930,7 +930,7 @@ impl<'db> InferCtx<'db> {
     /// Staging qualifies values without changing their constructor or product
     /// shape. Keep the original expected type for unification and comptime
     /// checking, but inspect its underlying shape when destructuring it.
-    fn expected_shape_ty(&mut self, ty: InferTy<'db>) -> InferTy<'db> {
+    pub(super) fn expected_shape_ty(&mut self, ty: InferTy<'db>) -> InferTy<'db> {
         let ty = self.engine.resolve(ty);
         let ty = self.normalize_aliases(ty);
         match self.engine.resolve(ty) {

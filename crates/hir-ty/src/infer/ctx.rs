@@ -217,9 +217,23 @@ impl<'db> InferCtx<'db> {
                 }
             })
             .collect();
+        let closure_tys = self
+            .closure_sigs
+            .into_iter()
+            .map(|(def, sig)| {
+                (
+                    def,
+                    self.engine.ground_ty(InferTy::Function {
+                        params: sig.params,
+                        ret: Box::new(sig.ret),
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
         let mut result = InferenceResult {
             root_scheme,
             expr_tys,
+            closure_tys,
             pat_tys,
             inferred_expr_resolutions: self.inferred_expr_resolutions,
             inferred_pat_resolutions: self.inferred_pat_resolutions,

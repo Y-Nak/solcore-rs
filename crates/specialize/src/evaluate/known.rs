@@ -177,21 +177,25 @@ pub(super) fn match_arms_with<'db, F>(
 where
     F: Fn(&MonoExpr<'db>) -> bool + Copy,
 {
-    arms.iter().enumerate().find_map(|(index, arm)| {
+    for (index, arm) in arms.iter().enumerate() {
         if arm.pats.len() != scrutinees.len() {
-            return None;
+            continue;
+        }
+        if !product_pattern_decision(&arm.pats, scrutinees, is_known)? {
+            continue;
         }
         let mut env = env.clone();
         for (pat, value) in arm.pats.iter().zip(scrutinees) {
-            env = match_pat(env, pat, value, is_known)?;
+            env = match_pat(env, pat, value, |_| true)?;
         }
-        Some(MatchedArm {
+        return Some(MatchedArm {
             index,
             env,
             bindings: pattern_bindings(&arm.pats),
             body: arm.body.clone(),
-        })
-    })
+        });
+    }
+    None
 }
 
 pub(super) fn pattern_bindings<'db>(pats: &[MonoPat<'db>]) -> Vec<MonoId<'db>> {
@@ -232,14 +236,79 @@ pub(super) fn match_expr_arms_with<'db, F>(
 where
     F: Fn(&MonoExpr<'db>) -> bool + Copy,
 {
-    arms.iter().find_map(|arm| {
-        let env = match_pat(env.clone(), &arm.pat, scrutinee, is_known)?;
-        Some((
+    for arm in arms {
+        // A known constructor can select a projection even when its fields are
+        // runtime values. An undecidable earlier arm still blocks selection.
+        if !pattern_decision(&arm.pat, scrutinee, is_known)? {
+            continue;
+        }
+        let env = match_pat(env.clone(), &arm.pat, scrutinee, |_| true)?;
+        return Some((
             env,
             arm.expr.clone(),
             pattern_bindings(std::slice::from_ref(&arm.pat)),
-        ))
-    })
+        ));
+    }
+    None
+}
+
+fn pattern_decision<'db, F>(pat: &MonoPat<'db>, value: &MonoExpr<'db>, is_known: F) -> Option<bool>
+where
+    F: Fn(&MonoExpr<'db>) -> bool + Copy,
+{
+    match &pat.kind {
+        MonoPatKind::Wildcard | MonoPatKind::Var(_) => Some(true),
+        MonoPatKind::Lit(lit) => is_known(value).then(|| literal_matches(lit, value)),
+        MonoPatKind::ComptimeLabel(expr) => is_known(value)
+            .then(|| literal_from_known_expr(expr).is_some_and(|lit| literal_matches(&lit, value))),
+        MonoPatKind::Con { ctor, args } => match &unannotated_value(value).kind {
+            MonoExprKind::Con {
+                ctor: value_ctor,
+                args: values,
+            } => {
+                if !constructor_names_match(&ctor.name, &value_ctor.name)
+                    || args.len() != values.len()
+                {
+                    return Some(false);
+                }
+                product_pattern_decision(args, values, is_known)
+            }
+            _ => is_known(value).then_some(false),
+        },
+        MonoPatKind::Tuple(pats) => match &unannotated_value(value).kind {
+            MonoExprKind::Tuple(values) if pats.len() == values.len() => {
+                product_pattern_decision(pats, values, is_known)
+            }
+            _ => is_known(value).then_some(false),
+        },
+        MonoPatKind::Error => None,
+    }
+}
+
+fn unannotated_value<'expr, 'db>(mut value: &'expr MonoExpr<'db>) -> &'expr MonoExpr<'db> {
+    while let MonoExprKind::TypeAnnot { expr, .. } = &value.kind {
+        value = expr;
+    }
+    value
+}
+
+fn product_pattern_decision<'db, F>(
+    pats: &[MonoPat<'db>],
+    values: &[MonoExpr<'db>],
+    is_known: F,
+) -> Option<bool>
+where
+    F: Fn(&MonoExpr<'db>) -> bool + Copy,
+{
+    let mut result = Some(true);
+    for (pat, value) in pats.iter().zip(values) {
+        match pattern_decision(pat, value, is_known) {
+            Some(false) => return Some(false),
+            None => result = None,
+            Some(true) => {}
+        }
+    }
+    result
 }
 
 fn match_pat<'db, F>(
@@ -262,7 +331,7 @@ where
             Some(env)
         }
         MonoPatKind::Lit(lit) => literal_matches(lit, value).then_some(env),
-        MonoPatKind::Con { ctor, args } => match &value.kind {
+        MonoPatKind::Con { ctor, args } => match &unannotated_value(value).kind {
             MonoExprKind::Con {
                 ctor: value_ctor,
                 args: value_args,
@@ -276,7 +345,7 @@ where
             }
             _ => None,
         },
-        MonoPatKind::Tuple(pats) => match &value.kind {
+        MonoPatKind::Tuple(pats) => match &unannotated_value(value).kind {
             MonoExprKind::Tuple(values) if pats.len() == values.len() => {
                 for (pat, value) in pats.iter().zip(values) {
                     env = match_pat(env, pat, value, is_known)?;
@@ -301,7 +370,7 @@ fn constructor_matches(
     constructor_names_match(pat_ctor, value_ctor)
 }
 
-fn constructor_names_match(lhs: &str, rhs: &str) -> bool {
+pub(super) fn constructor_names_match(lhs: &str, rhs: &str) -> bool {
     // Constructor names are canonicalized to `{Adt}_{Ctor}` (or the builtin
     // spelling) at lowering time; suffix-based fuzzy matching is unsound
     // because user constructor names may themselves contain underscores

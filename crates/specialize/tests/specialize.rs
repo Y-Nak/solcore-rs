@@ -1930,6 +1930,70 @@ fn closure_parameter_specialization_erases_indirect_calls_and_function_parameter
 }
 
 #[test]
+fn aggregate_closure_fixture_keeps_callable_structure_out_of_runtime_code() {
+    let fixture = repo_root().join("tests/e2e/aggregate-closure-captures/main.sol");
+    let (db, file, output) = specialize_fixture_with_db(&fixture);
+    let module = nameres::module_id_for_source_file(db, file).unwrap();
+    let frontend = hir_ty::collect_frontend_diagnostics(db, module);
+    assert!(frontend.is_empty(), "{frontend:#?}");
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let functions = output
+        .module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            MonoItem::Function(function) => Some(function),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for function in &functions {
+        assert!(
+            !function.body.iter().any(stmt_has_closure_dispatch),
+            "{} retains an indirect callable: {function:#?}",
+            function.name
+        );
+    }
+    for callee in ["repeatBox", "repeatPayload"] {
+        assert_eq!(
+            functions
+                .iter()
+                .filter(|function| {
+                    function.name.contains(callee) && function.name.contains("$closure")
+                })
+                .count(),
+            1,
+            "{callee}: recursive aggregate arguments must reuse their static specialization"
+        );
+    }
+}
+
+#[test]
+fn runtime_fields_in_callable_aggregates_do_not_become_comptime() {
+    for use_payload in [
+        "return take(payload);",
+        "let copy: comptime<word> = payload; return copy;",
+    ] {
+        let source = format!(
+            "enum Box<a> {{ Box(a) }}
+             function take(comptime value: word) returns(word) {{ return value; }}
+             function main(input: word) returns(word) {{
+                 let boxed = Box((lam () -> word {{ return input; }}, input));
+                 match(boxed) {{ case(Box((invoke, payload))) {{ {use_payload} }} }}
+             }}"
+        );
+        let (_, output) = specialize_src(&source);
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic.kind,
+                SpecializeDiagnosticKind::ComptimeEvaluationFailed { .. }
+            )),
+            "{source}: runtime payload was accepted as comptime: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
 fn closure_specialization_respects_the_global_clone_budget() {
     let db = TestDb::default();
     let module = parse_module(

@@ -27,6 +27,7 @@ type LogicalEvidenceBindings<'db> = Vec<(Pred<'db>, LogicalEvidence<'db>)>;
 
 pub(super) struct BodyIndex<'db> {
     expr_tys: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), Ty<'db>>,
+    closure_tys: FxHashMap<DefId<'db>, Ty<'db>>,
     pat_tys: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), Ty<'db>>,
     let_tys: FxHashMap<(FuncBody<'db>, Id<Stmt<'db>>), Ty<'db>>,
     expr_resolutions: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), hir_nameres::Resolution<'db>>,
@@ -51,6 +52,7 @@ impl<'db> BodyIndex<'db> {
     ) -> Self {
         let mut index = Self {
             expr_tys: FxHashMap::default(),
+            closure_tys: result.closure_tys.iter().copied().collect(),
             pat_tys: FxHashMap::default(),
             let_tys: FxHashMap::default(),
             expr_resolutions: FxHashMap::default(),
@@ -485,6 +487,15 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             ty = closed;
         }
         ty = self.normalize_body_ty(ty);
+        if matches!(&expr.kind, ExprKind::Lambda { .. })
+            && let TyKind::Named {
+                ctor: TyCtor::User(user),
+                ..
+            } = ty.kind(self.driver.db)
+            && let Some(signature) = self.index.closure_tys.get(&user.def)
+        {
+            ty = self.normalize_body_ty(self.subst.apply_ty(self.driver.db, *signature));
+        }
         let mono_ty = self.driver.mono_ty(ty, "expression", expr.span)?;
         if let Some(evidence) = self.string_coercion_evidence(expr_id) {
             let source_ty = self.source_string_ty();
@@ -810,18 +821,22 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             params: param_tys, ..
         } = ty.kind(self.driver.db)
         else {
-            return Some(MonoExprKind::Lambda {
-                name,
-                params: Vec::new(),
-                body: Vec::new(),
+            self.driver.diagnostics.push(SpecializeDiagnostic {
+                kind: SpecializeDiagnosticKind::MissingResolution {
+                    context: format!("missing callable signature for lambda '{name}'"),
+                },
+                span: Some(span),
             });
+            return None;
         };
         if params.len() != param_tys.len() {
-            return Some(MonoExprKind::Lambda {
-                name,
-                params: Vec::new(),
-                body: Vec::new(),
+            self.driver.diagnostics.push(SpecializeDiagnostic {
+                kind: SpecializeDiagnosticKind::MissingResolution {
+                    context: format!("parameter count does not match lambda '{name}' signature"),
+                },
+                span: Some(span),
             });
+            return None;
         }
 
         let mut locals = self.locals.clone();
