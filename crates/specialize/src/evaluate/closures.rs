@@ -5,7 +5,10 @@
 
 use super::*;
 use crate::evaluate::{
-    effects::{function_is_comptime_pure, function_is_pure},
+    effects::{
+        function_is_comptime_inlinable, function_is_comptime_pure, function_is_inlinable,
+        function_is_pure,
+    },
     erasure::{strip_comptime, ty_is_function},
     known::collect_pat_binders,
 };
@@ -647,6 +650,15 @@ impl<'db> Evaluator<'db> {
         ) {
             self.pure_funs.insert(function.name.clone());
         }
+        if function_is_inlinable(
+            self.db,
+            &function,
+            &self.inlinable_funs,
+            &function.name,
+            &self.storage_fields,
+        ) {
+            self.inlinable_funs.insert(function.name.clone());
+        }
         if function_is_comptime_pure(
             self.db,
             &function,
@@ -655,6 +667,15 @@ impl<'db> Evaluator<'db> {
             &self.storage_fields,
         ) {
             self.comptime_pure_funs.insert(function.name.clone());
+        }
+        if function_is_comptime_inlinable(
+            self.db,
+            &function,
+            &self.comptime_inlinable_funs,
+            &function.name,
+            &self.storage_fields,
+        ) {
+            self.comptime_inlinable_funs.insert(function.name.clone());
         }
         // A closure's writes depend on its bound callable arguments. Until its
         // body has been evaluated, use a conservative summary at all call sites.
