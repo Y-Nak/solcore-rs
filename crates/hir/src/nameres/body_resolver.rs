@@ -1,5 +1,7 @@
 use super::*;
 
+mod assembly;
+
 pub(super) struct BodyResolver<'db, 'a> {
     db: &'db dyn Db,
     scope: &'a ItemScopeFacts<'db>,
@@ -115,7 +117,8 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     }
                 });
             }
-            StmtKind::Assembly { .. } | StmtKind::Break | StmtKind::Continue | StmtKind::Error => {}
+            StmtKind::Assembly { body } => self.assembly(body),
+            StmtKind::Break | StmtKind::Continue | StmtKind::Error => {}
         }
     }
 

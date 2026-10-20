@@ -321,6 +321,169 @@ function main() returns (word) { let x: word = 7; return Echo.echo(x); }
     }
 
     #[test]
+    fn rename_source_bindings_includes_assembly_reads_and_assignments() {
+        for source in [
+            "function main(input: word) returns (word) { let value: word = input; assembly { value := add(value, 1) } return value; }",
+            "function main(value: word) returns (word) { assembly { value := add(value, 1) } return value; }",
+            "function main(input: word) returns (word) { match (input) { case value { assembly { value := add(value, 1) } return value; } } }",
+            "function main(input: word) returns (word) { let f = lam (value: word) -> word { assembly { value := add(value, 1) } return value; }; return f(input); }",
+            "function main(input: word) returns (word) { let f = lam (x: word) -> word { let value = x; assembly { value := add(value, 1) } return value; }; return f(input); }",
+            "function main(input: word) returns (word) { let value = input; let f = lam (x: word) -> word { assembly { pop(value) } return value; }; return f(input); }",
+            "function main(value: word) returns (word) { let other: word; assembly { value, other := pair(value) function pair(input) -> a, b { a := input b := input } } return value; }",
+            "function main(input: word) returns (word) { if (true) { let value = input; } assembly { value := add(value, 1) } return value; }",
+            "import * from std; import * from std.dispatch; contract C { function update(value: word) returns (word) { assembly { value := add(value, 1) } return value; } }",
+        ] {
+            // Every occurrence is also a valid rename origin, including Yul
+            // assignment targets and reads, parameters and pattern bindings.
+            for (offset, _) in source.match_indices("value") {
+                let (mut world, uri) = world_with_main(source);
+                assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+                let position = world
+                    .line_index(&uri)
+                    .unwrap()
+                    .byte_to_position(offset as u32);
+                assert!(
+                    handle_prepare_rename(&world, &uri, position).is_some(),
+                    "{source}"
+                );
+                let edit = handle_rename(&world, &uri, position, "renamed").expect(source);
+                apply_workspace_edit(&mut world, edit);
+                assert_eq!(
+                    world.document_text(&uri),
+                    Some(source.replace("value", "renamed").as_str())
+                );
+                assert_no_error_diagnostics(&world, &[uri]);
+            }
+        }
+    }
+
+    #[test]
+    fn rename_assembly_references_preserves_yul_scopes_and_namespaces() {
+        let source = r#"function main(value: word) returns (word) {
+    assembly {
+        pop(value)
+        { let value := value pop(value) }
+        if value { let value := value pop(value) }
+        for { let value := value } value { value := sub(value, 1) } {
+            let temp := value
+            pop(temp)
+        }
+        for { let i := value } i { value := add(value, 1) i := sub(i, 1) } {
+            let value := i
+            pop(value)
+        }
+        switch value
+        case 0 { let value := value pop(value) }
+        default { value := add(value, 1) }
+        function value(value) -> result {
+            function nested(value) -> result { result := value }
+            result := nested(value)
+        }
+        function other() -> value { value := 7 }
+        value := value(value)
+    }
+    assembly { value := add(value, 1) }
+    return value;
+}"#;
+        let expected = r#"function main(renamed: word) returns (word) {
+    assembly {
+        pop(renamed)
+        { let value := renamed pop(value) }
+        if renamed { let value := renamed pop(value) }
+        for { let value := renamed } value { value := sub(value, 1) } {
+            let temp := value
+            pop(temp)
+        }
+        for { let i := renamed } i { renamed := add(renamed, 1) i := sub(i, 1) } {
+            let value := i
+            pop(value)
+        }
+        switch renamed
+        case 0 { let value := renamed pop(value) }
+        default { renamed := add(renamed, 1) }
+        function value(value) -> result {
+            function nested(value) -> result { result := value }
+            result := nested(value)
+        }
+        function other() -> value { value := 7 }
+        renamed := value(renamed)
+    }
+    assembly { renamed := add(renamed, 1) }
+    return renamed;
+}"#;
+        for offset in [
+            source.find("value:").unwrap(),
+            source.find("pop(value)").unwrap() + 4,
+        ] {
+            let (mut world, uri) = world_with_main(source);
+            assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+            let position = world
+                .line_index(&uri)
+                .unwrap()
+                .byte_to_position(offset as u32);
+            let edit = handle_rename(&world, &uri, position, "renamed").expect("source rename");
+            apply_workspace_edit(&mut world, edit);
+            assert_eq!(world.document_text(&uri), Some(expected));
+            assert_no_error_diagnostics(&world, &[uri]);
+        }
+    }
+
+    #[test]
+    fn rename_assembly_reference_rejects_capture_by_a_yul_local() {
+        for assembly in [
+            "let renamed := 1 value := add(value, renamed)",
+            "{ let renamed := 1 pop(value) }",
+            "for { let renamed := 1 } value { renamed := 0 } { pop(value) }",
+        ] {
+            let source = format!(
+                "function main(value: word) returns (word) {{ assembly {{ {assembly} }} return value; }}"
+            );
+            let (world, uri) = world_with_main(&source);
+            assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+            let position = world
+                .line_index(&uri)
+                .unwrap()
+                .byte_to_position(source.find("value").unwrap() as u32);
+            assert!(handle_rename(&world, &uri, position, "renamed").is_none());
+            assert!(handle_rename(&world, &uri, position, "safeName").is_some());
+        }
+    }
+
+    #[test]
+    fn rename_assembly_reference_ignores_locals_in_separate_scopes() {
+        let source = "function main(value: word) returns (word) { assembly { { let renamed := 1 pop(renamed) } function f(renamed) -> result { result := renamed } value := f(value) } return value; }";
+        let (mut world, uri) = world_with_main(source);
+        assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+        let position = world
+            .line_index(&uri)
+            .unwrap()
+            .byte_to_position(source.find("value").unwrap() as u32);
+        let edit = handle_rename(&world, &uri, position, "renamed").expect("non-capturing rename");
+        apply_workspace_edit(&mut world, edit);
+        assert_eq!(
+            world.document_text(&uri),
+            Some(source.replace("value", "renamed").as_str())
+        );
+        assert_no_error_diagnostics(&world, &[uri]);
+    }
+
+    #[test]
+    fn rename_assembly_reference_keeps_source_shadowing_bindings_separate() {
+        let source = "function main(value: word) returns (word) { assembly { pop(value) } { let value: word = 7; assembly { pop(value) } } return value; }";
+        let expected = "function main(renamed: word) returns (word) { assembly { pop(renamed) } { let value: word = 7; assembly { pop(value) } } return renamed; }";
+        let (mut world, uri) = world_with_main(source);
+        assert_no_error_diagnostics(&world, std::slice::from_ref(&uri));
+        let position = world
+            .line_index(&uri)
+            .unwrap()
+            .byte_to_position(source.find("pop(value)").unwrap() as u32 + 4);
+        let edit = handle_rename(&world, &uri, position, "renamed").expect("source-scoped rename");
+        apply_workspace_edit(&mut world, edit);
+        assert_eq!(world.document_text(&uri), Some(expected));
+        assert_no_error_diagnostics(&world, &[uri]);
+    }
+
+    #[test]
     fn rename_respects_runtime_parameter_contexts() {
         for source in [
             "function id(value: word) returns (word) { return value; }",

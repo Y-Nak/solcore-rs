@@ -709,6 +709,11 @@ fn body_map_target_at<'db>(
     body_map: &hir_nameres::BodyResolutionMap<'db>,
     env: &dyn hir_nameres::ImportedNames<'db>,
 ) -> Option<ReferenceTarget<'db>> {
+    for entry in &body_map.assembly {
+        if span_contains_offset(db, entry.span, file, offset) {
+            return target_from_resolution_at_span(db, &entry.resolution, entry.span);
+        }
+    }
     for entry in &body_map.stmt_bindings {
         let span = stmt_binding_span(db, entry.body, entry.stmt)?;
         if span_contains_offset(db, span, file, offset) {
@@ -1051,6 +1056,11 @@ fn collect_body_reference_locations<'db>(
     target: &ReferenceTarget<'db>,
     locations: &mut Vec<Location>,
 ) {
+    for entry in &body_map.assembly {
+        if resolution_matches_target(db, entry.span, &entry.resolution, target) {
+            push_span_location(world, db, entry.span, locations);
+        }
+    }
     for entry in &body_map.exprs {
         let expr = entry.body.exprs(db).get(entry.expr);
         if let Some(span) = expr_reference_span(db, expr)
@@ -1776,10 +1786,12 @@ fn find_adt<'db>(
     })
 }
 
-/// Check both the declaration and every type reference that rename will edit.
+/// Check the declaration and reference contexts that rename will edit.
 /// A name legal at its declaration can still reparse as contextual syntax at
 /// a use site. Semantic occurrence identity also covers imported aliases and
 /// type parameters without imposing type-name restrictions on value names.
+/// Assembly references must also remain outside the scope of Yul locals with
+/// the proposed name, otherwise a rename would silently change their binding.
 pub(crate) fn target_accepts_identifier<'db>(
     world: &'db WorldState,
     target: &ReferenceTarget<'db>,
@@ -1792,9 +1804,7 @@ pub(crate) fn target_accepts_identifier<'db>(
     if !parser::is_valid_identifier_in(new_name, context) {
         return false;
     }
-    if !parser::requires_type_identifier_context(new_name) {
-        return true;
-    }
+    let check_type_context = parser::requires_type_identifier_context(new_name);
     let declaration = target_declaration_span(db, target);
     for module_id in reference_search_modules(world, db) {
         let Some(file) = db.module_file(module_id) else {
@@ -1809,6 +1819,20 @@ pub(crate) fn target_accepts_identifier<'db>(
             &env,
             hir_nameres::NameresDiagnosticPolicy::Emit,
         );
+        if module_map
+            .bodies
+            .iter()
+            .flat_map(|body| &body.assembly)
+            .any(|entry| {
+                resolution_matches_target(db, entry.span, &entry.resolution, target)
+                    && entry.shadowing_names.iter().any(|name| name == new_name)
+            })
+        {
+            return false;
+        }
+        if !check_type_context {
+            continue;
+        }
         for entry in module_map
             .item_resolutions
             .facts
