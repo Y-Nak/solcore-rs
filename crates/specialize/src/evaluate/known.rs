@@ -132,6 +132,45 @@ pub(super) struct MatchedArm<'db> {
     pub(super) body: Vec<MonoStmt<'db>>,
 }
 
+#[derive(Default)]
+pub(super) struct KnownPatternBindings<'db> {
+    pub(super) env: VEnv<'db>,
+    pub(super) bindings: Vec<MonoId<'db>>,
+}
+
+/// Match the static columns of a residual match. A mismatch eliminates the
+/// whole arm; runtime columns remain for runtime selection. Binding values are
+/// collected together before the evaluator introduces any shadowing names.
+pub(super) fn match_known_patterns_with<'db, F>(
+    pats: &[MonoPat<'db>],
+    scrutinees: &[MonoExpr<'db>],
+    is_known: F,
+) -> Option<KnownPatternBindings<'db>>
+where
+    F: Fn(&MonoExpr<'db>) -> bool + Copy,
+{
+    let mut known = KnownPatternBindings::default();
+    for (pat, value) in pats.iter().zip(scrutinees) {
+        if is_known(value) {
+            known.env = match_pat(known.env, pat, value, is_known)?;
+        } else {
+            for id in pattern_bindings(std::slice::from_ref(pat)) {
+                known.env.remove(&id.name);
+            }
+        }
+    }
+    // Name resolution gives the last occurrence of a repeated binder its
+    // identity. A later runtime column must shadow an earlier static value.
+    let mut seen = FxHashSet::default();
+    known.bindings = pattern_bindings(pats)
+        .into_iter()
+        .rev()
+        .filter(|id| seen.insert(id.name.clone()) && known.env.contains_key(&id.name))
+        .collect();
+    known.bindings.reverse();
+    Some(known)
+}
+
 pub(super) fn match_arms_with<'db, F>(
     env: &VEnv<'db>,
     scrutinees: &[MonoExpr<'db>],

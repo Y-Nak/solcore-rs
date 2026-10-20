@@ -27,9 +27,9 @@ use super::{
     },
     ident_text,
     known::{
-        MatchedArm, bool_expr, build_type_reg, int_expr, known_bool, known_int, known_string,
-        literal_from_known_expr, lvalue_root_name, match_arms_with, match_expr_arms_with,
-        pattern_bindings, string_expr,
+        KnownPatternBindings, MatchedArm, bool_expr, build_type_reg, int_expr, known_bool,
+        known_int, known_string, literal_from_known_expr, lvalue_root_name, match_arms_with,
+        match_expr_arms_with, match_known_patterns_with, pattern_bindings, string_expr,
     },
     value::{
         BigInt, bitand_word, bitor_word, bitxor_word, not_word, word_div, word_low_byte, word_mod,
@@ -50,8 +50,17 @@ use crate::{
 
 #[path = "closures.rs"]
 mod closures;
+#[cfg(test)]
+#[path = "pattern_tests.rs"]
+mod pattern_tests;
 
 use closures::{ClosureCloneKey, LiftedClosure};
+
+struct MatchInput<'db> {
+    span: Span<'db>,
+    scrutinees: Vec<MonoExpr<'db>>,
+    arms: Vec<MonoArm<'db>>,
+}
 
 enum FoldOutcome<'db> {
     ReturnedKnown(MonoExpr<'db>),
@@ -903,58 +912,17 @@ impl<'db> Evaluator<'db> {
                         );
                     }
                 }
-                let mut assigned = AssignedNames::empty();
-                for arm in &arms {
-                    assigned.merge(self.stmts_write_effects(&arm.body));
-                    if self.if_stmt_spans.contains(&span) {
-                        assigned.merge(self.stmts_binding_effects(&arm.body));
-                    }
-                }
-                let arms = arms
-                    .into_iter()
-                    .map(|arm| {
-                        let mut masked = self.stmts_write_effects(&arm.body);
-                        if self.if_stmt_spans.contains(&span) {
-                            // Bindings from either arm are statically visible
-                            // even if their declaration never executes.
-                            masked.merge(assigned.clone());
-                        }
-                        masked.insert_pat_binders(&arm.pats);
-                        let (arm_env, arm_comptime_env) =
-                            self.mask_assigned_env(env.clone(), comptime_env.clone(), &masked);
-                        let (_, _, body) = if self.if_stmt_spans.contains(&span) {
-                            self.eval_stmts_in_scope(
-                                type_reg,
-                                arm_env,
-                                arm_comptime_env,
-                                arm.body,
-                                ret_comptime,
-                                scope,
-                            )
-                        } else {
-                            let mut arm_types = type_reg.clone();
-                            for id in pattern_bindings(&arm.pats) {
-                                arm_types.insert(id.name.clone(), id);
-                            }
-                            self.eval_stmts(
-                                &arm_types,
-                                arm_env,
-                                arm_comptime_env,
-                                arm.body,
-                                ret_comptime,
-                            )
-                        };
-                        MonoArm { body, ..arm }
-                    })
-                    .collect::<Vec<_>>();
-                let (env, comptime_env) = self.mask_assigned_env(env, comptime_env, &assigned);
-                (
+                self.eval_residual_match(
+                    type_reg,
                     env,
                     comptime_env,
-                    vec![MonoStmt {
+                    MatchInput {
                         span,
-                        kind: MonoStmtKind::Match { scrutinees, arms },
-                    }],
+                        scrutinees,
+                        arms,
+                    },
+                    ret_comptime,
+                    scope,
                 )
             }
             MonoStmtKind::Block(body) => {
@@ -1097,6 +1065,142 @@ impl<'db> Evaluator<'db> {
                 }],
             ),
         }
+    }
+
+    fn eval_residual_match(
+        &mut self,
+        type_reg: &mut TypeReg<'db>,
+        env: VEnv<'db>,
+        comptime_env: CEnv,
+        input: MatchInput<'db>,
+        ret_comptime: bool,
+        scope: &mut ScopeBindings<'db>,
+    ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
+        let MatchInput {
+            span,
+            scrutinees,
+            arms,
+        } = input;
+        // Desugared source `if` arms can introduce bindings visible
+        // after the statement, including from an unexecuted branch.
+        // Only actual matches can discard their static columns here.
+        let specialize_columns = !self.if_stmt_spans.contains(&span)
+            && scrutinees
+                .iter()
+                .any(|expr| !self.expr_is_known_value(expr));
+        let mut arms = arms
+            .into_iter()
+            .filter_map(|arm| {
+                let known = if specialize_columns {
+                    match_known_patterns_with(&arm.pats, &scrutinees, |expr| {
+                        self.expr_is_known_value(expr)
+                    })?
+                } else {
+                    KnownPatternBindings::default()
+                };
+                Some((arm, known))
+            })
+            .collect::<Vec<_>>();
+        let mut captures = Vec::new();
+        // A static column is evaluated before any runtime pattern
+        // binder exists. Freeze callable captures at that same point,
+        // even when the callable appears directly inside a constructor.
+        for (_, known) in &mut arms {
+            for id in &known.bindings {
+                if let Some(value) = known.env.get(&id.name).cloned() {
+                    let (value, mut bindings) = self.capture_closure_value(value);
+                    known.env.insert(id.name.clone(), value);
+                    captures.append(&mut bindings);
+                }
+            }
+        }
+        let mut assigned = AssignedNames::empty();
+        for (arm, _) in &arms {
+            assigned.merge(self.arm_write_effects(arm));
+            if self.if_stmt_spans.contains(&span) {
+                assigned.merge(self.stmts_binding_effects(&arm.body));
+            }
+        }
+        let arms = arms
+            .into_iter()
+            .map(|(arm, known)| {
+                let mut masked = self.arm_write_effects(&arm);
+                if self.if_stmt_spans.contains(&span) {
+                    // Bindings from either arm are statically visible
+                    // even if their declaration never executes.
+                    masked.merge(assigned.clone());
+                }
+                let (mut arm_env, mut arm_comptime_env) =
+                    self.mask_assigned_env(env.clone(), comptime_env.clone(), &masked);
+                // Patterns bind simultaneously, using the scrutinees'
+                // values before the arm body can assign outer names.
+                self.bind_residual_patterns(
+                    &arm.pats,
+                    &scrutinees,
+                    &comptime_env,
+                    &mut arm_env,
+                    &mut arm_comptime_env,
+                );
+                let (_, _, body) = if self.if_stmt_spans.contains(&span) {
+                    self.eval_stmts_in_scope(
+                        type_reg,
+                        arm_env,
+                        arm_comptime_env,
+                        arm.body,
+                        ret_comptime,
+                        scope,
+                    )
+                } else {
+                    let mut arm_types = type_reg.clone();
+                    for id in pattern_bindings(&arm.pats) {
+                        arm_types.insert(id.name.clone(), id);
+                    }
+                    if known.bindings.is_empty() {
+                        self.eval_stmts(
+                            &arm_types,
+                            arm_env,
+                            arm_comptime_env,
+                            arm.body,
+                            ret_comptime,
+                        )
+                    } else {
+                        let mut matched_env = arm_env.clone();
+                        matched_env.extend(known.env);
+                        self.eval_matched_arm(
+                            &arm_types,
+                            &arm_env,
+                            arm_comptime_env,
+                            MatchedArm {
+                                index: 0,
+                                env: matched_env,
+                                bindings: known.bindings,
+                                body: arm.body,
+                            },
+                            ret_comptime,
+                        )
+                    }
+                };
+                let pats = arm
+                    .pats
+                    .into_iter()
+                    .zip(&scrutinees)
+                    .filter_map(|(pat, scrutinee)| {
+                        (!specialize_columns || !self.expr_is_known_value(scrutinee)).then_some(pat)
+                    })
+                    .collect();
+                MonoArm { body, pats, ..arm }
+            })
+            .collect::<Vec<_>>();
+        let scrutinees = scrutinees
+            .into_iter()
+            .filter(|expr| !specialize_columns || !self.expr_is_known_value(expr))
+            .collect();
+        let (env, comptime_env) = self.mask_assigned_env(env, comptime_env, &assigned);
+        captures.push(MonoStmt {
+            span,
+            kind: MonoStmtKind::Match { scrutinees, arms },
+        });
+        (env, comptime_env, captures)
     }
 
     fn eval_compound_assign(
@@ -1570,27 +1674,33 @@ impl<'db> Evaluator<'db> {
                     self.capture_types = saved_types;
                     return result;
                 }
+                let arms = arms
+                    .into_iter()
+                    .map(|arm| {
+                        let mut arm_env = env.clone();
+                        let mut arm_comptime_env = comptime_env.clone();
+                        let saved_types = self.capture_types.clone();
+                        self.bind_residual_patterns(
+                            std::slice::from_ref(&arm.pat),
+                            std::slice::from_ref(&scrutinee),
+                            comptime_env,
+                            &mut arm_env,
+                            &mut arm_comptime_env,
+                        );
+                        for id in pattern_bindings(std::slice::from_ref(&arm.pat)) {
+                            self.capture_types.insert(id.name.clone(), id);
+                        }
+                        let expr = self.eval_expr(&arm_env, &arm_comptime_env, arm.expr);
+                        self.capture_types = saved_types;
+                        MonoExprArm { expr, ..arm }
+                    })
+                    .collect();
                 MonoExpr {
                     span,
                     ty,
                     kind: MonoExprKind::Match {
                         scrutinee: Box::new(scrutinee),
-                        arms: arms
-                            .into_iter()
-                            .map(|arm| {
-                                let mut arm_env = env.clone();
-                                let mut arm_comptime_env = comptime_env.clone();
-                                let saved_types = self.capture_types.clone();
-                                for id in pattern_bindings(std::slice::from_ref(&arm.pat)) {
-                                    arm_env.remove(&id.name);
-                                    arm_comptime_env.remove(&id.name);
-                                    self.capture_types.insert(id.name.clone(), id);
-                                }
-                                let expr = self.eval_expr(&arm_env, &arm_comptime_env, arm.expr);
-                                self.capture_types = saved_types;
-                                MonoExprArm { expr, ..arm }
-                            })
-                            .collect(),
+                        arms,
                     },
                 }
             }
@@ -1687,13 +1797,29 @@ impl<'db> Evaluator<'db> {
     }
 
     fn stmts_write_effects(&mut self, stmts: &[MonoStmt<'db>]) -> AssignedNames {
+        self.scoped_stmts_write_effects(stmts, FxHashSet::default())
+    }
+
+    fn arm_write_effects(&mut self, arm: &MonoArm<'db>) -> AssignedNames {
+        let locals = pattern_bindings(&arm.pats)
+            .into_iter()
+            .map(|id| id.name)
+            .collect();
+        self.scoped_stmts_write_effects(&arm.body, locals)
+    }
+
+    fn scoped_stmts_write_effects(
+        &mut self,
+        stmts: &[MonoStmt<'db>],
+        locals: FxHashSet<String>,
+    ) -> AssignedNames {
         let storage_fields = self.visible_storage_fields();
         let mut collector = StmtWriteEffectsCollector {
             db: self.db,
             call_effects: &self.write_effects,
             storage_fields: &storage_fields,
             if_stmt_spans: &self.if_stmt_spans,
-            locals: FxHashSet::default(),
+            locals,
             invalidates_memory: false,
             effects: AssignedNames::empty(),
         };
@@ -1705,6 +1831,46 @@ impl<'db> Evaluator<'db> {
             self.memory.clear();
         }
         effects
+    }
+
+    /// Pattern bindings inherit the availability of their corresponding
+    /// scrutinee. Compute every scrutinee's status in the outer scope before
+    /// introducing any binder, including when names shadow one another.
+    fn pattern_binding_availability(
+        &self,
+        pats: &[MonoPat<'db>],
+        scrutinees: &[MonoExpr<'db>],
+        comptime_env: &CEnv,
+    ) -> Vec<(MonoId<'db>, bool)> {
+        pats.iter()
+            .zip(scrutinees)
+            .flat_map(|(pat, scrutinee)| {
+                let comptime = self.expr_is_comptime(scrutinee, comptime_env);
+                pattern_bindings(std::slice::from_ref(pat))
+                    .into_iter()
+                    .map(move |id| (id, comptime))
+            })
+            .collect()
+    }
+
+    fn bind_residual_patterns(
+        &self,
+        pats: &[MonoPat<'db>],
+        scrutinees: &[MonoExpr<'db>],
+        outer_comptime_env: &CEnv,
+        env: &mut VEnv<'db>,
+        comptime_env: &mut CEnv,
+    ) {
+        for (id, comptime) in
+            self.pattern_binding_availability(pats, scrutinees, outer_comptime_env)
+        {
+            env.remove(&id.name);
+            if comptime {
+                comptime_env.insert(id.name);
+            } else {
+                comptime_env.remove(&id.name);
+            }
+        }
     }
 
     fn eval_closure_dispatch(
@@ -2874,9 +3040,17 @@ impl<'db> Evaluator<'db> {
             MonoExprKind::TypeAnnot { expr, .. } => self.expr_is_comptime(expr, comptime_env),
             MonoExprKind::Match { scrutinee, arms } => {
                 self.expr_is_comptime(scrutinee, comptime_env)
-                    && arms
-                        .iter()
-                        .all(|arm| self.expr_is_comptime(&arm.expr, comptime_env))
+                    && arms.iter().all(|arm| {
+                        let mut arm_comptime_env = comptime_env.clone();
+                        // The scrutinee is static, so all bindings introduced
+                        // by this pattern are available in its expression.
+                        arm_comptime_env.extend(
+                            pattern_bindings(std::slice::from_ref(&arm.pat))
+                                .into_iter()
+                                .map(|id| id.name),
+                        );
+                        self.expr_is_comptime(&arm.expr, &arm_comptime_env)
+                    })
             }
             MonoExprKind::If {
                 cond,

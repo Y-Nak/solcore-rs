@@ -214,3 +214,45 @@ fn call_materialization_keeps_unknown_comptime_obligations() {
         );
     }
 }
+
+#[test]
+fn residual_match_assignments_preserve_shadowed_static_bindings() {
+    for body in [
+        "match(flag) { case(seed) { seed = true; } }",
+        "match(input) { case(seed) { assembly { seed := 1 } } }",
+        "match(input) { case(seed) { seed += 1; } }",
+        "match(flag) { case(seed) { if (seed) { seed = false; } } }",
+        "match(flag) { case(seed) { { seed = true; } } }",
+        "match(flag) { case(seed) { for (; seed; ) { seed = false; } } }",
+        "match(flag) { case(seed) { match(seed) { case(inner) { seed = inner; } } } }",
+        "match(Box(flag)) { case(Box(seed)) { seed = true; } }",
+        "match((flag, flag)) { case((_, seed)) { seed = true; } }",
+    ] {
+        assert_main_returns_seven(&format!(
+            "import * from std;
+             enum Box {{ Box(bool) }}
+             function main(flag: bool, input: word) returns(word) {{
+                 let seed: comptime<word> = 7;
+                 {body}
+                 return seed;
+             }}"
+        ));
+    }
+}
+
+#[test]
+fn residual_match_still_invalidates_assignments_to_outer_bindings() {
+    inspect_main_return(
+        "function main(flag: bool) returns(word) {
+             let seed: word = 7;
+             match(flag) { case(true) { seed = 9; } case(false) {} }
+             return seed;
+         }",
+        |_, expr| {
+            assert!(
+                matches!(&expr.kind, MonoExprKind::Var(id) if id.name == "seed"),
+                "assignment to outer binding must invalidate its initial value: {expr:?}"
+            );
+        },
+    );
+}

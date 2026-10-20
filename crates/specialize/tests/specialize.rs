@@ -3123,6 +3123,244 @@ fn specializes_comptime_evaluation_corpus_verdicts() {
 }
 
 #[test]
+fn destructured_comptime_parameters_remain_available_to_comptime_calls() {
+    for (ty, pattern, value) in [
+        ("Box<word>", "Box(y)", "Box(3)"),
+        ("Box<Box<word>>", "Box(Box(y))", "Box(Box(3))"),
+        ("(word, word)", "(y, _)", "(3, 4)"),
+        ("word", "y", "3"),
+    ] {
+        let source = format!(
+            "import * from std;
+             enum Box<a> {{ Box(a) }}
+             function take(comptime value: word) returns(word) {{ return value; }}
+             function get(comptime x: {ty}) returns(word) {{
+                 match(x) {{ case({pattern}) {{ return take(y); }} }}
+             }}
+             function main() returns(word) {{ return get({value}); }}"
+        );
+        let output = specialize_src_with_std(&source);
+        assert!(
+            output.diagnostics.is_empty(),
+            "{source}\n{:?}",
+            output.diagnostics
+        );
+        assert_eq!(main_return_number(&output), Some("3".to_owned()));
+    }
+}
+
+#[test]
+fn match_bindings_inherit_only_their_own_scrutinee_availability() {
+    let (_, output) = specialize_src(
+        "enum Box<a> { Box(a) }
+         function take(comptime value: word) returns(word) { return value; }
+         function get<a>(comptime x: Box<a>, flag: bool) returns(a) {
+             match(x, flag) { case(Box(y), x) { return y; } }
+         }
+         function choose(comptime x: Box<word>, flag: bool) returns(word) {
+             match(x, flag) {
+                 case(Box(y), x) { return take(y); }
+             }
+         }
+         function main() returns(word) { return take(get(Box(choose(Box(3), true)), false)); }",
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(main_return_number(&output), Some("3".to_owned()));
+
+    for scrutinees in ["x, flag", "flag, x"] {
+        let patterns = if scrutinees.starts_with("x") {
+            "Box(y), y2"
+        } else {
+            "y2, Box(y)"
+        };
+        let (_, output) = specialize_src(&format!(
+            "enum Box {{ Box(word) }}
+             function take(comptime value: bool) returns(bool) {{ return value; }}
+             function get(comptime x: Box, flag: bool) returns(bool) {{
+                 match({scrutinees}) {{ case({patterns}) {{ return take(y2); }} }}
+             }}
+             function main(flag: bool) returns(bool) {{ return get(Box(3), flag); }}"
+        ));
+        assert!(
+            output.diagnostics.iter().any(|diagnostic| matches!(
+                &diagnostic.kind,
+                SpecializeDiagnosticKind::ComptimeEvaluationFailed { context }
+                    if context.contains("runtime value passed to comptime parameter")
+            )),
+            "runtime scrutinee acquired a static binding: {:?}",
+            output.diagnostics
+        );
+    }
+}
+
+#[test]
+fn runtime_pattern_shadow_does_not_inherit_outer_comptime_availability() {
+    let (_, output) = specialize_src(
+        "enum Box { Box(word) }
+         function take(comptime value: word) returns(word) { return value; }
+         function get(value: Box) returns(word) {
+             let y: comptime<word> = 3;
+             match(value) { case(Box(y)) { return take(y); } }
+         }
+         function main(value: word) returns(word) { return get(Box(value)); }",
+    );
+    assert!(
+        output.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.kind,
+            SpecializeDiagnosticKind::ComptimeEvaluationFailed { context }
+                if context.contains("runtime value passed to comptime parameter")
+        )),
+        "runtime pattern binding must shadow outer static metadata: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn destructured_comptime_generic_arguments_keep_trait_call_obligations() {
+    let (_, output) = specialize_src(
+        "enum Box<a> { Box(a) }
+         trait StaticValue<a> {
+             function take(comptime value: a) returns(word);
+         }
+         impl StaticValue<word> {
+             function take(comptime value: word) returns(word) { return value; }
+         }
+         function get<a>(comptime value: Box<a>) returns(word) where a: StaticValue {
+             match(value) { case(Box(inner)) { return StaticValue.take(inner); } }
+         }
+         function main() returns(word) { return get(Box(3)); }",
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(main_return_number(&output), Some("3".to_owned()));
+
+    let (_, output) = specialize_src(
+        "enum Box { Box(word) }
+         function take(comptime value: word) returns(word) { return value; }
+         function get(comptime value: Box, input: word) returns(word) {
+             match(value) {
+                 case(Box(inner)) { inner = input; return take(inner); }
+             }
+         }
+         function main(input: word) returns(word) { return get(Box(3), input); }",
+    );
+    assert!(
+        output.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.kind,
+            SpecializeDiagnosticKind::ComptimeEvaluationFailed { context }
+                if context.contains("runtime value passed to comptime parameter")
+        )),
+        "runtime assignment must invalidate pattern binding availability: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn mixed_matches_specialize_static_columns_without_leaking_pattern_bindings() {
+    for body in [
+        "let seed: comptime<word> = 3;
+         match(Choice.Good(seed), flag) {
+             case(Choice.Bad(_), _) { return take(9); }
+             case(Choice.Good(inner), seed) { return take(inner); }
+         }",
+        "match(Choice.Good(3), flag) {
+             case(Choice.Bad(_), _) { return 9; }
+             case(Choice.Good(inner), selected) {
+                 inner = primAddWord(inner, ((selected) ? 1 : 2));
+                 return inner;
+             }
+         }",
+        "let value: word = input;
+         let get: function() returns(word) = lam () -> word { return value; };
+         match(Box(get), flag) {
+             case(Box(invoke), value) { return invoke(); }
+         }",
+        "let value: word = input;
+         match(Box(lam () -> word { return value; }), flag) {
+             case(Box(invoke), value) { return invoke(); }
+         }",
+        "let value: word = input;
+         match(Box(lam () -> word { return value; }), flag) {
+             case(box, value) {
+                 match(box) { case(Box(invoke)) { return invoke(); } }
+             }
+         }",
+    ] {
+        let (_, output) = specialize_src(&format!(
+            "enum Choice {{ Good(word), Bad(word) }}
+             enum Box<a> {{ Box(a) }}
+             function take(comptime value: word) returns(word) {{ return value; }}
+             function main(flag: bool, input: word) returns(word) {{ {body} }}"
+        ));
+        assert!(
+            output.diagnostics.is_empty(),
+            "{body}\n{:?}",
+            output.diagnostics
+        );
+        let main = output
+            .module
+            .items
+            .iter()
+            .find_map(|item| match item {
+                MonoItem::Function(function)
+                    if output.module.entry_points.contains(&function.name) =>
+                {
+                    Some(function)
+                }
+                _ => None,
+            })
+            .expect("main entry");
+        let arms = main
+            .body
+            .iter()
+            .find_map(|stmt| match &stmt.kind {
+                MonoStmtKind::Match { scrutinees, arms } => {
+                    assert_eq!(scrutinees.len(), 1, "static column must be eliminated");
+                    Some(arms)
+                }
+                _ => None,
+            })
+            .expect("runtime match");
+        assert_eq!(
+            arms.len(),
+            1,
+            "statically impossible arm must be eliminated"
+        );
+        assert_eq!(arms[0].pats.len(), 1);
+    }
+}
+
+#[test]
+fn partial_pattern_specialization_preserves_explicit_staging_requirements() {
+    let (_, output) = specialize_src(
+        "enum Box<a> { Box(a) }
+         function main(flag: bool) returns(word) {
+             let seed: comptime<word> = 3;
+             match(Box(seed), flag) {
+                 case(Box(inner), selected) {
+                     inner = primAddWord(inner, ((selected) ? 1 : 2));
+                     return inner;
+                 }
+             }
+         }",
+    );
+    assert!(
+        output.diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic.kind,
+            SpecializeDiagnosticKind::IntegerErasure { .. }
+        )),
+        "a known initial value must not erase an explicit comptime qualifier: {:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn comptime_pattern_scope_fixture_specializes_for_runtime_dispatch() {
+    let output =
+        specialize_fixture(&repo_root().join("tests/e2e/comptime-pattern-scopes/main.sol"));
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+}
+
+#[test]
 fn folds_recursive_comptime_integer_function() {
     let (_db, output) = specialize_src(
         r#"

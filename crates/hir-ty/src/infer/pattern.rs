@@ -600,8 +600,7 @@ impl<'db> InferCtx<'db> {
     }
 
     fn ctor_for_expected(&mut self, name: &str, expected: InferTy<'db>) -> DotCtorLookup<'db> {
-        let expected = self.engine.resolve(expected);
-        let expected = self.normalize_aliases(expected);
+        let expected = self.expected_shape_ty(expected);
         let expected = self.expand_infer_aliases(expected, &mut FxHashSet::default());
         let InferTy::Named {
             ctor:
@@ -787,8 +786,7 @@ impl<'db> InferCtx<'db> {
         let product = self.tuple_expr_product_shape(body, expr, elems);
         let elems = product.to_vec();
         let expected_elems = expected.as_ref().and_then(|expected| {
-            let expected = self.normalize_aliases(expected.clone());
-            let expected = self.engine.resolve(expected);
+            let expected = self.expected_shape_ty(expected.clone());
             if elems.len() == 1 {
                 return Some(vec![expected]);
             }
@@ -845,8 +843,7 @@ impl<'db> InferCtx<'db> {
         let product = self.tuple_pat_product_shape(body, pat, elems);
         let elems = product.to_vec();
         let expected_elems = expected.as_ref().and_then(|expected| {
-            let expected = self.normalize_aliases(expected.clone());
-            let expected = self.engine.resolve(expected);
+            let expected = self.expected_shape_ty(expected.clone());
             if elems.len() == 1 {
                 return Some(vec![expected]);
             }
@@ -911,16 +908,26 @@ impl<'db> InferCtx<'db> {
         ty
     }
 
+    /// Staging qualifies values without changing their constructor or product
+    /// shape. Keep the original expected type for unification and comptime
+    /// checking, but inspect its underlying shape when destructuring it.
+    fn expected_shape_ty(&mut self, ty: InferTy<'db>) -> InferTy<'db> {
+        let ty = self.engine.resolve(ty);
+        let ty = self.normalize_aliases(ty);
+        match self.engine.resolve(ty) {
+            InferTy::Comptime(inner) => self.expected_shape_ty(*inner),
+            ty => ty,
+        }
+    }
+
     fn tuple_expected_elems(
         &mut self,
         expected: InferTy<'db>,
         arity: usize,
         span: Span<'db>,
     ) -> Option<Vec<InferTy<'db>>> {
-        let mut elems = product_elems_for_arity_by(expected, arity, |ty| {
-            let ty = self.engine.resolve(ty);
-            self.normalize_aliases(ty)
-        })?;
+        let mut elems =
+            product_elems_for_arity_by(expected, arity, |ty| self.expected_shape_ty(ty))?;
         // A polymorphic product tail is still open, rather than evidence that
         // the tuple has fewer fields. For example, `f<a>(x: (word, a))` accepts
         // `(x, y, z)` by inferring `a = (typeof(y), typeof(z))`.

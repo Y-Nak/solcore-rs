@@ -4275,6 +4275,44 @@ fn structural_invokable_rules_preserve_comptime_transparency() {
 }
 
 #[test]
+fn comptime_qualifiers_preserve_tuple_and_constructor_shape_inference() {
+    for source in [
+        "function get(comptime value: (word, word)) returns(word) {
+             match(value) { case((head, _)) { return head; } }
+         }",
+        "type StaticPair = comptime<(word, word)>;
+         function get(value: StaticPair) returns(word) {
+             match(value) { case((_, tail)) { return tail; } }
+         }",
+        "function get(comptime value: (word, (word, word))) returns(word) {
+             match(value) { case((_, (head, _))) { return head; } }
+         }",
+        "enum Box { Box(word) }
+         function get(comptime value: Box) returns(word) {
+             match(value) { case(.Box(inner)) { return inner; } }
+         }",
+        "function get(comptime value: word) returns(comptime<(word, word)>) {
+             return (value, value);
+         }",
+    ] {
+        let db = TestDb::default();
+        let module = parse_module(&db, source);
+        let (_, result) = infer_function(&db, module, "get");
+        assert!(
+            result.diagnostics.is_empty(),
+            "{source}\n{:?}",
+            result.diagnostics
+        );
+        for pat in &result.pat_tys {
+            assert!(
+                !matches!(pat.ty.kind(&db), TyKind::Unknown | TyKind::Error),
+                "pattern must retain its expected element type: {source}\n{pat:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn unit_arguments_support_nullary_and_unary_function_types() {
     let db = TestDb::default();
     let module = parse_module(&db, "");

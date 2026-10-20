@@ -28,6 +28,61 @@ impl<'db> Evaluator<'db> {
         &mut self,
         expr: MonoExpr<'db>,
     ) -> (MonoExpr<'db>, Vec<MonoStmt<'db>>) {
+        let expr = match expr {
+            MonoExpr {
+                span,
+                ty,
+                kind: MonoExprKind::Con { ctor, args },
+            } => {
+                let (args, bindings) = self.capture_closure_values(args);
+                return (
+                    MonoExpr {
+                        span,
+                        ty,
+                        kind: MonoExprKind::Con { ctor, args },
+                    },
+                    bindings,
+                );
+            }
+            MonoExpr {
+                span,
+                ty,
+                kind: MonoExprKind::Tuple(elems),
+            } => {
+                let (elems, bindings) = self.capture_closure_values(elems);
+                return (
+                    MonoExpr {
+                        span,
+                        ty,
+                        kind: MonoExprKind::Tuple(elems),
+                    },
+                    bindings,
+                );
+            }
+            MonoExpr {
+                span,
+                ty,
+                kind:
+                    MonoExprKind::TypeAnnot {
+                        expr,
+                        ty: annotation,
+                    },
+            } => {
+                let (expr, bindings) = self.capture_closure_value(*expr);
+                return (
+                    MonoExpr {
+                        span,
+                        ty,
+                        kind: MonoExprKind::TypeAnnot {
+                            expr: Box::new(expr),
+                            ty: annotation,
+                        },
+                    },
+                    bindings,
+                );
+            }
+            expr => expr,
+        };
         let MonoExprKind::Lambda { params, body, .. } = &expr.kind else {
             return (expr, Vec::new());
         };
@@ -62,6 +117,22 @@ impl<'db> Evaluator<'db> {
             self.bound_closure(&target, values, expr.ty, expr.span),
             bindings,
         )
+    }
+
+    fn capture_closure_values(
+        &mut self,
+        values: Vec<MonoExpr<'db>>,
+    ) -> (Vec<MonoExpr<'db>>, Vec<MonoStmt<'db>>) {
+        let mut bindings = Vec::new();
+        let values = values
+            .into_iter()
+            .map(|value| {
+                let (value, mut captures) = self.capture_closure_value(value);
+                bindings.append(&mut captures);
+                value
+            })
+            .collect();
+        (values, bindings)
     }
 
     pub(super) fn try_clone_closure_call(

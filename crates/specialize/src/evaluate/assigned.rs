@@ -1,7 +1,6 @@
 use rustc_hash::FxHashSet;
 
-use super::{CEnv, VEnv, known::collect_pat_binders};
-use crate::ir::MonoPat;
+use super::{CEnv, VEnv};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum AssignedNames {
@@ -29,14 +28,6 @@ impl AssignedNames {
             (this @ AssignedNames::Names(_), AssignedNames::All) => *this = AssignedNames::All,
             (AssignedNames::All, _) => {}
             (AssignedNames::Names(lhs), AssignedNames::Names(rhs)) => lhs.extend(rhs),
-        }
-    }
-
-    pub(super) fn insert_pat_binders(&mut self, pats: &[MonoPat<'_>]) {
-        if let AssignedNames::Names(names) = self {
-            for pat in pats {
-                collect_pat_binders(pat, names);
-            }
         }
     }
 }
