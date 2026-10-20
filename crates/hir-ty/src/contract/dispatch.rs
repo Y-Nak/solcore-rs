@@ -229,6 +229,9 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
                 return None;
             };
             let class = AbiClass::from_def(db, *class)?;
+            if class.owns_instance(db, *instance) {
+                return None;
+            }
             let generic_adt = if class == AbiClass::Generic {
                 match main.kind(db) {
                     TyKind::Named {

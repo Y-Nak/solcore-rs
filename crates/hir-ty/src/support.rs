@@ -140,10 +140,11 @@ pub fn is_canonical_std_module_def_named(
     module_name: &str,
     name: &str,
 ) -> bool {
-    if def.name(db).as_deref() != Some(name) {
-        return false;
-    }
+    def.name(db).as_deref() == Some(name) && is_canonical_std_module_def(db, def, module_name)
+}
 
+/// Tests source ownership independently of the logical module used to load it.
+pub(crate) fn is_canonical_std_module_def(db: &dyn Db, def: DefId<'_>, module_name: &str) -> bool {
     let file = def.file(db);
     let tree = db.module_tree();
     let is_std_root_file = hir::url_to_file_path(file.url(db))

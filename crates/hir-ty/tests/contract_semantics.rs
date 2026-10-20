@@ -277,12 +277,7 @@ fn diagnostics_for_module(db: &TestDb, key: &ModuleKey) -> Vec<Diagnostic> {
         .collect()
 }
 
-#[test]
-fn canonical_dispatch_under_main_root_preserves_manual_abi_diagnostics() {
-    let source = include_str!(
-        "../../uitest/tests/fixtures/typeck/visible_manual_std_abi_instances/main.sol"
-    )
-    .replace("import * from std.dispatch;", "import * from dispatch;");
+fn db_with_overlapping_std(src: &str, shared_sources: bool) -> (TestDb, ModuleKey) {
     let mut db = TestDb::default();
     db.module_tree = Some(ModuleTree::new(
         &db,
@@ -294,44 +289,137 @@ fn canonical_dispatch_under_main_root_preserves_manual_abi_diagnostics() {
         library: LibraryId::Main,
         logical_path: vec!["main".to_owned()],
     };
-    insert_module_source(&mut db, entry.clone(), "/std/main.sol", &source);
+    insert_module_source(&mut db, entry.clone(), "/std/main.sol", src);
     insert_real_std_modules(&mut db);
-    // The same canonical dispatch source is reached through the main root,
-    // while its std imports retain their standard-library identities.
-    let dispatch_path = vec!["dispatch".to_owned()];
-    let dispatch = db
-        .module_files
-        .remove(&ModuleKey {
+    // Exercise both a canonical source reached only through Main and sources
+    // shared by Main/Std identities (as in an editor with overlapping roots).
+    let aliases: &[&str] = if shared_sources {
+        &["std", "dispatch", "Generic", "ABIGeneric"]
+    } else {
+        &["dispatch", "ABIGeneric"]
+    };
+    for name in aliases {
+        let key = ModuleKey {
             library: LibraryId::Std,
-            logical_path: dispatch_path.clone(),
-        })
-        .expect("canonical dispatch source");
-    db.module_files.insert(
-        ModuleKey {
-            library: LibraryId::Main,
-            logical_path: dispatch_path,
-        },
-        dispatch,
-    );
-    db.sync_inputs();
-
-    let module = module_id_from_key(&db, &entry);
-    let resolution_diagnostics = nameres::reachable_diagnostics(&db, module);
-    assert!(
-        resolution_diagnostics.is_empty(),
-        "{resolution_diagnostics:?}"
-    );
-    let diagnostics = diagnostics_for_module(&db, &entry);
-    for class in ["ABIAttribs", "ABIEncode", "ABIDecode"] {
-        assert!(
-            diagnostics.iter().any(|diagnostic| {
-                diagnostic.code.as_deref() == Some("SC0231")
-                    && diagnostic.message.contains(&format!("manual `{class}`"))
-            }),
-            "missing {class} diagnostic: {diagnostics:?}"
+            logical_path: vec![(*name).to_owned()],
+        };
+        let file = if shared_sources {
+            db.module_files[&key]
+        } else {
+            db.module_files.remove(&key).expect("canonical source")
+        };
+        db.module_files.insert(
+            ModuleKey {
+                library: LibraryId::Main,
+                ..key
+            },
+            file,
         );
     }
-    assert_eq!(diagnostics.len(), 3, "{diagnostics:?}");
+    db.sync_inputs();
+    (db, entry)
+}
+
+#[test]
+fn canonical_dispatch_under_main_root_preserves_manual_abi_diagnostics() {
+    let source = include_str!(
+        "../../uitest/tests/fixtures/typeck/visible_manual_std_abi_instances/main.sol"
+    )
+    .replace("import * from std.dispatch;", "import * from dispatch;");
+    for shared_sources in [false, true] {
+        let (db, entry) = db_with_overlapping_std(&source, shared_sources);
+        let module = module_id_from_key(&db, &entry);
+        let resolution_diagnostics = nameres::reachable_diagnostics(&db, module);
+        assert!(
+            resolution_diagnostics.is_empty(),
+            "{resolution_diagnostics:?}"
+        );
+        let diagnostics = diagnostics_for_module(&db, &entry);
+        for class in ["ABIAttribs", "ABIEncode", "ABIDecode", "SigString"] {
+            assert!(
+                diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_deref() == Some("SC0231")
+                        && diagnostic.message.contains(&format!("manual `{class}`"))
+                }),
+                "shared_sources={shared_sources}, missing {class} diagnostic: {diagnostics:?}"
+            );
+        }
+        assert_eq!(diagnostics.len(), 4, "{diagnostics:?}");
+    }
+}
+
+#[test]
+fn canonical_abi_metadata_under_main_root_rejects_user_instances() {
+    for shared_sources in [false, true] {
+        let (mut db, entry) = db_with_overlapping_std(
+            r#"
+import * from std;
+import * from dispatch;
+import * from overrides;
+contract C {
+  function take(values:calldata<array<calldata<array<uint256>>>>) public {}
+}
+"#,
+            shared_sources,
+        );
+        // A user module under the same root must not inherit canonical trust.
+        insert_module_source(
+            &mut db,
+            ModuleKey {
+                library: LibraryId::Main,
+                logical_path: vec!["overrides".into()],
+            },
+            "/std/overrides.sol",
+            r#"
+import * from std;
+import * from dispatch;
+export {};
+impl ABIElementAttribs<uint256> {
+  function headSize(p:Proxy<uint256>) returns (word) { return 64; }
+}
+impl ABITypeString<uint256> {
+  function typeStr(p:Proxy<uint256>) returns (string) { return "bytes32"; }
+}
+"#,
+        );
+        let diagnostics = diagnostics_for_module(&db, &entry);
+        for class in ["ABIElementAttribs", "ABITypeString"] {
+            assert!(
+                diagnostics.iter().any(|diagnostic| {
+                    diagnostic.code.as_deref() == Some("SC0231")
+                        && diagnostic.message.contains(&format!("manual `{class}`"))
+                }),
+                "shared_sources={shared_sources}, missing {class}: {diagnostics:?}"
+            );
+        }
+        assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+    }
+}
+
+#[test]
+fn canonical_abi_providers_under_main_root_remain_trusted() {
+    for shared_sources in [false, true] {
+        let (db, entry) = db_with_overlapping_std(
+            r#"
+import * from std;
+import * from dispatch;
+import * from std.Generic;
+import * from ABIGeneric;
+enum Choice { First(uint256), Second(bool) }
+contract C {
+  constructor(value:Choice) {}
+  function echo(value:Choice) public returns (Choice) { return value; }
+  function take(values:calldata<array<Choice>>) public {}
+}
+"#,
+            shared_sources,
+        );
+        let diagnostics = diagnostics_for_module(&db, &entry);
+        assert!(
+            diagnostics.is_empty(),
+            "shared_sources={shared_sources}: {diagnostics:?}"
+        );
+    }
 }
 
 #[test]

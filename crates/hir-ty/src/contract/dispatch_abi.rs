@@ -6,7 +6,6 @@
 //! missing dictionary must not hide a selected manual ABI implementation.
 
 use hir::anchor::DefId;
-use nameres::module_id_for_source_file;
 use rustc_hash::FxHashMap;
 
 use super::std_abi::{
@@ -64,7 +63,7 @@ pub(super) fn method_abi_roots<'db>(
             continue;
         };
         // Only the std declarations describe the generated dispatch protocol.
-        if module_id_for_source_file(db, def.file(db)) != Some(module_id) {
+        if !StdAbiModule::Dispatch.contains(db, def) {
             continue;
         }
         let PredKind::InClass {

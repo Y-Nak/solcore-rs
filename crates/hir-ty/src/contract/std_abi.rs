@@ -4,12 +4,13 @@ use hir::{
     anchor::{DefId, DefKind},
     ast::item::Item,
 };
-use nameres::{LibraryId, ModuleId, module_id_for_source_file};
+use nameres::ModuleId;
 use parser::parse_file_to_hir;
 
 use crate::{
-    Db, Ty, TyCtor, UserTyCtor, UserTyCtorKind, solver::AbiEvidenceRole,
-    support::canonical_std_module_ids,
+    Db, Ty, TyCtor, UserTyCtor, UserTyCtorKind,
+    solver::AbiEvidenceRole,
+    support::{canonical_std_module_ids, is_canonical_std_module_def},
 };
 
 pub(super) const ABI_HEAD_SIZE_METHOD: &str = "headSize";
@@ -19,6 +20,7 @@ pub(crate) enum StdAbiModule {
     Std,
     Dispatch,
     Generic,
+    AbiGeneric,
 }
 
 impl StdAbiModule {
@@ -27,6 +29,7 @@ impl StdAbiModule {
             Self::Std => "std",
             Self::Dispatch => "dispatch",
             Self::Generic => "Generic",
+            Self::AbiGeneric => "ABIGeneric",
         }
     }
 
@@ -41,11 +44,8 @@ impl StdAbiModule {
             .find(|module| db.module_file(*module).is_some())
     }
 
-    fn contains(self, db: &dyn Db, def: DefId<'_>) -> bool {
-        module_id_for_source_file(db, def.file(db)).is_some_and(|module| {
-            module.library(db) == &LibraryId::Std
-                && module.logical_path(db).as_slice() == [self.name()]
-        })
+    pub(super) fn contains(self, db: &dyn Db, def: DefId<'_>) -> bool {
+        is_canonical_std_module_def(db, def, self.name())
     }
 
     fn find_def<'db>(self, db: &'db dyn Db, name: &str, kind: DefKind) -> Option<DefId<'db>> {
@@ -111,6 +111,14 @@ impl AbiClass {
                 Some(AbiEvidenceRole::Codec)
             }
         }
+    }
+
+    /// ABI dictionaries shipped with the class or its generic representation
+    /// bridge stay canonical when overlapping roots load their source as Main.
+    pub(super) fn owns_instance(self, db: &dyn Db, instance: DefId<'_>) -> bool {
+        self.module().contains(db, instance)
+            || (matches!(self, Self::Attribs | Self::Encode | Self::Decode)
+                && StdAbiModule::AbiGeneric.contains(db, instance))
     }
 
     pub(crate) fn from_def(db: &dyn Db, def: DefId<'_>) -> Option<Self> {
