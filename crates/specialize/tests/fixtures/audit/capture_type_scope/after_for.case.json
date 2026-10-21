@@ -1,0 +1,10 @@
+{
+  "source": "after_for.sol",
+  "loader": "fixture",
+  "frontend_clean": true,
+  "checks": [
+    {
+      "check": "no_closure_dispatch"
+    }
+  ]
+}

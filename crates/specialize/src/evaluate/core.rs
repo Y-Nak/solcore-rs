@@ -414,14 +414,18 @@ impl<'db> Evaluator<'db> {
         stmts: Vec<MonoStmt<'db>>,
         ret_comptime: bool,
     ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
-        self.eval_stmts_in_scope(
+        let saved_types = self.capture_types.clone();
+        self.capture_types.extend(type_reg.clone());
+        let result = self.eval_stmts_in_scope(
             &mut type_reg.clone(),
             env,
             comptime_env,
             stmts,
             ret_comptime,
             &mut ScopeBindings::default(),
-        )
+        );
+        self.capture_types = saved_types;
+        result
     }
 
     fn eval_scoped_stmts(
@@ -433,6 +437,8 @@ impl<'db> Evaluator<'db> {
         ret_comptime: bool,
     ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
         let mut scope = ScopeBindings::default();
+        let saved_types = self.capture_types.clone();
+        self.capture_types.extend(type_reg.clone());
         let (mut env, mut comptime_env, stmts) = self.eval_stmts_in_scope(
             &mut type_reg.clone(),
             env,
@@ -442,6 +448,7 @@ impl<'db> Evaluator<'db> {
             &mut scope,
         );
         scope.restore(&mut env, &mut comptime_env);
+        self.capture_types = saved_types;
         (env, comptime_env, stmts)
     }
 
@@ -454,18 +461,17 @@ impl<'db> Evaluator<'db> {
         ret_comptime: bool,
         scope: &mut ScopeBindings<'db>,
     ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
-        let saved_types = self.capture_types.clone();
-        self.capture_types.extend(type_reg.clone());
+        // Non-scoping control flow shares this registry with its enclosing
+        // sequence. Declarations update it once; lexical scope entry/exit owns
+        // the snapshots, rather than copying every visible binding per statement.
         let mut out = Vec::new();
         for stmt in stmts {
-            self.capture_types.extend(type_reg.clone());
             let (next_env, next_comptime_env, mut stmts) =
                 self.eval_stmt(type_reg, env, comptime_env, stmt, ret_comptime, scope);
             env = next_env;
             comptime_env = next_comptime_env;
             out.append(&mut stmts);
         }
-        self.capture_types = saved_types;
         (env, comptime_env, out)
     }
 
@@ -2874,13 +2880,12 @@ impl<'db> Evaluator<'db> {
         body: Vec<MonoStmt<'db>>,
     ) -> FoldOutcome<'db> {
         let mut scope = ScopeBindings::default();
-        match self.eval_fun_body_in_scope(
-            &mut type_reg.clone(),
-            env,
-            comptime_env,
-            body,
-            &mut scope,
-        ) {
+        let saved_types = self.capture_types.clone();
+        self.capture_types.extend(type_reg.clone());
+        let outcome =
+            self.eval_fun_body_in_scope(&mut type_reg.clone(), env, comptime_env, body, &mut scope);
+        self.capture_types = saved_types;
+        match outcome {
             FoldOutcome::FellThroughContinue(mut env, mut comptime_env) => {
                 scope.restore(&mut env, &mut comptime_env);
                 FoldOutcome::FellThroughContinue(env, comptime_env)
@@ -2892,28 +2897,12 @@ impl<'db> Evaluator<'db> {
     fn eval_fun_body_in_scope(
         &mut self,
         type_reg: &mut TypeReg<'db>,
-        env: VEnv<'db>,
-        comptime_env: CEnv,
-        body: Vec<MonoStmt<'db>>,
-        scope: &mut ScopeBindings<'db>,
-    ) -> FoldOutcome<'db> {
-        let saved_types = self.capture_types.clone();
-        self.capture_types.extend(type_reg.clone());
-        let outcome = self.eval_fun_body_stmts(type_reg, env, comptime_env, body, scope);
-        self.capture_types = saved_types;
-        outcome
-    }
-
-    fn eval_fun_body_stmts(
-        &mut self,
-        type_reg: &mut TypeReg<'db>,
         mut env: VEnv<'db>,
         mut comptime_env: CEnv,
         body: Vec<MonoStmt<'db>>,
         scope: &mut ScopeBindings<'db>,
     ) -> FoldOutcome<'db> {
         for stmt in body {
-            self.capture_types.extend(type_reg.clone());
             match stmt.kind {
                 MonoStmtKind::Let { id, mode, init, .. } => {
                     let comptime = mode.is_comptime();
@@ -2923,6 +2912,7 @@ impl<'db> Evaluator<'db> {
                         .is_some_and(|expr| self.expr_is_comptime(expr, &comptime_env));
                     scope.declare(&id.name, &env, &comptime_env);
                     type_reg.insert(id.name.clone(), id.clone());
+                    self.capture_types.insert(id.name.clone(), id.clone());
                     if let Some(expr) =
                         init.filter(|expr| expr_is_pure(expr, &self.comptime_pure_funs))
                     {
@@ -3028,13 +3018,17 @@ impl<'db> Evaluator<'db> {
                                     &matched.env,
                                     arm_comptime_env,
                                 );
-                                match self.eval_fun_body_in_scope(
+                                let saved_types = self.capture_types.clone();
+                                self.capture_types.extend(arm_types.clone());
+                                let outcome = self.eval_fun_body_in_scope(
                                     &mut arm_types,
                                     matched.env,
                                     arm_comptime_env,
                                     matched.body,
                                     &mut arm_scope,
-                                ) {
+                                );
+                                self.capture_types = saved_types;
+                                match outcome {
                                     FoldOutcome::FellThroughContinue(mut env, mut comptime_env) => {
                                         arm_scope.restore(&mut env, &mut comptime_env);
                                         FoldOutcome::FellThroughContinue(env, comptime_env)
