@@ -1609,6 +1609,14 @@ trait ABIEncode<self> {
     function encodeInto(x: self, basePtr: word, offset: word, tail: word) returns (word) /* newTail */ ;
 }
 
+// Raw words can also use an explicitly selected application codec.
+default impl ABIEncode<word> {
+    function encodeInto(x: word, basePtr: word, offset: word, tail: word) returns (word) {
+        mstore(basePtr + offset, x);
+        return tail;
+    }
+}
+
 impl ABIEncode<uint256> {
     // a unit256 is written directly into the head
     function encodeInto(x: uint256, basePtr: word, offset: word, tail: word) returns (word) {
@@ -1786,6 +1794,13 @@ impl<ty, reader> WordReader<ABIDecoder<ty, reader>> where reader: WordReader {
                 WordReader.copyToMem(ptr, dst, cnt);
             }
         }
+    }
+}
+
+// Raw words retain all bits and use the same bounded reader as ABI value types.
+default impl<reader> ABIDecode<ABIDecoder<word, reader>, word> where reader: WordReader {
+    function decode(ptr: ABIDecoder<word, reader>, currentHeadOffset: word) returns (word) {
+        return WordReader.read(WordReader.advance(ptr, currentHeadOffset));
     }
 }
 
