@@ -1,0 +1,12 @@
+{
+  "loader": "bare",
+  "checks": [
+    {
+      "check": "residual_match",
+      "scrutinees": 1,
+      "arms": 1,
+      "patterns": 1
+    }
+  ],
+  "source": "001.sol"
+}

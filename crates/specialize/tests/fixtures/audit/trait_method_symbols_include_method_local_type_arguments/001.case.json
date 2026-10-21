@@ -1,0 +1,22 @@
+{
+  "loader": "bare",
+  "checks": [
+    {
+      "check": "function_count",
+      "selector": {
+        "instance_method": true
+      },
+      "count": 2
+    },
+    {
+      "check": "unique_function_names"
+    },
+    {
+      "check": "distinct_return_types",
+      "selector": {
+        "instance_method": true
+      }
+    }
+  ],
+  "source": "001.sol"
+}

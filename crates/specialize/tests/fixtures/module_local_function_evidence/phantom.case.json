@@ -1,0 +1,11 @@
+{
+  "loader": "fixture",
+  "checks": [
+    {
+      "check": "main_return_number",
+      "value": "7"
+    }
+  ],
+  "source": "phantom.sol",
+  "frontend_clean": true
+}

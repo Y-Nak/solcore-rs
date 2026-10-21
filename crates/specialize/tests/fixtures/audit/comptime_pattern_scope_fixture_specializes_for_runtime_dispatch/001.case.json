@@ -1,0 +1,5 @@
+{
+  "loader": "fixture",
+  "checks": [],
+  "source": "../../../../../../tests/e2e/comptime-pattern-scopes/main.sol"
+}

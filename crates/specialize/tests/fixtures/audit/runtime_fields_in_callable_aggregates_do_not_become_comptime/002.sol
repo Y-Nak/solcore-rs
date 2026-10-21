@@ -1,0 +1,17 @@
+enum Box<a> {
+    Box(a)
+}
+function take(comptime value: word) returns (word) {
+    return value;
+}
+function main(input: word) returns (word) {
+    let boxed = Box((lam () -> word {
+                return input;
+            }, input));
+    match (boxed) {
+        case (Box((invoke, payload))) {
+            let copy: comptime<word> = payload;
+            return copy;
+        }
+    }
+}

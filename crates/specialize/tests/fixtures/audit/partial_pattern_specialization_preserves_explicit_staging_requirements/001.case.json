@@ -1,0 +1,10 @@
+{
+  "loader": "bare",
+  "checks": [],
+  "source": "001.sol",
+  "diagnostics": [
+    {
+      "kind": "integer_erasure"
+    }
+  ]
+}

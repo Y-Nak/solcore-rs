@@ -1,0 +1,10 @@
+{
+  "loader": "bare",
+  "checks": [],
+  "source": "002.sol",
+  "diagnostics": [
+    {
+      "kind": "missing_evidence"
+    }
+  ]
+}

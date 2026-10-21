@@ -1,0 +1,21 @@
+{
+  "loader": "fixture",
+  "checks": [
+    {
+      "check": "function_returns",
+      "selector": {
+        "prefix": "a_valueA_"
+      },
+      "value": "1"
+    },
+    {
+      "check": "function_returns",
+      "selector": {
+        "prefix": "b_valueB_"
+      },
+      "value": "2"
+    }
+  ],
+  "source": "values.sol",
+  "frontend_clean": true
+}

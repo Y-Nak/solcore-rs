@@ -1,0 +1,15 @@
+{
+  "loader": "bare",
+  "checks": [
+    {
+      "check": "main_return_number",
+      "value": null
+    },
+    {
+      "check": "binding",
+      "name": "x",
+      "min": 1
+    }
+  ],
+  "source": "001.sol"
+}

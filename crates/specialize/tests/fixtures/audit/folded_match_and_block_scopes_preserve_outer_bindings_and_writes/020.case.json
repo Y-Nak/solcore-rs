@@ -1,0 +1,10 @@
+{
+  "loader": "bare",
+  "checks": [
+    {
+      "check": "main_return_number",
+      "value": "8"
+    }
+  ],
+  "source": "020.sol"
+}

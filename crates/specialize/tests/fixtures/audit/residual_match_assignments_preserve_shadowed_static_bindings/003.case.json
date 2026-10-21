@@ -1,0 +1,11 @@
+{
+  "loader": "std_current",
+  "checks": [
+    {
+      "check": "entry_last_return_number",
+      "value": "7"
+    }
+  ],
+  "source": "003.sol",
+  "frontend_clean": true
+}
