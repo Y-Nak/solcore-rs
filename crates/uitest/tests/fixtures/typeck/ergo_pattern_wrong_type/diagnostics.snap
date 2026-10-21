@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_pattern_wrong_type/main.sol
 ---
-error[SC0201]: type mismatch: expected Shape, found Color
+error[SC0201]: type mismatch: expected Color, found Shape
   --> /main/main.sol:11:14
    |
 10 |     match (c) {
@@ -11,5 +11,5 @@ error[SC0201]: type mismatch: expected Shape, found Color
    |              ^^^^^^^^^^^^^^^ expression has mismatched type
 12 |             return r;
    |
-   = note: expected type: Shape
-   = note: found type: Color
+   = note: expected type: Color
+   = note: found type: Shape

@@ -23,7 +23,7 @@ impl E2eExecution {
 }
 
 /// Discover the single contract scenario in the entry module. Reject mixed
-/// modes rather than silently ignoring method expectations or a second scenario.
+/// modes and misplaced directives rather than silently ignoring test steps.
 pub fn source_e2e_scenario<'db>(
     db: &'db dyn parser::Db,
     module: Module<'db>,
@@ -33,9 +33,22 @@ pub fn source_e2e_scenario<'db>(
             .iter()
             .any(|comment| !matches!(parse_e2e_directive(&comment.text), Ok(None)))
     };
+    let reject_misplaced = |comments: &[hir::ast::item::SourceComment]| {
+        if has_directive(comments) {
+            Err(E2eFailure::new(
+                FailureKind::Directive,
+                "E2E directives must precede a contract or a public contract method",
+            ))
+        } else {
+            Ok(())
+        }
+    };
     let mut selected = None;
     let mut method_directives = false;
     for item in module.items(db) {
+        if !matches!(item, Item::ContractDef(_) | Item::FunctionDef(_)) {
+            reject_misplaced(item.leading_comments(db))?;
+        }
         match item {
             Item::ContractDef(contract) => {
                 let name = contract.name_elem(db).atom().text(db);
@@ -57,9 +70,19 @@ pub fn source_e2e_scenario<'db>(
                         "one fixture may contain only one contract scenario",
                     ));
                 }
+                for (_, comments) in contract.fields_with_comments(db) {
+                    reject_misplaced(comments)?;
+                }
                 for item in contract.items(db) {
                     if let ContractItem::FunctionDef(function) = item {
                         method_directives |= has_directive(function.leading_comments(db));
+                    } else {
+                        reject_misplaced(item.leading_comments(db))?;
+                        if let ContractItem::AdtDef(adt) = item {
+                            for (_, comments) in adt.ctors_with_comments(db) {
+                                reject_misplaced(comments)?;
+                            }
+                        }
                     }
                 }
             }
@@ -71,11 +94,15 @@ pub fn source_e2e_scenario<'db>(
                     method_directives |= has_directive(function.leading_comments(db));
                 }
             }
-            _ if has_directive(item.leading_comments(db)) => {
-                return Err(E2eFailure::new(
-                    FailureKind::Directive,
-                    "E2E directives must precede a contract or a public contract method",
-                ));
+            Item::AdtDef(adt) => {
+                for (_, comments) in adt.ctors_with_comments(db) {
+                    reject_misplaced(comments)?;
+                }
+            }
+            Item::ClassDef(class) => {
+                for (_, comments) in class.methods_with_comments(db) {
+                    reject_misplaced(comments)?;
+                }
             }
             _ => {}
         }

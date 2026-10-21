@@ -1,0 +1,63 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/mismatch_direction_indirect_calls/main.sol
+---
+error[SC0201]: type mismatch: expected bool, found word
+ --> /main/main.sol:2:21
+  |
+1 | function call_argument(g: function (bool) returns (word), x: word) {
+2 |     let y: word = g(x);
+  |                     ^ expression has mismatched type
+3 | }
+  |
+  = note: expected type: bool
+  = note: found type: word
+---
+
+error[SC0201]: type mismatch: expected word, found bool
+ --> /main/main.sol:6:19
+  |
+5 | function call_result(g: function (word) returns (bool), x: word) {
+6 |     let y: word = g(x);
+  |                   ^^^^ expression has mismatched type
+7 | }
+  |
+  = note: expected type: word
+  = note: found type: bool
+---
+
+error[SC0201]: type mismatch: expected word, found bool
+  --> /main/main.sol:10:12
+   |
+ 9 | function call_return(g: function (word) returns (bool), x: word) returns (word) {
+10 |     return g(x);
+   |            ^^^^ expression has mismatched type
+11 | }
+   |
+   = note: expected type: word
+   = note: found type: bool
+---
+
+error[SC0201]: type mismatch: expected bool, found word
+  --> /main/main.sol:14:21
+   |
+13 | function comptime_call_argument(comptime g: function (bool) returns (word), x: word) {
+14 |     let y: word = g(x);
+   |                     ^ expression has mismatched type
+15 | }
+   |
+   = note: expected type: bool
+   = note: found type: word
+---
+
+error[SC0201]: type mismatch: expected word, found bool
+  --> /main/main.sol:18:19
+   |
+17 | function comptime_call_result(comptime g: function (word) returns (bool), x: word) {
+18 |     let y: word = g(x);
+   |                   ^^^^ expression has mismatched type
+19 | }
+   |
+   = note: expected type: word
+   = note: found type: bool
