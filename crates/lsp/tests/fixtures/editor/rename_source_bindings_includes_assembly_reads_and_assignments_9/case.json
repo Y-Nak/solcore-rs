@@ -1,0 +1,22 @@
+{
+  "documents": [
+    "main.sol"
+  ],
+  "checks": [
+    {
+      "kind": "rename",
+      "at": {
+        "needle": "value",
+        "occurrence": "all"
+      },
+      "new_name": "renamed",
+      "accepted": true,
+      "no_errors_before": true,
+      "no_errors_after": true,
+      "prepare": true,
+      "expected_documents": {
+        "main.sol": "expected/1/main.sol.txt"
+      }
+    }
+  ]
+}

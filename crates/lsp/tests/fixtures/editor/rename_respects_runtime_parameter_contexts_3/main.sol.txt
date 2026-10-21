@@ -1,0 +1,1 @@
+trait Echo<t> { function echo(x: t) returns (t); } impl Echo<word> { function echo(value: word) returns (word) { return value; } }

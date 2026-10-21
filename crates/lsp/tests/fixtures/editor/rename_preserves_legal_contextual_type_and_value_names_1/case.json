@@ -1,0 +1,17 @@
+{
+  "documents": [
+    "main.sol"
+  ],
+  "checks": [
+    {
+      "kind": "rename",
+      "at": {
+        "needle": "Original"
+      },
+      "new_name": "comptime",
+      "accepted": true,
+      "no_errors_before": true,
+      "no_errors_after": true
+    }
+  ]
+}

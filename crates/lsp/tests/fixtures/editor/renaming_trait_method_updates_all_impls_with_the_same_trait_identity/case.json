@@ -1,0 +1,61 @@
+{
+  "documents": [
+    "main.sol",
+    "math.sol"
+  ],
+  "checks": [
+    {
+      "kind": "rename",
+      "at": {
+        "needle": "echo",
+        "document": "math.sol"
+      },
+      "new_name": "apply",
+      "accepted": true,
+      "no_errors_after": true,
+      "contents": [
+        {
+          "text": "function apply",
+          "count": 2
+        },
+        {
+          "text": "function echo",
+          "count": 2
+        },
+        {
+          "text": "Echo.apply(x)"
+        },
+        {
+          "text": "function apply",
+          "document": "math.sol"
+        }
+      ]
+    },
+    {
+      "kind": "rename",
+      "at": {
+        "needle": "echo"
+      },
+      "new_name": "apply",
+      "accepted": true,
+      "no_errors_after": true,
+      "contents": [
+        {
+          "text": "function apply",
+          "count": 2
+        },
+        {
+          "text": "function echo",
+          "count": 2
+        },
+        {
+          "text": "Echo.apply(x)"
+        },
+        {
+          "text": "function apply",
+          "document": "math.sol"
+        }
+      ]
+    }
+  ]
+}

@@ -10,6 +10,8 @@ pub mod completion;
 pub mod definition;
 pub mod diagnostics;
 pub mod document_highlight;
+#[cfg(test)]
+mod fixture_tests;
 pub mod folding;
 pub mod formatting;
 pub mod hover;

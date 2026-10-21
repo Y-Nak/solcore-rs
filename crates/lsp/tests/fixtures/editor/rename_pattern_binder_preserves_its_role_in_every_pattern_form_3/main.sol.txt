@@ -1,0 +1,1 @@
+enum Choice { Choice, Other } enum Box { Box(Choice) } function main(input: Box) returns (word) { match (input) { case Box(value) { return 7; } default { return 9; } } }

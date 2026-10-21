@@ -1,0 +1,14 @@
+{
+  "documents": [
+    "main.sol"
+  ],
+  "checks": [
+    {
+      "kind": "signature",
+      "at": {
+        "needle": "  2"
+      },
+      "active_parameter": 1
+    }
+  ]
+}

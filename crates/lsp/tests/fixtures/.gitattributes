@@ -1,0 +1,4 @@
+# Editor buffers and expected edits retain exact bytes on every platform.
+*.txt -text
+# The completion cursor sits on this intentionally blank, indented body line.
+editor/completion_uses_body_scope_even_without_an_expression/main.sol.txt whitespace=-blank-at-eol

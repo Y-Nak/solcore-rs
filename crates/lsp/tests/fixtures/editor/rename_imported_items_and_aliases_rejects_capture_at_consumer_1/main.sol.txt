@@ -1,0 +1,1 @@
+import {target} from math; function main() returns (word) { let renamed = lam () -> word { return 2; }; return target(); }

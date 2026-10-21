@@ -1,0 +1,1 @@
+import {Eq} from classes; function main(x: word) returns (word) { return x-Eq.; }

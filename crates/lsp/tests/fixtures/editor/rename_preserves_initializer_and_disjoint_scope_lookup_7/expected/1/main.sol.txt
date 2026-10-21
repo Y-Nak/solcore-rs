@@ -1,0 +1,1 @@
+function main(renamed: word) returns (word) { match (7) { case (renamed) { assembly { pop(renamed) } } } return renamed; }

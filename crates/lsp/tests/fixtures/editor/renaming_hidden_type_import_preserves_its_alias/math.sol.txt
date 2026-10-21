@@ -1,0 +1,2 @@
+enum Choice { Some(word), None }
+export {Choice(Some)};

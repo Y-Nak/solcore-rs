@@ -1,0 +1,2 @@
+import {renamed} from math hiding {renamed};
+function main() returns (word) { return 1; }

@@ -1,0 +1,1 @@
+type Target = word; function id<a>(x: Target, y: a) returns (Target) { return x; }

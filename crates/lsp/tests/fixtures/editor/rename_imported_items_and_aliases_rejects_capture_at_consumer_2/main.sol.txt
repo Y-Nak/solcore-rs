@@ -1,0 +1,1 @@
+import {target as alias} from math; function main() returns (word) { let renamed = lam () -> word { return 2; }; return alias(); }

@@ -1,0 +1,27 @@
+{
+  "documents": [
+    "main.sol"
+  ],
+  "checks": [
+    {
+      "kind": "rename",
+      "at": {
+        "needle": "value",
+        "occurrence": "all"
+      },
+      "new_name": "renamed",
+      "accepted": false,
+      "no_errors_before": true
+    },
+    {
+      "kind": "rename",
+      "at": {
+        "needle": "value",
+        "occurrence": "all"
+      },
+      "new_name": "safeName",
+      "accepted": true,
+      "no_errors_before": true
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+function main(value: word) returns (word) { let f = lam (renamed: word) -> word { return primAddWord(value, renamed); }; return f(7); }

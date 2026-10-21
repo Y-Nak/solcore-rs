@@ -498,35 +498,27 @@ mod tests {
             .byte_to_position(offset)
     }
 
-    #[test]
-    fn comments_do_not_change_call_delimiters_or_argument_index() {
-        for call in [
-            "f(1 /* ) (, */,  2)",
-            "f /* ( */ (1,  2)",
-            "f(1 // ) ,\n,  2)",
-            "f(1, /* , */  2)",
-            "f(1 /* outer /* ) */ , */ ,  2)",
-        ] {
-            let source = format!(
-                "function f(a: word, b: word) returns (word) {{ return a; }}\nfunction main() returns (word) {{ return {call}; }}"
-            );
-            let (world, uri) = world_with_main(&source);
-            let position = position_at(&source, &world, &uri, "  2");
-            let help = handle_signature_help(&world, &uri, position).expect(call);
-            assert_eq!(help.active_parameter, Some(1), "{call}");
+    #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/call_arguments", glob: "*.json")]
+    fn call_argument_structure_fixture(fixture: dir_test::Fixture<&str>) {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Case {
+            source: String,
+            open: u32,
+            end: u32,
+            expected_range: (u32, u32),
+            comma_start: u32,
+            cursor: u32,
+            expected_commas: u32,
         }
-    }
-
-    #[test]
-    fn string_contents_do_not_change_argument_structure() {
-        let call = r#"f("a\"),", 2)"#;
+        let case: Case = serde_json::from_str(fixture.content()).expect("call argument fixture");
         assert_eq!(
-            call_argument_range(call, 1, call.len() as u32),
-            Some((2, call.len() as u32 - 1))
+            call_argument_range(&case.source, case.open, case.end),
+            Some(case.expected_range)
         );
         assert_eq!(
-            count_commas_before(call, 2, call.find('2').unwrap() as u32),
-            1
+            count_commas_before(&case.source, case.comma_start, case.cursor),
+            case.expected_commas
         );
     }
 

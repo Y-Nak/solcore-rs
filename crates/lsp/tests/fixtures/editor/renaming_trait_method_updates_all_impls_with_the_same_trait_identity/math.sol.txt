@@ -1,0 +1,2 @@
+export {Echo};
+trait Echo<t> { function echo(x: t) returns (word); }

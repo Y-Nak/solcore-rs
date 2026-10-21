@@ -1,0 +1,26 @@
+function main(value: word) returns (word) {
+    assembly {
+        pop(value)
+        { let value := value pop(value) }
+        if value { let value := value pop(value) }
+        for { let value := value } value { value := sub(value, 1) } {
+            let temp := value
+            pop(temp)
+        }
+        for { let i := value } i { value := add(value, 1) i := sub(i, 1) } {
+            let value := i
+            pop(value)
+        }
+        switch value
+        case 0 { let value := value pop(value) }
+        default { value := add(value, 1) }
+        function value(value) -> result {
+            function nested(value) -> result { result := value }
+            result := nested(value)
+        }
+        function other() -> value { value := 7 }
+        value := value(value)
+    }
+    assembly { value := add(value, 1) }
+    return value;
+}

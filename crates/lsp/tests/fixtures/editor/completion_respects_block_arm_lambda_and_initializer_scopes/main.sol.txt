@@ -1,0 +1,10 @@
+
+function main(input: word) returns (word) {
+    { let hidden = input; hidden; }
+    let later = input;
+    match (input) {
+        case arm { let armLocal = arm; arm; }
+    }
+    let closure = lam (nested: word) -> word { nested; return nested; };
+    return later;
+}

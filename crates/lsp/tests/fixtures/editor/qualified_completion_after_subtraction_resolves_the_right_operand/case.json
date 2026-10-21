@@ -1,0 +1,24 @@
+{
+  "documents": [
+    "classes.sol",
+    "main.sol"
+  ],
+  "checks": [
+    {
+      "kind": "completion",
+      "at": {
+        "needle": "Eq.",
+        "offset": 3
+      },
+      "contains": [
+        {
+          "label": "eq",
+          "kind": 2
+        }
+      ],
+      "excludes": [
+        "Eq.eq"
+      ]
+    }
+  ]
+}

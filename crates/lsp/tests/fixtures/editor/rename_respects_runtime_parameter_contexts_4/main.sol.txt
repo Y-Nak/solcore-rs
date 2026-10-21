@@ -1,0 +1,1 @@
+function main() returns (word) { let f = lam (value: word) -> word { return value; }; return f(1); }

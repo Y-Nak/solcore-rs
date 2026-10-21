@@ -1,0 +1,1 @@
+function renamed() returns (word) { return 42; } function main() returns (word) { let value: word = 7; return renamed(); }

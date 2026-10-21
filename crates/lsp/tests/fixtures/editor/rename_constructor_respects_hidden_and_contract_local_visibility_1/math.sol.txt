@@ -1,0 +1,1 @@
+enum Choice { Pick, Other } export {Choice};

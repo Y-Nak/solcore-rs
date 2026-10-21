@@ -1,0 +1,16 @@
+{
+  "documents": [
+    "main.sol"
+  ],
+  "checks": [
+    {
+      "kind": "rename",
+      "at": {
+        "needle": "Choice"
+      },
+      "new_name": "Renamed",
+      "accepted": false,
+      "no_errors_before": true
+    }
+  ]
+}

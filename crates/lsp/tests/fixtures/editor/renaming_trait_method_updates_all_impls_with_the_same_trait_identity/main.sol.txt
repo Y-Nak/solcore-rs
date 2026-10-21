@@ -1,0 +1,6 @@
+import {Echo} from math;
+impl Echo<word> { function echo(x: word) returns (word) { return x; } }
+impl Echo<bool> { function echo(x: bool) returns (word) { return 0; } }
+trait Other<t> { function echo(x: t) returns (word); }
+impl Other<word> { function echo(x: word) returns (word) { return x; } }
+function main() returns (word) { let x: word = 7; return Echo.echo(x); }

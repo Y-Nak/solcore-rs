@@ -558,55 +558,6 @@ mod tests {
     }
 
     #[test]
-    fn completion_uses_body_scope_even_without_an_expression() {
-        let source = "function main(input: word) returns (word) {\n  \n}";
-        let (world, uri) = world_with_main(source);
-        let items = completion_at_marker(&world, &uri, source, "  \n", 2);
-        assert_completion(&items, "input", CompletionItemKind::VARIABLE);
-    }
-
-    #[test]
-    fn completion_respects_block_arm_lambda_and_initializer_scopes() {
-        let source = r#"
-function main(input: word) returns (word) {
-    { let hidden = input; hidden; }
-    let later = input;
-    match (input) {
-        case arm { let armLocal = arm; arm; }
-    }
-    let closure = lam (nested: word) -> word { nested; return nested; };
-    return later;
-}
-"#;
-        let (world, uri) = world_with_main(source);
-        let file = world
-            .db()
-            .source_file(world.vfs_path_for_uri(&uri).unwrap())
-            .unwrap();
-        assert!(
-            parser::parse_file_to_hir(world.db(), file)
-                .diagnostics(world.db())
-                .is_empty()
-        );
-        let after = completion_at_marker(&world, &uri, source, "return later", 7);
-        assert_completion(&after, "input", CompletionItemKind::VARIABLE);
-        assert_completion(&after, "later", CompletionItemKind::VARIABLE);
-        for hidden in ["hidden", "arm", "armLocal", "nested"] {
-            assert_no_completion(&after, hidden);
-        }
-        let block = completion_at_marker(&world, &uri, source, "hidden; }", 0);
-        assert_completion(&block, "hidden", CompletionItemKind::VARIABLE);
-        let arm = completion_at_marker(&world, &uri, source, "arm; }", 0);
-        assert_completion(&arm, "arm", CompletionItemKind::VARIABLE);
-        assert_completion(&arm, "armLocal", CompletionItemKind::VARIABLE);
-        let lambda = completion_at_marker(&world, &uri, source, "nested; return", 0);
-        assert_completion(&lambda, "nested", CompletionItemKind::VARIABLE);
-        assert_completion(&lambda, "input", CompletionItemKind::VARIABLE);
-        let initializer = completion_at_marker(&world, &uri, source, "let later = input", 12);
-        assert_no_completion(&initializer, "later");
-    }
-
-    #[test]
     fn function_body_completion_includes_params_locals_and_top_level_items() {
         let source = "function helper() returns (word) {\n  return 1;\n}\n\nfunction main(input: word) returns (word) {\n  let local = input;\n  return local;\n}\n";
         let (world, uri) = world_with_main(source);
@@ -720,53 +671,19 @@ function main(input: word) returns (word) {
         assert_no_completion(&items, "Eq.eq");
     }
 
-    #[test]
-    fn qualified_context_respects_identifiers_and_subtraction_boundaries() {
-        for (source, qualifier, member_prefix) in [
-            ("foo_bar.member_prefix", "foo_bar", "member_prefix"),
-            ("foo-bar.member", "bar", "member"),
-            ("foo - bar.member", "bar", "member"),
-            ("foo--bar.member", "bar", "member"),
-            ("foo-bar.member-Other.next", "Other", "next"),
-            ("foo-bar.", "bar", ""),
-            ("foo-名前.値", "名前", "値"),
-        ] {
-            assert_eq!(
-                qualified_completion_context(source, source.len() as u32),
-                Some(QualifiedCompletionContext {
-                    qualifier: qualifier.to_owned(),
-                    member_prefix: member_prefix.to_owned(),
-                }),
-                "incorrect qualified context for {source:?}"
-            );
+    #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/completion_context", glob: "*.json")]
+    fn qualified_completion_context_fixture(fixture: dir_test::Fixture<&str>) {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Case {
+            source: String,
+            expected: Option<(String, String)>,
         }
-
-        for invalid in [
-            "foo-.member",
-            "foo.-member",
-            "foo-bar.member-prefix",
-            "foo._member",
-            "123.member",
-            "foo.let",
-        ] {
-            assert_eq!(
-                qualified_completion_context(invalid, invalid.len() as u32),
-                None,
-                "unexpectedly accepted {invalid:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn qualified_completion_after_subtraction_resolves_the_right_operand() {
-        let classes = "trait Eq<a> { function eq(x: a, y: a) returns (bool); } export { Eq };";
-        let main =
-            "import {Eq} from classes; function main(x: word) returns (word) { return x-Eq.; }";
-        let (world, main_uri) = world_with_module(main, "classes.sol", classes);
-        let items = completion_at(&world, &main_uri, main, "Eq.");
-
-        assert_completion(&items, "eq", CompletionItemKind::METHOD);
-        assert_no_completion(&items, "Eq.eq");
+        let case: Case =
+            serde_json::from_str(fixture.content()).expect("completion context fixture");
+        let actual = qualified_completion_context(&case.source, case.source.len() as u32)
+            .map(|context| (context.qualifier, context.member_prefix));
+        assert_eq!(actual, case.expected, "{}", case.source);
     }
 
     fn world_with_module(main: &str, module_path: &str, module_source: &str) -> (WorldState, Url) {
@@ -776,21 +693,6 @@ function main(input: word) returns (word) {
         assert!(world.open_document(module_uri, module_source.to_owned()));
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
         (world, main_uri)
-    }
-
-    fn completion_at_marker(
-        world: &WorldState,
-        uri: &Url,
-        source: &str,
-        marker: &str,
-        delta: usize,
-    ) -> Vec<CompletionItem> {
-        let offset = (source.find(marker).expect("completion marker") + delta) as u32;
-        let position = world
-            .line_index(uri)
-            .expect("line index")
-            .byte_to_position(offset);
-        completion_items(handle_completion(world, uri, position).expect("completion response"))
     }
 
     fn completion_at(

@@ -1,0 +1,1 @@
+enum Original { Value } function id(value: Original) returns (Original) { return value; }

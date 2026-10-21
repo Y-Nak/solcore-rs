@@ -1,0 +1,2 @@
+export {renamed};
+function renamed() returns (word) { return 7; }

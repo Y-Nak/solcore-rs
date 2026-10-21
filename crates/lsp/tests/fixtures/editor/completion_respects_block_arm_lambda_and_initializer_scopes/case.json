@@ -1,0 +1,86 @@
+{
+  "documents": [
+    "main.sol"
+  ],
+  "checks": [
+    {
+      "kind": "completion",
+      "at": {
+        "needle": "return later",
+        "offset": 7
+      },
+      "contains": [
+        {
+          "label": "input",
+          "kind": 6
+        },
+        {
+          "label": "later",
+          "kind": 6
+        }
+      ],
+      "excludes": [
+        "hidden",
+        "arm",
+        "armLocal",
+        "nested"
+      ],
+      "parse_clean": true
+    },
+    {
+      "kind": "completion",
+      "at": {
+        "needle": "hidden; }"
+      },
+      "contains": [
+        {
+          "label": "hidden",
+          "kind": 6
+        }
+      ]
+    },
+    {
+      "kind": "completion",
+      "at": {
+        "needle": "arm; }"
+      },
+      "contains": [
+        {
+          "label": "arm",
+          "kind": 6
+        },
+        {
+          "label": "armLocal",
+          "kind": 6
+        }
+      ]
+    },
+    {
+      "kind": "completion",
+      "at": {
+        "needle": "nested; return"
+      },
+      "contains": [
+        {
+          "label": "nested",
+          "kind": 6
+        },
+        {
+          "label": "input",
+          "kind": 6
+        }
+      ]
+    },
+    {
+      "kind": "completion",
+      "at": {
+        "needle": "let later = input",
+        "offset": 12
+      },
+      "contains": [],
+      "excludes": [
+        "later"
+      ]
+    }
+  ]
+}
