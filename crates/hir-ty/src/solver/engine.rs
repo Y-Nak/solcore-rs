@@ -173,7 +173,9 @@ impl<'db> TabledEngine<'db> {
             .filter(|clause| clause.origin.is_default() && head_can_apply(clause))
             .cloned()
             .collect::<Vec<_>>();
-        if !default_clauses.is_empty() && !self.has_non_default_unifying_head(key, base_clauses) {
+        // Check the assembled candidates, including goal-dependent compiler
+        // facts. The cached environment alone omits structural function rules.
+        if !default_clauses.is_empty() && !self.has_non_default_unifying_head(key, &clauses) {
             clauses.extend(default_clauses);
         }
         clauses
@@ -182,14 +184,19 @@ impl<'db> TabledEngine<'db> {
     fn has_non_default_unifying_head(
         &self,
         key: &TableKey<'db>,
-        base_clauses: &[ProgramClause<'db>],
+        clauses: &[ProgramClause<'db>],
     ) -> bool {
         let mut goal_vars = key.allowed_vars();
         collect_pred_vars(self.db, key.pred, &mut goal_vars);
-        base_clauses.iter().any(|clause| {
-            !clause.origin.is_default()
-                && !matches!(clause.origin, ClauseOrigin::Superclass(_))
-                && head_can_unify(self.db, clause, key.pred, &goal_vars)
+        clauses.iter().any(|clause| {
+            // Local assumptions and superclass projections contribute
+            // evidence, but do not reserve an implementation's instance head.
+            matches!(
+                clause.origin,
+                ClauseOrigin::Builtin
+                    | ClauseOrigin::Derived(_)
+                    | ClauseOrigin::Instance { default: false, .. }
+            ) && head_can_unify(self.db, clause, key.pred, &goal_vars)
         })
     }
 
