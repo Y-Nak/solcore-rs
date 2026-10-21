@@ -84,6 +84,8 @@ struct Rename {
     #[serde(default)]
     no_errors_after: bool,
     references: Option<usize>,
+    /// Bound compiler body-resolution work independently of wall-clock speed.
+    max_resolved_bodies: Option<usize>,
     definition: Option<Cursor>,
     #[serde(default)]
     expected_documents: BTreeMap<String, String>,
@@ -238,7 +240,15 @@ fn check_rename(
         assert_eq!(definition.range.start, positions[0]);
     }
     let before = document_texts(world, documents);
+    crate::references::take_resolved_body_count();
     let result = crate::handle_rename(world, &target, position, &check.new_name);
+    let resolved_bodies = crate::references::take_resolved_body_count();
+    if let Some(maximum) = check.max_resolved_bodies {
+        assert!(
+            resolved_bodies <= maximum,
+            "rename resolved {resolved_bodies} bodies, expected at most {maximum}"
+        );
+    }
     assert_eq!(
         document_texts(world, documents),
         before,

@@ -1,0 +1,42 @@
+function unrelated0(value: word) returns (word) { return value; }
+function unrelated1(value: word) returns (word) { return value; }
+function unrelated2(value: word) returns (word) { return value; }
+function unrelated3(value: word) returns (word) { return value; }
+function unrelated4(value: word) returns (word) { return value; }
+function unrelated5(value: word) returns (word) { return value; }
+function unrelated6(value: word) returns (word) { return value; }
+function unrelated7(value: word) returns (word) { return value; }
+function unrelated8(value: word) returns (word) { return value; }
+function unrelated9(value: word) returns (word) { return value; }
+function unrelated10(value: word) returns (word) { return value; }
+function unrelated11(value: word) returns (word) { return value; }
+function unrelated12(value: word) returns (word) { return value; }
+function unrelated13(value: word) returns (word) { return value; }
+function unrelated14(value: word) returns (word) { return value; }
+function unrelated15(value: word) returns (word) { return value; }
+function unrelated16(value: word) returns (word) { return value; }
+function unrelated17(value: word) returns (word) { return value; }
+function unrelated18(value: word) returns (word) { return value; }
+function unrelated19(value: word) returns (word) { return value; }
+function unrelated20(value: word) returns (word) { return value; }
+function unrelated21(value: word) returns (word) { return value; }
+function unrelated22(value: word) returns (word) { return value; }
+function unrelated23(value: word) returns (word) { return value; }
+function unrelated24(value: word) returns (word) { return value; }
+function unrelated25(value: word) returns (word) { return value; }
+function unrelated26(value: word) returns (word) { return value; }
+function unrelated27(value: word) returns (word) { return value; }
+function unrelated28(value: word) returns (word) { return value; }
+function unrelated29(value: word) returns (word) { return value; }
+function unrelated30(value: word) returns (word) { return value; }
+function unrelated31(value: word) returns (word) { return value; }
+function target(value: word) returns (word) {
+    let renamed = value;
+    let closure = lam (arg: word) { return renamed + arg; };
+    match (renamed) {
+        case pattern {
+            assembly { pattern := add(pattern, renamed) }
+            return closure(pattern) + value;
+        }
+    }
+}

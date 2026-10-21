@@ -121,13 +121,32 @@ impl<'a> ProposedEdits<'a> {
 
 pub(crate) fn preserves_resolutions(
     world: &WorldState,
+    target: &ReferenceTarget<'_>,
     edits: &HashMap<Url, Vec<TextEdit>>,
 ) -> bool {
-    crate::analysis::with_analysis_stack(|| preserves_resolutions_inner(world, edits))
+    crate::analysis::with_analysis_stack(|| preserves_resolutions_inner(world, target, edits))
 }
 
-fn preserves_resolutions_inner(world: &WorldState, edits: &HashMap<Url, Vec<TextEdit>>) -> bool {
-    let Some(before) = semantic_snapshot(world) else {
+fn preserves_resolutions_inner(
+    world: &WorldState,
+    target: &ReferenceTarget<'_>,
+    edits: &HashMap<Url, Vec<TextEdit>>,
+) -> bool {
+    // A local value name can only change resolutions in its enclosing function,
+    // including nested lambdas and assembly. Keep module/global names on the
+    // workspace-wide path: they can change imports and unused declarations.
+    let local_function = local_reference_context(world, target).and_then(|(_, context)| {
+        SourceSpan::new(
+            world,
+            context
+                .function
+                .sig(world.db())
+                .name
+                .span(world.db())
+                .resolve_to_absolute(world.db()),
+        )
+    });
+    let Some(before) = semantic_snapshot(world, local_function.as_ref()) else {
         return false;
     };
     let Some(edits) = ProposedEdits::new(world, edits) else {
@@ -137,7 +156,14 @@ fn preserves_resolutions_inner(world: &WorldState, edits: &HashMap<Url, Vec<Text
     if edits.apply(&mut proposed).is_none() {
         return false;
     }
-    let Some(after) = semantic_snapshot(&proposed) else {
+    let mapped_function = match local_function {
+        Some(span) => match edits.map_span(&span) {
+            Some(span) => Some(span),
+            None => return false,
+        },
+        None => None,
+    };
+    let Some(after) = semantic_snapshot(&proposed, mapped_function.as_ref()) else {
         return false;
     };
     let Some(previous_diagnostics) = before
@@ -269,9 +295,45 @@ impl SemanticSnapshot {
     }
 }
 
-fn semantic_snapshot(world: &WorldState) -> Option<SemanticSnapshot> {
+fn semantic_snapshot(
+    world: &WorldState,
+    local_function: Option<&SourceSpan>,
+) -> Option<SemanticSnapshot> {
     let db = world.db();
     let mut snapshot = SemanticSnapshot::default();
+    if let Some(function) = local_function {
+        let module_id = module_id_for_uri(world, db, &function.uri)?;
+        let file = db.module_file(module_id)?;
+        let module = parser::parse_file_to_hir(db, file).module(db);
+        let env = nameres::module_env(db, module_id);
+        let context = function_contexts(db, module).into_iter().find(|context| {
+            SourceSpan::new(
+                world,
+                context
+                    .function
+                    .sig(db)
+                    .name
+                    .span(db)
+                    .resolve_to_absolute(db),
+            )
+            .as_ref()
+                == Some(function)
+        })?;
+        let body = body_resolution_map(
+            db,
+            module,
+            context.function,
+            context.root_body,
+            context.enclosing_contract,
+            context.inherited_type_vars,
+            &env,
+        );
+        for diagnostic in &body.diagnostics {
+            snapshot.record_diagnostic(world, diagnostic.lower(db))?;
+        }
+        snapshot.record_body(world, &env, &body)?;
+        return Some(snapshot);
+    }
     for module_id in reference_search_modules(world, db) {
         let Some(file) = db.module_file(module_id) else {
             continue;
@@ -283,23 +345,7 @@ fn semantic_snapshot(world: &WorldState) -> Option<SemanticSnapshot> {
         // Comparing diagnostic code and source identities also rejects unused
         // declaration/import collisions, without blocking pre-existing errors.
         for diagnostic in nameres::module_diagnostics(db, module_id) {
-            let diagnostic = diagnostic.lower(db);
-            if diagnostic.level != hir::diag::DiagnosticLevel::Error {
-                continue;
-            }
-            snapshot.diagnostics.insert(DiagnosticKey {
-                code: diagnostic.code,
-                labels: diagnostic
-                    .labels
-                    .iter()
-                    .map(|label| {
-                        Some((
-                            label.is_primary(),
-                            SourceSpan::new(world, label.span().resolve_to_absolute(db))?,
-                        ))
-                    })
-                    .collect::<Option<_>>()?,
-            });
+            snapshot.record_diagnostic(world, diagnostic.lower(db))?;
         }
         snapshot.record_types(
             world,
@@ -308,30 +354,66 @@ fn semantic_snapshot(world: &WorldState) -> Option<SemanticSnapshot> {
             &map.item_resolutions.facts.preds,
         )?;
         for body in &map.bodies {
-            snapshot.record_types(world, &env, &body.types, &body.preds)?;
-            for entry in &body.exprs {
-                if let Some(span) = expr_reference_span(db, entry.body.exprs(db).get(entry.expr)) {
-                    snapshot.record(world, span, &entry.resolution)?;
-                }
-            }
-            for entry in &body.pats {
-                let pat = entry.body.pats(db).get(entry.pat);
-                if let Some(qualifier) = pat_module_qualifier(pat) {
-                    snapshot.record_qualifier(world, &env, qualifier)?;
-                }
-                if let Some(span) = pat_reference_span(db, pat) {
-                    snapshot.record(world, span, &entry.resolution)?;
-                }
-            }
-            for entry in &body.assembly {
-                snapshot.record(world, entry.span, &entry.resolution)?;
-            }
-            for entry in &body.stmt_bindings {
-                if let Some(span) = stmt_binding_span(db, entry.body, entry.stmt) {
-                    snapshot.record(world, span, &entry.resolution)?;
-                }
-            }
+            snapshot.record_body(world, &env, body)?;
         }
     }
     Some(snapshot)
+}
+
+impl SemanticSnapshot {
+    fn record_diagnostic(
+        &mut self,
+        world: &WorldState,
+        diagnostic: hir::diag::Diagnostic,
+    ) -> Option<()> {
+        if diagnostic.level == hir::diag::DiagnosticLevel::Error {
+            self.diagnostics.insert(DiagnosticKey {
+                code: diagnostic.code,
+                labels: diagnostic
+                    .labels
+                    .iter()
+                    .map(|label| {
+                        Some((
+                            label.is_primary(),
+                            SourceSpan::new(world, label.span().resolve_to_absolute(world.db()))?,
+                        ))
+                    })
+                    .collect::<Option<_>>()?,
+            });
+        }
+        Some(())
+    }
+
+    fn record_body<'db>(
+        &mut self,
+        world: &'db WorldState,
+        env: &dyn hir_nameres::ImportedNames<'db>,
+        body: &hir_nameres::BodyResolutionMap<'db>,
+    ) -> Option<()> {
+        let db = world.db();
+        self.record_types(world, env, &body.types, &body.preds)?;
+        for entry in &body.exprs {
+            if let Some(span) = expr_reference_span(db, entry.body.exprs(db).get(entry.expr)) {
+                self.record(world, span, &entry.resolution)?;
+            }
+        }
+        for entry in &body.pats {
+            let pat = entry.body.pats(db).get(entry.pat);
+            if let Some(qualifier) = pat_module_qualifier(pat) {
+                self.record_qualifier(world, env, qualifier)?;
+            }
+            if let Some(span) = pat_reference_span(db, pat) {
+                self.record(world, span, &entry.resolution)?;
+            }
+        }
+        for entry in &body.assembly {
+            self.record(world, entry.span, &entry.resolution)?;
+        }
+        for entry in &body.stmt_bindings {
+            if let Some(span) = stmt_binding_span(db, entry.body, entry.stmt) {
+                self.record(world, span, &entry.resolution)?;
+            }
+        }
+        Some(())
+    }
 }

@@ -56,7 +56,7 @@ pub fn handle_rename(
     }
     let locations = editable_reference_locations(world, &target)?;
     let changes = text_edits_by_uri(locations, new_name)?;
-    if !preserves_resolutions(world, &changes) {
+    if !preserves_resolutions(world, &target, &changes) {
         return None;
     }
 

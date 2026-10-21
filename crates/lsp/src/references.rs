@@ -33,6 +33,18 @@ use crate::{
     state::WorldState,
 };
 
+// Count actual body-resolution work in directory fixtures. A deterministic
+// bound catches workspace-wide scans without depending on machine speed.
+#[cfg(test)]
+thread_local! {
+    static RESOLVED_BODIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_resolved_body_count() -> usize {
+    RESOLVED_BODIES.with(|count| count.replace(0))
+}
+
 /// Semantic identity used by references, highlights, and future rename support.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ReferenceTarget<'db> {
@@ -121,6 +133,9 @@ pub fn reference_target_at<'db>(
     }
 
     for context in function_contexts(db, module) {
+        if !span_contains_offset(db, context.function.span(db), file, offset) {
+            continue;
+        }
         if let Some(target) = function_param_target_at(db, &context, file, offset) {
             return Some(target);
         }
@@ -180,40 +195,56 @@ pub fn collect_reference_locations<'db>(
     let db = world.db();
     let mut locations = Vec::new();
 
-    for module_id in reference_search_modules(world, db) {
-        let Some(file) = db.module_file(module_id) else {
-            continue;
-        };
-        let module = parser::parse_file_to_hir(db, file).module(db);
+    if let Some((module, context)) = local_reference_context(world, target) {
+        let module_id = nameres::module_id_for_source_file(db, module.def_id_value(db).file(db))
+            .expect("reference target belongs to a workspace module");
         let env = nameres::module_env(db, module_id);
-        let scope = hir_nameres::item_scope(db, module);
-        let module_map = module_reference_resolutions(db, module, scope, &env);
-
-        collect_item_resolution_locations(
-            world,
-            db,
-            &module_map.item_resolutions.facts,
-            &env,
-            target,
-            &mut locations,
-        );
-        collect_import_export_reference_locations(
-            world,
+        let body = body_resolution_map(
             db,
             module,
-            module_id,
-            &module_map.item_scope.facts,
-            target,
-            &mut locations,
+            context.function,
+            context.root_body,
+            context.enclosing_contract,
+            context.inherited_type_vars,
+            &env,
         );
-        for body_map in &module_map.bodies {
-            collect_body_reference_locations(world, db, body_map, &env, target, &mut locations);
-        }
-        for (method_target, span) in
-            impl_method_occurrences(db, module, &module_map.item_resolutions.facts)
-        {
-            if &method_target == target {
-                push_span_location(world, db, span, &mut locations);
+        collect_body_reference_locations(world, db, &body, &env, target, &mut locations);
+    } else {
+        for module_id in reference_search_modules(world, db) {
+            let Some(file) = db.module_file(module_id) else {
+                continue;
+            };
+            let module = parser::parse_file_to_hir(db, file).module(db);
+            let env = nameres::module_env(db, module_id);
+            let scope = hir_nameres::item_scope(db, module);
+            let module_map = module_reference_resolutions(db, module, scope, &env);
+
+            collect_item_resolution_locations(
+                world,
+                db,
+                &module_map.item_resolutions.facts,
+                &env,
+                target,
+                &mut locations,
+            );
+            collect_import_export_reference_locations(
+                world,
+                db,
+                module,
+                module_id,
+                &module_map.item_scope.facts,
+                target,
+                &mut locations,
+            );
+            for body_map in &module_map.bodies {
+                collect_body_reference_locations(world, db, body_map, &env, target, &mut locations);
+            }
+            for (method_target, span) in
+                impl_method_occurrences(db, module, &module_map.item_resolutions.facts)
+            {
+                if &method_target == target {
+                    push_span_location(world, db, span, &mut locations);
+                }
             }
         }
     }
@@ -227,6 +258,39 @@ pub fn collect_reference_locations<'db>(
 
     sort_dedup_locations(&mut locations);
     locations
+}
+
+/// Value bindings cannot escape their enclosing function's source scope, even
+/// when a closure captures their values. References, highlights and rename
+/// validation therefore share this boundary instead of resolving other bodies.
+fn target_body<'db>(target: &ReferenceTarget<'db>) -> Option<FuncBody<'db>> {
+    match target {
+        ReferenceTarget::Param(param) => Some(param.body),
+        ReferenceTarget::Local(
+            LocalBinding::Let { body, .. } | LocalBinding::Pattern { body, .. },
+        ) => Some(*body),
+        _ => None,
+    }
+}
+
+fn local_reference_context<'db>(
+    world: &'db WorldState,
+    target: &ReferenceTarget<'db>,
+) -> Option<(Module<'db>, FunctionContext<'db>)> {
+    let db = world.db();
+    let body = target_body(target)?;
+    let span = body.span(db).resolve_to_absolute(db);
+    let module = parser::parse_file_to_hir(db, span.file()).module(db);
+    let owner = function_owning_offset(db, module, span.file(), span.start().as_u32())?;
+    Some((
+        module,
+        FunctionContext {
+            function: owner.function,
+            root_body: owner.root_body,
+            enclosing_contract: owner.enclosing_contract,
+            inherited_type_vars: owner.inherited_type_vars,
+        },
+    ))
 }
 
 /// Returns whether a semantic target can be renamed with text edits alone.
@@ -550,6 +614,13 @@ fn body_expr_target_at<'db>(
     env: &dyn hir_nameres::ImportedNames<'db>,
 ) -> Option<ReferenceTarget<'db>> {
     let owner = function_owning_offset(db, module, file, offset)?;
+    let (owning_body, expr_id) = innermost_expr(db, owner.root_body, file, offset)?;
+    let expr = owning_body.exprs(db).get(expr_id);
+    let span = expr_reference_span(db, expr)?;
+    if !span_contains_offset(db, span, file, offset) {
+        return None;
+    }
+
     let body_map = body_resolution_map(
         db,
         module,
@@ -559,12 +630,6 @@ fn body_expr_target_at<'db>(
         owner.inherited_type_vars,
         env,
     );
-    let (owning_body, expr_id) = innermost_expr(db, owner.root_body, file, offset)?;
-    let expr = owning_body.exprs(db).get(expr_id);
-    let span = expr_reference_span(db, expr)?;
-    if !span_contains_offset(db, span, file, offset) {
-        return None;
-    }
 
     body_map
         .exprs
@@ -998,6 +1063,8 @@ fn body_resolution_map<'db>(
     mut type_vars: Vec<TypeVarBinding<'db>>,
     imports: &dyn hir_nameres::ImportedNames<'db>,
 ) -> hir_nameres::BodyResolutionMap<'db> {
+    #[cfg(test)]
+    RESOLVED_BODIES.with(|count| count.set(count.get() + 1));
     let sig = function.sig(db);
     type_vars.extend(hir_nameres::type_var_bindings(
         function.def_id_value(db),
@@ -1100,6 +1167,8 @@ fn module_reference_resolutions<'db>(
         imports,
         hir_nameres::NameresDiagnosticPolicy::Emit,
     );
+    #[cfg(test)]
+    RESOLVED_BODIES.with(|count| count.set(count.get() + map.bodies.len()));
     if map.bodies.iter().any(has_deferred_constructors) {
         map.bodies = function_contexts(db, module)
             .into_iter()
@@ -1901,7 +1970,7 @@ pub(crate) fn target_accepts_identifier<'db>(
     if !parser::is_valid_identifier_in(new_name, context) {
         return false;
     }
-    if !parser::requires_type_identifier_context(new_name) {
+    if target_body(target).is_some() || !parser::requires_type_identifier_context(new_name) {
         return true;
     }
     let declaration = target_declaration_span(db, target);
