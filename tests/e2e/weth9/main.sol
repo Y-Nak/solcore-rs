@@ -1,5 +1,5 @@
 import * from std;
-import {caller as caller_, callvalue as callvalue_, selfbalance, gas, call} from std.opcodes;
+import { caller as caller_, callvalue as callvalue_, selfbalance, gas, call } from std.opcodes;
 import * from std.dispatch;
 
 // Forward `wad` wei to `dst` via a zero-data CALL and revert on failure.
@@ -37,8 +37,8 @@ function callvalue() returns (uint256) {
 // #[raw(0x70a082310000000000000000000000001212121212121212121212121212120000000012, label = "balanceOf(caller) -> 57 (50 + 7 via fallback)") -> success(0x0000000000000000000000000000000000000000000000000000000000000039)]
 // #[raw(0x18160ddd, label = "totalSupply() -> 87 (80 + 7)") -> success(0x0000000000000000000000000000000000000000000000000000000000000057)]
 contract WETH9 {
-    balances : mapping(address => uint256);
-    allowance : mapping(address => mapping(address => uint256));
+    balances: mapping(address => uint256);
+    allowance: mapping(address => mapping(address => uint256));
 
     constructor() {}
 

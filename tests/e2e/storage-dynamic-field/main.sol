@@ -3,7 +3,10 @@ import * from std.dispatch;
 import * from std.Generic;
 import * from std.StorageGeneric;
 
-enum Blob { NoBlob, SomeBytes(memory<bytes>) }
+enum Blob {
+    NoBlob,
+    SomeBytes(memory<bytes>)
+}
 
 // #[scenario("storage_dynamic_field")]
 // constructor() (asserts StorageSize.size(Blob)=2; sets blob=NoBlob)
@@ -30,7 +33,7 @@ enum Blob { NoBlob, SomeBytes(memory<bytes>) }
 // #[raw(0x0bcd3b33, label = "getBytes() -> 32 bytes of 0x22") -> success(0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000202222222222222222222222222222222222222222222222222222222222222222)]
 // #[raw(0x681fe70c, label = "isEmpty() -> false") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
 contract C {
-    blob : Blob;
+    blob: Blob;
 
     constructor() {
         blob = Blob.NoBlob;
@@ -50,24 +53,25 @@ contract C {
 
     function getBytes() public returns (memory<bytes>) {
         match (blob) {
-case Blob.NoBlob {
-revertEmpty(); return memory(0);
-}
-case Blob.SomeBytes(b) {
-return b;
-}
-}
+            case Blob.NoBlob {
+                revertEmpty();
+                return memory(0);
+            }
+            case Blob.SomeBytes(b) {
+                return b;
+            }
+        }
     }
 
     // Loads the whole ADT back from storage and inspects its tag.
     function isEmpty() public returns (bool) {
         match (blob) {
-case Blob.NoBlob {
-return true;
-}
-case Blob.SomeBytes(_) {
-return false;
-}
-}
+            case Blob.NoBlob {
+                return true;
+            }
+            case Blob.SomeBytes(_) {
+                return false;
+            }
+        }
     }
 }

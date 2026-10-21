@@ -27,37 +27,37 @@ import * from std.dispatch;
 // #[raw(0x6b8ff5740000000000000000000000000000000000000000000000000000000000000001, label = "getName(1) - x") -> success(0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000017800000000000000000000000000000000000000000000000000000000000000)]
 // #[raw(0x3a3f30c40000000000000000000000000000000000000000000000000000000000000001, label = "getBackup(1) - long string intact, so the payload was copied not aliased") -> success(0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000286162636465666768696a6b6c6d6e6f707172737475767778797a3031323334353637383941424344000000000000000000000000000000000000000000000000)]
 contract ArrayString {
-  names : array<string>;
-  backup : array<string>;
+    names: array<string>;
+    backup: array<string>;
 
-  constructor() {}
+    constructor() {}
 
-  function pushName(s: memory<string>) public {
-    ArrayPush.push(names, s);
-  }
+    function pushName(s: memory<string>) public {
+        ArrayPush.push(names, s);
+    }
 
-  function setName(i: uint256, s: memory<string>) public {
-    names[i] = s;
-  }
+    function setName(i: uint256, s: memory<string>) public {
+        names[i] = s;
+    }
 
-  function getName(i: uint256) public returns (memory<string>) {
-    return names[i];
-  }
+    function getName(i: uint256) public returns (memory<string>) {
+        return names[i];
+    }
 
-  function len() public returns (uint256) {
-    return Length.length(names);
-  }
+    function len() public returns (uint256) {
+        return Length.length(names);
+    }
 
-  // backup = names
-  function saveBackup() public {
-    backup = names;
-  }
+    // backup = names
+    function saveBackup() public {
+        backup = names;
+    }
 
-  function getBackup(i: uint256) public returns (memory<string>) {
-    return backup[i];
-  }
+    function getBackup(i: uint256) public returns (memory<string>) {
+        return backup[i];
+    }
 
-  function lenBackup() public returns (uint256) {
-    return Length.length(backup);
-  }
+    function lenBackup() public returns (uint256) {
+        return Length.length(backup);
+    }
 }

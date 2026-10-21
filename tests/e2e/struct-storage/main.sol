@@ -18,8 +18,8 @@ import * from std.StorageGeneric;
 // CanStore.store path.
 
 struct Point {
-  x: uint256;
-  y: uint256;
+    x: uint256;
+    y: uint256;
 }
 
 // #[scenario("storage_struct")]
@@ -35,40 +35,42 @@ struct Point {
 // #[raw(0x68d466b8000000000000000000000000000000000000000000000000000000000000000b, label = "setY(11): sub-field write p.y=11 -> p=(9,11)") -> success(0x)]
 // #[raw(0xf680b3a7, label = "sumMatch(): 9+11 = 20") -> success(0x0000000000000000000000000000000000000000000000000000000000000014)]
 contract C {
-  p : Point;
+    p: Point;
 
-  constructor() {
-    // product: size uint256 * 2 = 2 slots
-    assert(StorageSize.size(@Point) == 2);
-  }
+    constructor() {
+        // product: size uint256 * 2 = 2 slots
+        assert(StorageSize.size(@Point) == 2);
+    }
 
-  // whole-struct write
-  function setPoint(a : uint256, b : uint256) public returns (()) {
-    p = Point(a, b);
-  }
+    // whole-struct write
+    function setPoint(a: uint256, b: uint256) public returns (()) {
+        p = Point(a, b);
+    }
 
-  // read back by destructuring with match
-  function sumMatch() public returns (uint256) {
-    match (p ) {
-    case Point(a, b) { return a + b;
-    } }
-  }
+    // read back by destructuring with match
+    function sumMatch() public returns (uint256) {
+        match (p) {
+            case Point(a, b) {
+                return a + b;
+            }
+        }
+    }
 
-  // read a single field via dot access on the storage struct
-  function getX() public returns (uint256) {
-    return p.x;
-  }
+    // read a single field via dot access on the storage struct
+    function getX() public returns (uint256) {
+        return p.x;
+    }
 
-  function getY() public returns (uint256) {
-    return p.y;
-  }
+    function getY() public returns (uint256) {
+        return p.y;
+    }
 
-  // write a single field via dot access (read-modify-write the whole struct)
-  function setX(v : uint256) public returns (()) {
-    p.x = v;
-  }
+    // write a single field via dot access (read-modify-write the whole struct)
+    function setX(v: uint256) public returns (()) {
+        p.x = v;
+    }
 
-  function setY(v : uint256) public returns (()) {
-    p.y = v;
-  }
+    function setY(v: uint256) public returns (()) {
+        p.y = v;
+    }
 }

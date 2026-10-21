@@ -2,24 +2,24 @@ import * from std;
 import * from std.dispatch;
 import * from std.Generic;
 import * from std.ABIGeneric;
-pragma no-patterson-condition ;
-pragma no-coverage-condition ;
-pragma no-bounded-variable-condition ;
+pragma no-patterson-condition;
+pragma no-coverage-condition;
+pragma no-bounded-variable-condition;
 
 // #[scenario("abi_tuple_offset")]
 // #[deploy(0x) -> success]
 // #[raw(0x226ae324, label = "encodeTupleAfterField() -> abi_encode((9, ABITuple([5, 6])))") -> success(0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000c0000000000000000000000000000000000000000000000000000000000000000900000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000050000000000000000000000000000000000000000000000000000000000000006)]
 // #[raw(0x94ab7267, label = "encodeTupleInSum() -> abi_encode(inl(ABITuple(ABITuple([]))))") -> success(0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000c0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000)]
 contract AbiTupleOffset {
-  constructor() {}
+    constructor() {}
 
-  function encodeTupleAfterField() public returns (memory<bytes>) {
-    let v : (uint256, ABITuple<memory<DynArray<uint256>>>) = (9, ABITuple([5, 6]));
-    return abi_encode(v);
-  }
+    function encodeTupleAfterField() public returns (memory<bytes>) {
+        let v: (uint256, ABITuple<memory<DynArray<uint256>>>) = (9, ABITuple([5, 6]));
+        return abi_encode(v);
+    }
 
-  function encodeTupleInSum() public returns (memory<bytes>) {
-    let v : sum<ABITuple<ABITuple<memory<DynArray<uint256>>>>, ()> = inl(ABITuple(ABITuple([])));
-    return abi_encode(v);
-  }
+    function encodeTupleInSum() public returns (memory<bytes>) {
+        let v: sum<ABITuple<ABITuple<memory<DynArray<uint256>>>>, ()> = inl(ABITuple(ABITuple([])));
+        return abi_encode(v);
+    }
 }

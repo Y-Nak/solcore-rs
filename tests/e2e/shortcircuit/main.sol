@@ -2,19 +2,23 @@ import * from std;
 import * from std.dispatch;
 
 function rttrue() returns (bool) {
-  assembly { pop(sload(0)) } //prevent comptime eval
-  return true;
+    assembly {
+        pop(sload(0))
+    } //prevent comptime eval
+    return true;
 }
 
 function rtfalse() returns (bool) {
-  assembly { pop(sload(0)) } //prevent comptime eval
-  return false;
+    assembly {
+        pop(sload(0))
+    } //prevent comptime eval
+    return false;
 }
 
 contract Answer {
     // #[() -> 42]
     function testor() public returns (uint256) {
-        if(rttrue() || absurd()) {
+        if (rttrue() || absurd()) {
             return 42;
         } else {
             return 0;
@@ -23,7 +27,7 @@ contract Answer {
 
     // #[() -> 42]
     function testand() public returns (uint256) {
-        if(rtfalse() &&  absurd()) {
+        if (rtfalse() && absurd()) {
             return 0;
         } else {
             return 42;

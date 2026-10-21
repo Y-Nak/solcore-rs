@@ -29,28 +29,28 @@ import * from std.dispatch;
 // #[raw(0x9507d39a0000000000000000000000000000000000000000000000000000000000000000, label = "get(0) - 0, not the cleared 11") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
 // #[raw(0x9507d39a0000000000000000000000000000000000000000000000000000000000000001, label = "get(1) - 0") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
 contract ArrayOps {
-  xs : array<uint256>;
+    xs: array<uint256>;
 
-  constructor() {}
+    constructor() {}
 
-  // NOTE: not named `add` -- that collides with the Yul builtin of the same name.
-  function pushVal(v: uint256) public {
-    ArrayPush.push(xs, v);
-  }
+    // NOTE: not named `add` -- that collides with the Yul builtin of the same name.
+    function pushVal(v: uint256) public {
+        ArrayPush.push(xs, v);
+    }
 
-  function popArr() public {
-    Array.pop(xs);
-  }
+    function popArr() public {
+        Array.pop(xs);
+    }
 
-  function len() public returns (uint256) {
-    return Length.length(xs);
-  }
+    function len() public returns (uint256) {
+        return Length.length(xs);
+    }
 
-  function get(i: uint256) public returns (uint256) {
-    return xs[i];
-  }
+    function get(i: uint256) public returns (uint256) {
+        return xs[i];
+    }
 
-  function grow(n: uint256) public {
-    Array.setLength(xs, n);
-  }
+    function grow(n: uint256) public {
+        Array.setLength(xs, n);
+    }
 }

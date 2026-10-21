@@ -16,8 +16,13 @@ import * from std.StorageGeneric;
 // instance, so it cannot appear in a public parameter position. It can appear
 // in a return position, which is what the getters below exercise.
 
-enum Flags { Flags(bool, bool) }
-enum Toggle { Off, On(bool) }
+enum Flags {
+    Flags(bool, bool)
+}
+enum Toggle {
+    Off,
+    On(bool)
+}
 
 function toBool(v: uint256) returns (bool) {
     return v != uint256(0);
@@ -53,9 +58,9 @@ function toBool(v: uint256) returns (bool) {
 // #[raw(0x33ef2640, label = "getBare() -> false (writing `toggle` never disturbed `bare`)") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
 // #[raw(0x459a2790, label = "secondFlag() -> true (writing `toggle` never disturbed `flags`)") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
 contract C {
-    bare : bool;
-    flags : Flags;
-    toggle : Toggle;
+    bare: bool;
+    flags: Flags;
+    toggle: Toggle;
 
     constructor() {
         bare = false;
@@ -82,18 +87,18 @@ contract C {
 
     function firstFlag() public returns (bool) {
         match (flags) {
-case Flags(a, _) {
-return a;
-}
-}
+            case Flags(a, _) {
+                return a;
+            }
+        }
     }
 
     function secondFlag() public returns (bool) {
         match (flags) {
-case Flags(_, b) {
-return b;
-}
-}
+            case Flags(_, b) {
+                return b;
+            }
+        }
     }
 
     function turnOn(v: uint256) public {
@@ -108,23 +113,24 @@ return b;
     // the tag can tell them apart.
     function isOn() public returns (bool) {
         match (toggle) {
-case Toggle.Off {
-return false;
-}
-case Toggle.On(_) {
-return true;
-}
-}
+            case Toggle.Off {
+                return false;
+            }
+            case Toggle.On(_) {
+                return true;
+            }
+        }
     }
 
     function toggleValue() public returns (bool) {
         match (toggle) {
-case Toggle.Off {
-revertEmpty(); return false;
-}
-case Toggle.On(b) {
-return b;
-}
-}
+            case Toggle.Off {
+                revertEmpty();
+                return false;
+            }
+            case Toggle.On(b) {
+                return b;
+            }
+        }
     }
 }

@@ -8,7 +8,7 @@ function while_condition(x: word) {
 }
 
 function for_condition(x: word) {
-    for (; x; ) {}
+    for (; x;) {}
 }
 
 function conditional_expression(x: word) returns (word) {
@@ -19,7 +19,9 @@ function literal_condition() {
     if (1) {}
 }
 
-function word_value() returns (word) { return 0; }
+function word_value() returns (word) {
+    return 0;
+}
 
 function call_condition() {
     if (word_value()) {}

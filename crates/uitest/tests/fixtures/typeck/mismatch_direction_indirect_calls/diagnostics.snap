@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/typeck/mismatch_direction_indirect_call
 error[SC0201]: type mismatch: expected bool, found word
  --> /main/main.sol:2:21
   |
-1 | function call_argument(g: function(bool) returns (word), x: word) {
+1 | function call_argument(g: function (bool) returns (word), x: word) {
 2 |     let y: word = g(x);
   |                     ^ expression has mismatched type
 3 | }
@@ -18,7 +18,7 @@ error[SC0201]: type mismatch: expected bool, found word
 error[SC0201]: type mismatch: expected word, found bool
  --> /main/main.sol:6:19
   |
-5 | function call_result(g: function(word) returns (bool), x: word) {
+5 | function call_result(g: function (word) returns (bool), x: word) {
 6 |     let y: word = g(x);
   |                   ^^^^ expression has mismatched type
 7 | }
@@ -30,7 +30,7 @@ error[SC0201]: type mismatch: expected word, found bool
 error[SC0201]: type mismatch: expected word, found bool
   --> /main/main.sol:10:12
    |
- 9 | function call_return(g: function(word) returns (bool), x: word) returns (word) {
+ 9 | function call_return(g: function (word) returns (bool), x: word) returns (word) {
 10 |     return g(x);
    |            ^^^^ expression has mismatched type
 11 | }
@@ -42,7 +42,7 @@ error[SC0201]: type mismatch: expected word, found bool
 error[SC0201]: type mismatch: expected bool, found word
   --> /main/main.sol:14:21
    |
-13 | function comptime_call_argument(comptime g: function(bool) returns (word), x: word) {
+13 | function comptime_call_argument(comptime g: function (bool) returns (word), x: word) {
 14 |     let y: word = g(x);
    |                     ^ expression has mismatched type
 15 | }
@@ -54,7 +54,7 @@ error[SC0201]: type mismatch: expected bool, found word
 error[SC0201]: type mismatch: expected word, found bool
   --> /main/main.sol:18:19
    |
-17 | function comptime_call_result(comptime g: function(word) returns (bool), x: word) {
+17 | function comptime_call_result(comptime g: function (word) returns (bool), x: word) {
 18 |     let y: word = g(x);
    |                   ^^^^ expression has mismatched type
 19 | }

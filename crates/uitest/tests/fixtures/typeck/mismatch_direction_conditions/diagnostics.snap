@@ -31,7 +31,7 @@ error[SC0201]: type mismatch: expected bool, found word
   --> /main/main.sol:11:12
    |
 10 | function for_condition(x: word) {
-11 |     for (; x; ) {}
+11 |     for (; x;) {}
    |            ^ expression has mismatched type
 12 | }
    |
@@ -64,12 +64,12 @@ error[SC0201]: type mismatch: expected bool, found numeric
 ---
 
 error[SC0201]: type mismatch: expected bool, found word
-  --> /main/main.sol:25:9
+  --> /main/main.sol:27:9
    |
-24 | function call_condition() {
-25 |     if (word_value()) {}
+26 | function call_condition() {
+27 |     if (word_value()) {}
    |         ^^^^^^^^^^^^ expression has mismatched type
-26 | }
+28 | }
    |
    = note: expected type: bool
    = note: found type: word

@@ -22,7 +22,10 @@ import * from std.StorageGeneric;
 //   None     -> keccak256("None()")        followed by a don't-care word
 // (This replaced the old positional 0x..00/0x..01 inl/inr tag.)
 
-enum Option<a> { None, Some(a) }
+enum Option<a> {
+    None,
+    Some(a)
+}
 
 // #[scenario("storage_adt_abi")]
 // constructor() (stored = None)
@@ -38,7 +41,7 @@ enum Option<a> { None, Some(a) }
 // #[raw(0x80a275860000000000000000000000000000000000000000000000000000000000000007, label = "unwrapOr(7) -> 7") -> success(0x0000000000000000000000000000000000000000000000000000000000000007)]
 // #[raw(0xdfbe8f99, label = "getOpt() -> None") -> success(0x312343540cf19bad8e24ee12fb32c550e430a21136a53271f61c15371c880b910000000000000000000000000000000000000000000000000000000000000000)]
 contract C {
-    stored : Option<uint256>;
+    stored: Option<uint256>;
 
     constructor() {
         stored = Option.None;
@@ -46,7 +49,7 @@ contract C {
     }
 
     // ADT as a parameter: decoded from calldata, then written to storage.
-    function setOpt(o : Option<uint256>) public returns (()) {
+    function setOpt(o: Option<uint256>) public returns (()) {
         stored = o;
     }
 
@@ -56,21 +59,29 @@ contract C {
     }
 
     // Round-trip in one call, without touching storage.
-    function echo(o : Option<uint256>) public returns (Option<uint256>) {
+    function echo(o: Option<uint256>) public returns (Option<uint256>) {
         return o;
     }
 
     function isSome() public returns (bool) {
-        match (stored ) {
-        case Option.None    { return false;
-        } case Option.Some(_) { return true;
-        } }
+        match (stored) {
+            case Option.None {
+                return false;
+            }
+            case Option.Some(_) {
+                return true;
+            }
+        }
     }
 
-    function unwrapOr(d : uint256) public returns (uint256) {
-        match (stored ) {
-        case Option.None    { return d;
-        } case Option.Some(v) { return v;
-        } }
+    function unwrapOr(d: uint256) public returns (uint256) {
+        match (stored) {
+            case Option.None {
+                return d;
+            }
+            case Option.Some(v) {
+                return v;
+            }
+        }
     }
 }

@@ -1,5 +1,9 @@
-enum Box { Box(word) }
-enum Empty { Empty }
+enum Box {
+    Box(word)
+}
+enum Empty {
+    Empty
+}
 
 function constructor_return() returns (bool) {
     return Box(1);

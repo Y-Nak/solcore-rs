@@ -4,72 +4,72 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/mismatch_direction_patterns/main.sol
 ---
 error[SC0201]: type mismatch: expected bool, found Box
- --> /main/main.sol:5:22
-  |
-4 | function constructor_pattern(x: bool) {
-5 |     match (x) { case Box(y) {} case _ {} }
-  |                      ^^^^^^ expression has mismatched type
-6 | }
-  |
-  = note: expected type: bool
-  = note: found type: Box
+  --> /main/main.sol:10:14
+   |
+ 9 |     match (x) {
+10 |         case Box(y) {}
+   |              ^^^^^^ expression has mismatched type
+11 |         case _ {}
+   |
+   = note: expected type: bool
+   = note: found type: Box
 ---
 
 error[SC0201]: type mismatch: expected bool, found Empty
-  --> /main/main.sol:9:22
+  --> /main/main.sol:17:14
    |
- 8 | function nullary_pattern(x: bool) {
- 9 |     match (x) { case Empty {} case _ {} }
-   |                      ^^^^^ expression has mismatched type
-10 | }
+16 |     match (x) {
+17 |         case Empty {}
+   |              ^^^^^ expression has mismatched type
+18 |         case _ {}
    |
    = note: expected type: bool
    = note: found type: Empty
 ---
 
 error[SC0201]: type mismatch: expected bool, found numeric
-  --> /main/main.sol:13:22
+  --> /main/main.sol:24:14
    |
-12 | function numeric_pattern(x: bool) {
-13 |     match (x) { case 1 {} case _ {} }
-   |                      ^ expression has mismatched type
-14 | }
+23 |     match (x) {
+24 |         case 1 {}
+   |              ^ expression has mismatched type
+25 |         case _ {}
    |
    = note: expected type: bool
    = note: found type: numeric
 ---
 
 error[SC0201]: type mismatch: expected bool, found numeric
-  --> /main/main.sol:17:22
+  --> /main/main.sol:31:14
    |
-16 | function hex_pattern(x: bool) {
-17 |     match (x) { case 0x1 {} case _ {} }
-   |                      ^^^ expression has mismatched type
-18 | }
+30 |     match (x) {
+31 |         case 0x1 {}
+   |              ^^^ expression has mismatched type
+32 |         case _ {}
    |
    = note: expected type: bool
    = note: found type: numeric
 ---
 
 error[SC0201]: type mismatch: expected bool, found tuple
-  --> /main/main.sol:21:22
+  --> /main/main.sol:38:14
    |
-20 | function tuple_pattern(x: bool) {
-21 |     match (x) { case (a, b) {} case _ {} }
-   |                      ^^^^^^ expression has mismatched type
-22 | }
+37 |     match (x) {
+38 |         case (a, b) {}
+   |              ^^^^^^ expression has mismatched type
+39 |         case _ {}
    |
    = note: expected type: bool
    = note: found type: tuple
 ---
 
 error[SC0201]: type mismatch: expected word, found bool
-  --> /main/main.sol:25:26
+  --> /main/main.sol:45:18
    |
-24 | function constructor_argument_pattern(x: Box) {
-25 |     match (x) { case Box(true) {} case _ {} }
-   |                          ^^^^ expression has mismatched type
-26 | }
+44 |     match (x) {
+45 |         case Box(true) {}
+   |                  ^^^^ expression has mismatched type
+46 |         case _ {}
    |
    = note: expected type: word
    = note: found type: bool

@@ -9,29 +9,29 @@ import * from std.dispatch;
 // #[raw(0x7215808b0000000000000000000000000000000000000000000000000000000000000029, label = "setStored(41)") -> success(0x)]
 // #[raw(0x9e50978c, label = "valueAfterSend()") -> success(0x0000000000000000000000000000000000000000000000000000000000000029)]
 contract RawVector {
-  stored: uint256;
+    stored: uint256;
 
-  constructor() {
-    stored = uint256(7);
-  }
-
-  function initialValue() public returns (uint256) {
-    return stored;
-  }
-
-  function callerAddress() public returns (address) {
-    let result: word;
-    assembly {
-      result := caller()
+    constructor() {
+        stored = uint256(7);
     }
-    return address(result);
-  }
 
-  function setStored(value: uint256) public {
-    stored = value;
-  }
+    function initialValue() public returns (uint256) {
+        return stored;
+    }
 
-  function valueAfterSend() public returns (uint256) {
-    return stored;
-  }
+    function callerAddress() public returns (address) {
+        let result: word;
+        assembly {
+            result := caller()
+        }
+        return address(result);
+    }
+
+    function setStored(value: uint256) public {
+        stored = value;
+    }
+
+    function valueAfterSend() public returns (uint256) {
+        return stored;
+    }
 }
