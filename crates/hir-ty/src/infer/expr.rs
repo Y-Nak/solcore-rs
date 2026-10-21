@@ -914,6 +914,7 @@ impl<'db> InferCtx<'db> {
         let ty = self.normalize_aliases(ty);
         match self.engine.resolve(ty) {
             InferTy::Function { params, ret } => Some(ClosureSig { params, ret: *ret }),
+            InferTy::Comptime(inner) => self.callable_sig_for_ty(*inner),
             _ => None,
         }
     }
