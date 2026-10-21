@@ -1,0 +1,14 @@
+{
+  "source": "dead_nested_binding_restore.sol",
+  "loader": "fixture",
+  "frontend_clean": true,
+  "checks": [
+    {
+      "check": "no_closure_dispatch"
+    },
+    {
+      "check": "main_return_number",
+      "value": "7"
+    }
+  ]
+}

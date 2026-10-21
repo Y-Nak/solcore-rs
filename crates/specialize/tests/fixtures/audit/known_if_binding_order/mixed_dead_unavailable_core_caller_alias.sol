@@ -1,0 +1,18 @@
+function pick(x: word) returns (function () returns (word)) {
+    let y: word;
+    return lam () -> word {
+        if (true) {
+            return x;
+        } else {
+            return y;
+        }
+    };
+}
+function main() returns (word) {
+    let y: word;
+    assembly {
+        y := calldataload(0)
+    }
+    let f = pick(y);
+    return f();
+}

@@ -1,0 +1,10 @@
+{
+  "source": "caller_capture_uninitialized_name_collision.sol",
+  "loader": "fixture",
+  "frontend_clean": true,
+  "checks": [
+    {
+      "check": "no_closure_dispatch"
+    }
+  ]
+}

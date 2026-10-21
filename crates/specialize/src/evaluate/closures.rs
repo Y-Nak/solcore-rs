@@ -614,9 +614,29 @@ impl<'db> Evaluator<'db> {
             evaluator: self,
             locals: params.iter().map(|param| param.name.clone()).collect(),
             captures: BTreeMap::new(),
+            uses: None,
         };
         visitor.stmts(body);
         visitor.captures.into_values().collect()
+    }
+
+    /// Preserve reference identity when checking whether a substituted callable
+    /// still uses a particular capture. Name deduplication is only appropriate
+    /// when allocating the callable's runtime capture parameters.
+    pub(super) fn closure_capture_uses(
+        &self,
+        params: &[MonoParam<'db>],
+        body: &[MonoStmt<'db>],
+    ) -> Vec<MonoId<'db>> {
+        let mut uses = Vec::new();
+        let mut visitor = CaptureCollector {
+            evaluator: self,
+            locals: params.iter().map(|param| param.name.clone()).collect(),
+            captures: BTreeMap::new(),
+            uses: Some(&mut uses),
+        };
+        visitor.stmts(body);
+        uses
     }
 }
 
@@ -661,6 +681,7 @@ struct CaptureCollector<'eval, 'db> {
     evaluator: &'eval Evaluator<'db>,
     locals: FxHashSet<String>,
     captures: BTreeMap<String, MonoId<'db>>,
+    uses: Option<&'eval mut Vec<MonoId<'db>>>,
 }
 
 impl<'db> CaptureCollector<'_, 'db> {
@@ -670,9 +691,13 @@ impl<'db> CaptureCollector<'_, 'db> {
             && (!self.evaluator.storage_fields.contains(&id.name)
                 || self.evaluator.capture_types.contains_key(&id.name))
         {
-            self.captures
-                .entry(id.name.clone())
-                .or_insert_with(|| id.clone());
+            if let Some(uses) = &mut self.uses {
+                uses.push(id.clone());
+            } else {
+                self.captures
+                    .entry(id.name.clone())
+                    .or_insert_with(|| id.clone());
+            }
         }
     }
 

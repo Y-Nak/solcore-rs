@@ -50,6 +50,8 @@ use crate::{
 
 #[path = "closures.rs"]
 mod closures;
+#[path = "control_flow.rs"]
+mod control_flow;
 #[cfg(test)]
 #[path = "pattern_tests.rs"]
 mod pattern_tests;
@@ -181,6 +183,9 @@ pub(super) struct Evaluator<'db> {
     closure_clone_names: FxHashMap<ClosureCloneKey<'db>, String>,
     lifted_closures: Vec<LiftedClosure<'db>>,
     capture_types: TypeReg<'db>,
+    // Fresh symbolic identities for locals whose runtime declaration cannot be
+    // carried out of a folded function. They cannot alias caller-side names.
+    unavailable_values: FxHashSet<String>,
     if_stmt_spans: FxHashSet<Span<'db>>,
     storage_fields: FxHashSet<String>,
     inline_depth_limit: usize,
@@ -319,6 +324,7 @@ impl<'db> Evaluator<'db> {
             closure_clone_names: FxHashMap::default(),
             lifted_closures: Vec::new(),
             capture_types: TypeReg::default(),
+            unavailable_values: FxHashSet::default(),
             if_stmt_spans: module
                 .frontend_desugar
                 .bodies
@@ -416,7 +422,7 @@ impl<'db> Evaluator<'db> {
     ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
         let saved_types = self.capture_types.clone();
         self.capture_types.extend(type_reg.clone());
-        let result = self.eval_stmts_in_scope(
+        let (env, comptime_env, mut body) = self.eval_stmts_in_scope(
             &mut type_reg.clone(),
             env,
             comptime_env,
@@ -424,8 +430,9 @@ impl<'db> Evaluator<'db> {
             ret_comptime,
             &mut ScopeBindings::default(),
         );
+        self.prune_unused_declarations(&mut body);
         self.capture_types = saved_types;
-        result
+        (env, comptime_env, body)
     }
 
     fn eval_scoped_stmts(
@@ -439,7 +446,7 @@ impl<'db> Evaluator<'db> {
         let mut scope = ScopeBindings::default();
         let saved_types = self.capture_types.clone();
         self.capture_types.extend(type_reg.clone());
-        let (mut env, mut comptime_env, stmts) = self.eval_stmts_in_scope(
+        let (mut env, mut comptime_env, mut stmts) = self.eval_stmts_in_scope(
             &mut type_reg.clone(),
             env,
             comptime_env,
@@ -448,6 +455,7 @@ impl<'db> Evaluator<'db> {
             &mut scope,
         );
         scope.restore(&mut env, &mut comptime_env);
+        self.prune_unused_declarations(&mut stmts);
         self.capture_types = saved_types;
         (env, comptime_env, stmts)
     }
@@ -512,6 +520,7 @@ impl<'db> Evaluator<'db> {
             ret_comptime,
             &mut scope,
         );
+        self.prune_unused_declarations(&mut body);
         // Known dictionaries and method lists can contain function values that
         // have no runtime representation. Residualize a binding only when its
         // variable survives substitution (including assignment/assembly uses).
@@ -577,12 +586,6 @@ impl<'db> Evaluator<'db> {
             }
         }
         bindings
-    }
-
-    fn can_discard_if_arms(&self, arms: &[MonoArm<'db>], selected: usize) -> bool {
-        arms.iter()
-            .enumerate()
-            .all(|(index, arm)| index == selected || !self.stmts_introduce_bindings(&arm.body))
     }
 
     /// Preserve the bindings hidden by declarations before masking those
@@ -786,18 +789,11 @@ impl<'db> Evaluator<'db> {
                 let mut env = env;
                 let mut comptime_env = comptime_env;
                 self.invalidate_assigned_effects(&cond_effects, &mut env, &mut comptime_env);
-                if let Some(value) = known_bool(self.db, &cond)
-                    && !self.stmts_introduce_bindings(if value {
-                        else_body.as_deref().unwrap_or_default()
-                    } else {
-                        &then_body
-                    })
-                {
-                    let selected = if value {
-                        then_body
-                    } else {
-                        else_body.unwrap_or_default()
-                    };
+                if let Some(value) = known_bool(self.db, &cond) {
+                    let selected = self.select_source_branch(
+                        [then_body, else_body.unwrap_or_default()],
+                        usize::from(!value),
+                    );
                     return self.eval_stmts_in_scope(
                         type_reg,
                         env,
@@ -1162,18 +1158,17 @@ impl<'db> Evaluator<'db> {
             let matched = match_arms_with(&env, &scrutinees, &arms, |expr| {
                 self.expr_is_known_value(expr)
             });
-            if let Some(matched) = matched.filter(|matched| {
-                !self.if_stmt_spans.contains(&span)
-                    || self.can_discard_if_arms(&arms, matched.index)
-            }) {
+            if let Some(matched) = matched {
                 // Source `if` is desugared to a match, but does not
                 // introduce an arm scope in the source language.
                 if self.if_stmt_spans.contains(&span) {
+                    let body = self
+                        .select_source_branch(arms.into_iter().map(|arm| arm.body), matched.index);
                     return self.eval_stmts_in_scope(
                         type_reg,
                         matched.env,
                         comptime_env,
-                        matched.body,
+                        body,
                         ret_comptime,
                         scope,
                     );
@@ -1569,6 +1564,16 @@ impl<'db> Evaluator<'db> {
                 kind: expr.kind,
             },
             MonoExprKind::Lambda { name, params, body } => {
+                // Keep the identity of unavailable captures before substitution.
+                // Caller values can use the same source name as a callee local.
+                let unavailable_uses = self
+                    .closure_capture_uses(&params, &body)
+                    .into_iter()
+                    .filter(|id| {
+                        env.get(&id.name)
+                            .is_some_and(|value| self.value_is_unavailable(value))
+                    })
+                    .collect::<FxHashSet<_>>();
                 let type_reg = build_type_reg(&params, &[]);
                 let ret_comptime = lambda_ret_is_comptime(self.db, ty.ty());
                 let mut env = env.clone();
@@ -1579,6 +1584,14 @@ impl<'db> Evaluator<'db> {
                 }
                 let (_, _, body) =
                     self.eval_stmts(&type_reg, env, comptime_env, body, ret_comptime);
+                // Evaluate first: dead branches can remove an unavailable
+                // capture. Surviving reads, assignment targets, and assembly
+                // references still require the erased local's runtime binding.
+                if self.closure_capture_uses(&params, &body).iter().any(|id| {
+                    self.unavailable_values.contains(&id.name) || unavailable_uses.contains(id)
+                }) {
+                    return self.unavailable_value(ty, span);
+                }
                 MonoExpr {
                     span,
                     ty,
@@ -2918,7 +2931,7 @@ impl<'db> Evaluator<'db> {
                     {
                         env.insert(id.name.clone(), expr);
                     } else {
-                        env.remove(&id.name);
+                        env.insert(id.name.clone(), self.unavailable_value(id.ty, id.span));
                     }
                     if comptime || init_is_comptime {
                         comptime_env.insert(id.name);
@@ -2944,11 +2957,11 @@ impl<'db> Evaluator<'db> {
                                     comptime_env.remove(&id.name);
                                 }
                             } else {
-                                env.remove(&id.name);
+                                env.insert(id.name.clone(), self.unavailable_value(id.ty, id.span));
                                 comptime_env.remove(&id.name);
                             }
                         } else {
-                            env.remove(&id.name);
+                            env.insert(id.name.clone(), self.unavailable_value(id.ty, id.span));
                             if rhs_is_comptime && matches!(&lhs.kind, MonoExprKind::Var(_)) {
                                 comptime_env.insert(id.name);
                             } else {
@@ -2962,7 +2975,10 @@ impl<'db> Evaluator<'db> {
                     else {
                         return FoldOutcome::ReturnedUnknownAbort;
                     };
-                    return if self.expr_is_known_value(&expr) || self.value_contains_callable(&expr)
+                    // A folded function erases its local declarations. Only
+                    // caller values and available locals may escape with it.
+                    return if !self.value_is_unavailable(&expr)
+                        && (self.expr_is_known_value(&expr) || self.value_contains_callable(&expr))
                     {
                         FoldOutcome::ReturnedKnown(expr)
                     } else {
@@ -2988,21 +3004,16 @@ impl<'db> Evaluator<'db> {
                             self.expr_is_known_value(expr)
                         });
                         if let Some(matched) = matched {
-                            if self.if_stmt_spans.contains(&stmt.span)
-                                && !self.can_discard_if_arms(&arms, matched.index)
-                            {
-                                // An unexecuted declaration still contributes
-                                // a binding. Keep this control flow for backend
-                                // declaration hoisting instead of interpreting
-                                // only the selected arm.
-                                return FoldOutcome::ReturnedUnknownAbort;
-                            }
                             let result = if self.if_stmt_spans.contains(&stmt.span) {
+                                let body = self.select_source_branch(
+                                    arms.into_iter().map(|arm| arm.body),
+                                    matched.index,
+                                );
                                 self.eval_fun_body_in_scope(
                                     type_reg,
                                     matched.env,
                                     comptime_env.clone(),
-                                    matched.body,
+                                    body,
                                     scope,
                                 )
                             } else {
@@ -3064,18 +3075,10 @@ impl<'db> Evaluator<'db> {
                     let Some(cond) = known_bool(self.db, &cond) else {
                         return FoldOutcome::ReturnedUnknownAbort;
                     };
-                    if self.stmts_introduce_bindings(if cond {
-                        else_body.as_deref().unwrap_or_default()
-                    } else {
-                        &then_body
-                    }) {
-                        return FoldOutcome::ReturnedUnknownAbort;
-                    }
-                    let body = if cond {
-                        then_body
-                    } else {
-                        else_body.unwrap_or_default()
-                    };
+                    let body = self.select_source_branch(
+                        [then_body, else_body.unwrap_or_default()],
+                        usize::from(!cond),
+                    );
                     match self.eval_fun_body_in_scope(
                         type_reg,
                         env.clone(),

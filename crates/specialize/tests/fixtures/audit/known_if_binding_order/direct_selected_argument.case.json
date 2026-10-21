@@ -1,0 +1,14 @@
+{
+  "source": "direct_selected_argument.sol",
+  "loader": "fixture",
+  "frontend_clean": true,
+  "checks": [
+    {
+      "check": "no_closure_dispatch"
+    },
+    {
+      "check": "main_return_number",
+      "value": "7"
+    }
+  ]
+}
