@@ -12,7 +12,6 @@ use smallvec::{SmallVec, smallvec};
 use sonatina_ir::{
     BlockId, EmbedSymbol, I256, Immediate, Linkage, Module, Signature, Type, ValueId,
     builder::{FunctionBuilder, ModuleBuilder, ObjectBuilder, Variable},
-    cfg::ControlFlowGraph,
     func_cursor::InstInserter,
     inst::{
         arith::{Add, Mul, Sar, Shl, Shr, Sub},
@@ -47,6 +46,10 @@ use sonatina_triple::{Architecture, EvmVersion, OperatingSystem, TargetTriple, V
 use sonatina_verifier::{VerificationLevel, VerifierConfig, verify_module};
 
 use crate::TranslationError;
+
+mod reachability;
+
+use reachability::Reachability;
 
 pub(super) fn translate_hull_program<'db>(
     db: &'db dyn HirDb,
@@ -568,6 +571,7 @@ struct FunctionLowerer<'a, 'db> {
     module: &'a mut Translator<'db>,
     scope: String,
     fb: FunctionBuilder<InstInserter>,
+    reachability: Reachability,
     scopes: Vec<HashMap<String, Binding<'db>>>,
     ret: HullTy<'db>,
     break_targets: Vec<BlockId>,
@@ -590,6 +594,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             module,
             scope: scope.to_owned(),
             fb,
+            reachability: Reachability::new(entry),
             scopes: vec![HashMap::new()],
             ret,
             break_targets: Vec::new(),
@@ -795,8 +800,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     .last()
                     .copied()
                     .ok_or_else(|| TranslationError::new("break outside loop"))?;
-                self.fb
-                    .insert_inst_no_result(Jump::new(self.module.inst_set(), target));
+                self.emit_jump(target);
                 Ok(true)
             }
             StmtKind::Continue => {
@@ -805,8 +809,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     .last()
                     .copied()
                     .ok_or_else(|| TranslationError::new("continue outside loop"))?;
-                self.fb
-                    .insert_inst_no_result(Jump::new(self.module.inst_set(), target));
+                self.emit_jump(target);
                 Ok(true)
             }
             StmtKind::Match {
@@ -995,26 +998,46 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let else_block = self.fb.append_block();
         let done = self.fb.append_block();
         let cond = self.lower_condition(cond)?;
+        self.emit_branch(cond, then_block, else_block);
+        self.fb.switch_to_block(then_block);
+        let then_value = self.lower_expr(then_expr)?;
+        let then_value = self.coerce(then_value, ty)?;
+        self.fb.def_var(result, then_value);
+        self.emit_jump(done);
+        self.fb.switch_to_block(else_block);
+        let else_value = self.lower_expr(else_expr)?;
+        let else_value = self.coerce(else_value, ty)?;
+        self.fb.def_var(result, else_value);
+        self.emit_jump(done);
+        self.fb.switch_to_block(done);
+        Ok(self.fb.use_var(result))
+    }
+
+    /// Record edges at their single emission point so continuation reachability
+    /// stays current without rescanning the function under construction.
+    fn emit_jump(&mut self, target: BlockId) {
+        let source = self
+            .fb
+            .current_block()
+            .expect("lowering has a current block");
+        self.reachability.add_edge(source, target);
+        self.fb
+            .insert_inst_no_result(Jump::new(self.module.inst_set(), target));
+    }
+
+    fn emit_branch(&mut self, cond: ValueId, then_block: BlockId, else_block: BlockId) {
+        let source = self
+            .fb
+            .current_block()
+            .expect("lowering has a current block");
+        self.reachability.add_edge(source, then_block);
+        self.reachability.add_edge(source, else_block);
         self.fb.insert_inst_no_result(Br::new(
             self.module.inst_set(),
             cond,
             then_block,
             else_block,
         ));
-        self.fb.switch_to_block(then_block);
-        let then_value = self.lower_expr(then_expr)?;
-        let then_value = self.coerce(then_value, ty)?;
-        self.fb.def_var(result, then_value);
-        self.fb
-            .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
-        self.fb.switch_to_block(else_block);
-        let else_value = self.lower_expr(else_expr)?;
-        let else_value = self.coerce(else_value, ty)?;
-        self.fb.def_var(result, else_value);
-        self.fb
-            .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
-        self.fb.switch_to_block(done);
-        Ok(self.fb.use_var(result))
     }
 
     /// Enter a continuation only when a path from the function entry reaches
@@ -1022,9 +1045,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
     /// block with predecessors can itself be unreachable. Neither syntactic
     /// fallthrough nor predecessor count alone describes that distinction.
     fn switch_to_reachable_block(&mut self, block: BlockId) -> bool {
-        let mut cfg = ControlFlowGraph::new();
-        cfg.compute(&self.fb.func);
-        let reachable = cfg.reachable_blocks()[block];
+        let reachable = self.reachability.contains(block);
         self.fb.switch_to_block(block);
         if !reachable {
             // Keep the allocated block well formed without constructing SSA
@@ -1051,12 +1072,10 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let body_block = self.fb.append_block();
         let post_block = self.fb.append_block();
         let done = self.fb.append_block();
-        self.fb
-            .insert_inst_no_result(Jump::new(self.module.inst_set(), header));
+        self.emit_jump(header);
         self.fb.switch_to_block(header);
         let cond = self.lower_condition(cond)?;
-        self.fb
-            .insert_inst_no_result(Br::new(self.module.inst_set(), cond, body_block, done));
+        self.emit_branch(cond, body_block, done);
         self.fb.switch_to_block(body_block);
         self.break_targets.push(done);
         self.continue_targets.push(post_block);
@@ -1064,12 +1083,10 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         self.continue_targets.pop();
         self.break_targets.pop();
         if !body_terminated {
-            self.fb
-                .insert_inst_no_result(Jump::new(self.module.inst_set(), post_block));
+            self.emit_jump(post_block);
         }
         if self.switch_to_reachable_block(post_block) && !self.lower_stmts(post)? {
-            self.fb
-                .insert_inst_no_result(Jump::new(self.module.inst_set(), header));
+            self.emit_jump(header);
         }
         self.fb.switch_to_block(done);
         self.pop_scope();
@@ -1084,7 +1101,6 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
     ) -> Result<bool, TranslationError> {
         let value = self.lower_expr(scrutinee)?;
         let done = self.fb.append_block();
-        let mut has_fallthrough = false;
         let mut exhaustive = false;
         for alt in alts {
             let arm = self.fb.append_block();
@@ -1092,19 +1108,13 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             let next = (!catch_all).then(|| self.fb.append_block());
             if catch_all {
                 exhaustive = true;
-                self.fb
-                    .insert_inst_no_result(Jump::new(self.module.inst_set(), arm));
+                self.emit_jump(arm);
             } else {
                 match &alt.pat.kind {
                     PatKind::Wildcard | PatKind::Var(_) => unreachable!(),
                     pat => {
                         let cond = self.pattern_condition(value, target, pat)?;
-                        self.fb.insert_inst_no_result(Br::new(
-                            self.module.inst_set(),
-                            cond,
-                            arm,
-                            next.expect("non-catch-all has a next block"),
-                        ));
+                        self.emit_branch(cond, arm, next.expect("non-catch-all has a next block"));
                     }
                 }
             }
@@ -1118,9 +1128,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             let terminated = self.lower_stmts(&alt.body)?;
             self.pop_scope();
             if !terminated {
-                has_fallthrough = true;
-                self.fb
-                    .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
+                self.emit_jump(done);
             }
             if let Some(next) = next {
                 self.fb.switch_to_block(next);
@@ -1129,18 +1137,9 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             }
         }
         if !exhaustive {
-            has_fallthrough = true;
-            self.fb
-                .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
+            self.emit_jump(done);
         }
-        self.fb.switch_to_block(done);
-        if has_fallthrough {
-            Ok(false)
-        } else {
-            self.fb
-                .insert_inst_no_result(Unreachable::new_unchecked(self.module.inst_set()));
-            Ok(true)
-        }
+        Ok(!self.switch_to_reachable_block(done))
     }
 
     fn pattern_condition(
@@ -1257,19 +1256,16 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let not_right = self.fb.append_block();
         let done = self.fb.append_block();
         let is_right = self.is_variant(value, target, 1)?;
-        self.fb
-            .insert_inst_no_result(Br::new(self.module.inst_set(), is_right, right, not_right));
+        self.emit_branch(is_right, right, not_right);
         self.fb.switch_to_block(right);
         let (rhs, nested) = self.extract_variant(value, target, 1)?;
         let nested_cond = self.in_k_condition(nested, &rhs, index - 1)?;
         self.fb.def_var(result, nested_cond);
-        self.fb
-            .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
+        self.emit_jump(done);
         self.fb.switch_to_block(not_right);
         let false_value = self.fb.make_imm_value(false);
         self.fb.def_var(result, false_value);
-        self.fb
-            .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
+        self.emit_jump(done);
         self.fb.switch_to_block(done);
         Ok(self.fb.use_var(result))
     }
@@ -1658,17 +1654,11 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                 let done = self.fb.append_block();
                 let cond = self.lower_yul_expr(cond)?;
                 let cond = self.condition_value(cond)?;
-                self.fb.insert_inst_no_result(Br::new(
-                    self.module.inst_set(),
-                    cond,
-                    body_block,
-                    done,
-                ));
+                self.emit_branch(cond, body_block, done);
                 self.fb.switch_to_block(body_block);
                 let terminated = self.lower_yul_stmts(body)?;
                 if !terminated {
-                    self.fb
-                        .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
+                    self.emit_jump(done);
                 }
                 self.fb.switch_to_block(done);
                 Ok(false)
@@ -1693,17 +1683,11 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                 let body_block = self.fb.append_block();
                 let post_block = self.fb.append_block();
                 let done = self.fb.append_block();
-                self.fb
-                    .insert_inst_no_result(Jump::new(self.module.inst_set(), header));
+                self.emit_jump(header);
                 self.fb.switch_to_block(header);
                 let cond = self.lower_yul_expr(cond)?;
                 let cond = self.condition_value(cond)?;
-                self.fb.insert_inst_no_result(Br::new(
-                    self.module.inst_set(),
-                    cond,
-                    body_block,
-                    done,
-                ));
+                self.emit_branch(cond, body_block, done);
                 self.fb.switch_to_block(body_block);
                 self.break_targets.push(done);
                 self.continue_targets.push(post_block);
@@ -1711,12 +1695,10 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                 self.continue_targets.pop();
                 self.break_targets.pop();
                 if !body_terminated {
-                    self.fb
-                        .insert_inst_no_result(Jump::new(self.module.inst_set(), post_block));
+                    self.emit_jump(post_block);
                 }
                 if self.switch_to_reachable_block(post_block) && !self.lower_yul_stmts(post)? {
-                    self.fb
-                        .insert_inst_no_result(Jump::new(self.module.inst_set(), header));
+                    self.emit_jump(header);
                 }
                 self.fb.switch_to_block(done);
                 self.yul_functions.pop();
@@ -1738,25 +1720,21 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                         Eq::new(self.module.inst_set(), scrutinee, expected),
                         Type::I1,
                     );
-                    self.fb
-                        .insert_inst_no_result(Br::new(self.module.inst_set(), cond, arm, next));
+                    self.emit_branch(cond, arm, next);
                     self.fb.switch_to_block(arm);
                     let terminated = self.lower_yul_stmts(&case.body)?;
                     if !terminated {
-                        self.fb
-                            .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
+                        self.emit_jump(done);
                     }
                     self.fb.switch_to_block(next);
                 }
                 if let Some(default) = default {
                     let terminated = self.lower_yul_stmts(default)?;
                     if !terminated {
-                        self.fb
-                            .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
+                        self.emit_jump(done);
                     }
                 } else {
-                    self.fb
-                        .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
+                    self.emit_jump(done);
                 }
                 Ok(!self.switch_to_reachable_block(done))
             }
@@ -1772,8 +1750,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     .last()
                     .copied()
                     .ok_or_else(|| TranslationError::new("inline Yul break outside loop"))?;
-                self.fb
-                    .insert_inst_no_result(Jump::new(self.module.inst_set(), target));
+                self.emit_jump(target);
                 Ok(true)
             }
             YulStmtKind::Continue => {
@@ -1782,8 +1759,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     .last()
                     .copied()
                     .ok_or_else(|| TranslationError::new("inline Yul continue outside loop"))?;
-                self.fb
-                    .insert_inst_no_result(Jump::new(self.module.inst_set(), target));
+                self.emit_jump(target);
                 Ok(true)
             }
             YulStmtKind::Error => Ok(false),
