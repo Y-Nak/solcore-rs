@@ -1417,6 +1417,39 @@ fn terminating_inline_yul_loop_bodies_do_not_lower_dead_post_uses() {
     }
 }
 
+#[test]
+fn dynamic_fixed_memory_ranges_preserve_upstream_diagnostics() {
+    // Upstream rejects runtime lengths at fixed addresses even when the source
+    // bounds them. The adapter must preserve that diagnostic without rewriting
+    // memory operations or silently claiming support for bounded ranges.
+    for length in ["calldatasize()", "and(calldatasize(), 31)"] {
+        let (module, _) = lower_source(&format!(
+            "function main() returns (word) {{
+                let result: word;
+                assembly {{
+                    let n := {length}
+                    mstore(0, 42)
+                    result := keccak256(0, n)
+                }}
+                return result;
+            }}"
+        ));
+        for level in [
+            sonatina_codegen::OptLevel::O0,
+            sonatina_codegen::OptLevel::O2,
+        ] {
+            let errors = sonatina_codegen::EvmCompile::new(module.clone_for_funcs(&module.funcs()))
+                .with_opt_level(level)
+                .compile()
+                .expect_err("upstream requires constant lengths for fixed-address ranges");
+            assert!(
+                format!("{errors:?}").contains("dynamic length"),
+                "{length}, {level:?}: {errors:?}"
+            );
+        }
+    }
+}
+
 fn lower_source(source: &str) -> (Module, String) {
     lower_source_inner(source, false)
 }
