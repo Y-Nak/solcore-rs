@@ -1609,10 +1609,17 @@ trait ABIEncode<self> {
     function encodeInto(x: self, basePtr: word, offset: word, tail: word) returns (word) /* newTail */ ;
 }
 
-// Raw words can also use an explicitly selected application codec.
-default impl ABIEncode<word> {
-    function encodeInto(x: word, basePtr: word, offset: word, tail: word) returns (word) {
-        mstore(basePtr + offset, x);
+// These internal primitives use their full word representation on the wire.
+// Other word-backed types need their own codec (bytes4, for example, is shifted).
+trait RawABIWord<t> {}
+impl RawABIWord<word> {}
+impl RawABIWord<byte> {}
+
+// The standard fallback leaves application codecs free to choose a different
+// representation for internal word and byte values.
+default impl<t> ABIEncode<t> where t: RawABIWord, t: Typedef<word> {
+    function encodeInto(x: t, basePtr: word, offset: word, tail: word) returns (word) {
+        mstore(basePtr + offset, Typedef.rep(x));
         return tail;
     }
 }
@@ -1797,10 +1804,10 @@ impl<ty, reader> WordReader<ABIDecoder<ty, reader>> where reader: WordReader {
     }
 }
 
-// Raw words retain all bits and use the same bounded reader as ABI value types.
-default impl<reader> ABIDecode<ABIDecoder<word, reader>, word> where reader: WordReader {
-    function decode(ptr: ABIDecoder<word, reader>, currentHeadOffset: word) returns (word) {
-        return WordReader.read(WordReader.advance(ptr, currentHeadOffset));
+// Raw primitives retain all bits and use the bounded ABI reader.
+default impl<t, reader> ABIDecode<ABIDecoder<t, reader>, t> where t: RawABIWord, t: Typedef<word>, reader: WordReader {
+    function decode(ptr: ABIDecoder<t, reader>, currentHeadOffset: word) returns (t) {
+        return Typedef.abs(WordReader.read(WordReader.advance(ptr, currentHeadOffset)));
     }
 }
 
