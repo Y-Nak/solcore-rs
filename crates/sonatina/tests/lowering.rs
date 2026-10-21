@@ -383,57 +383,6 @@ fn lowers_direct_nary_injections_matches_and_terminal_builtins() {
 }
 
 #[test]
-fn object_less_entry_uses_declared_identity_instead_of_main_name_prefix() {
-    let (module, ir) = lower_source(
-        r#"
-function main_a() returns (word) {
-  let x: word;
-  assembly { x := calldatasize() }
-  return x;
-}
-function main() returns (word) { return primAddWord(main_a(), 42); }
-"#,
-    );
-    let entry = ir
-        .split("func public %solcore_entry_12_root_2eruntime")
-        .nth(1)
-        .expect("object-less entry");
-    assert!(entry.contains("main_5fmain_5fd"), "{ir}");
-    assert!(!entry.contains("main_5fmain_5fa_5fd"), "{ir}");
-
-    if solcore_test_utils::e2e::e2e_enabled() {
-        use solcore_test_utils::e2e::{encode_hex, parse_e2e_scenario, with_evm_harness};
-        use sonatina_codegen::{EvmCompile, OptLevel};
-
-        let artifacts = EvmCompile::new(module)
-            .with_opt_level(OptLevel::O2)
-            .compile()
-            .expect("compile object-less entry");
-        let creation = artifacts[0]
-            .sections
-            .iter()
-            .find(|(name, _)| name.0.as_str() == "init")
-            .expect("entry init section");
-        let vector = parse_e2e_scenario(
-            "OutputDeploy",
-            [
-                r#"#[scenario("entry_identity")]"#,
-                "#[deploy(0x) -> success(0x000000000000000000000000000000000000000000000000000000000000002a)]",
-            ],
-        )
-        .expect("valid entry execution scenario")
-        .expect("entry execution scenario");
-        with_evm_harness(|harness| {
-            if let Some(harness) = harness {
-                harness.execute_raw_vector(&encode_hex(&creation.1.bytes), &vector)?;
-            }
-            Ok(())
-        })
-        .expect("declared entry returns 42");
-    }
-}
-
-#[test]
 fn missing_or_ambiguous_declared_entry_is_rejected() {
     let db = TestDb::default();
     let span = test_span(&db);
@@ -529,30 +478,6 @@ fn runtime_return_wrapper_uses_an_explicit_checked_entry() {
 }
 
 #[test]
-fn inline_yul_string_length_is_checked_after_decoding() {
-    let (_, ir) = lower_source(&format!(
-        r#"function main() returns (word) {{
-            let x: word;
-            assembly {{ x := "{}" }}
-            return x;
-        }}"#,
-        r"\n".repeat(32),
-    ));
-    let expected = sonatina_ir::I256::from_be_bytes(&[b'\n'; 32]).to_string();
-    assert!(ir.contains(&expected), "{ir}");
-}
-
-#[test]
-fn folded_strings_preserve_carriage_returns() {
-    for (value, length) in [("a\rb", 4), ("line one\r\nline two", 19)] {
-        let (_, ir) = lower_source_with_file_url_imports(&format!(
-            "import * from std; function main() returns (word) {{ return strlenLit(concatLit(\"{value}\", \"!\")); }}"
-        ));
-        assert!(ir.contains(&format!("return {length}.i256")), "{ir}");
-    }
-}
-
-#[test]
 fn source_main_lowers_through_hull_to_verified_ir() {
     let (_, ir) = lower_source(
         r#"
@@ -613,41 +538,6 @@ case Choice.Right(x) { return x; }}
     assert!(ir.contains("enum.extract"), "{ir}");
     assert!(ir.contains(" br ") || ir.contains("\n        br "), "{ir}");
     insta::assert_snapshot!("source_aggregate_ir", ir);
-}
-
-#[test]
-fn contract_object_data_symbols_and_inline_evm_lower_to_verified_ir() {
-    use sonatina_codegen::{EvmCompile, OptLevel};
-
-    let (module, ir) = lower_source(
-        r#"
-contract MemoryContract {
-  function main() returns (word) {
-    let result : word;
-    assembly {
-      mstore(0, 42)
-      result := mload(0)
-    }
-    return result;
-  }
-}
-"#,
-    );
-
-    assert!(ir.contains("object @MemoryContractDeploy"), "{ir}");
-    assert!(ir.contains("embed .runtime as &MemoryContract"), "{ir}");
-    // Hull deployment's dataoffset/datasize become Sonatina embed-symbol ops.
-    assert!(ir.contains("sym_addr &MemoryContract"), "{ir}");
-    assert!(ir.contains("sym_size &MemoryContract"), "{ir}");
-    assert!(ir.contains("evm_mstore "), "{ir}");
-    assert!(ir.contains("evm_mload "), "{ir}");
-
-    // Deployment copies and returns one dynamic runtime payload. Check the
-    // backend's memory validation even when the EVM execution suite is disabled.
-    EvmCompile::new(module)
-        .with_opt_level(OptLevel::O0)
-        .compile()
-        .expect("compile generated runtime deployment");
 }
 
 #[test]
@@ -1394,62 +1284,6 @@ fn yul_function<'db>(
     }
 }
 
-#[test]
-fn loop_posts_and_switch_merges_require_reachable_control_flow() {
-    let (module, _) = lower_source_with_file_url_imports(include_str!(
-        "../../../tests/e2e/loop-post-reachability/main.sol"
-    ));
-    sonatina_codegen::EvmCompile::new(module)
-        .with_opt_level(sonatina_codegen::OptLevel::O0)
-        .compile()
-        .expect("compile loops with reachable and unreachable post blocks");
-}
-
-#[test]
-fn terminating_inline_yul_loop_bodies_do_not_lower_dead_post_uses() {
-    for terminator in ["return(0, 0)", "revert(0, 0)", "stop()", "invalid()"] {
-        lower_source(&format!(
-            "function main() returns (word) {{
-                assembly {{ for {{ let i := 0 }} lt(i, calldatasize()) {{ i := add(i, 1) }} {{ {terminator} }} }}
-                return 0;
-            }}"
-        ));
-    }
-}
-
-#[test]
-fn dynamic_fixed_memory_ranges_preserve_upstream_diagnostics() {
-    // Upstream rejects runtime lengths at fixed addresses even when the source
-    // bounds them. The adapter must preserve that diagnostic without rewriting
-    // memory operations or silently claiming support for bounded ranges.
-    for length in ["calldatasize()", "and(calldatasize(), 31)"] {
-        let (module, _) = lower_source(&format!(
-            "function main() returns (word) {{
-                let result: word;
-                assembly {{
-                    let n := {length}
-                    mstore(0, 42)
-                    result := keccak256(0, n)
-                }}
-                return result;
-            }}"
-        ));
-        for level in [
-            sonatina_codegen::OptLevel::O0,
-            sonatina_codegen::OptLevel::O2,
-        ] {
-            let errors = sonatina_codegen::EvmCompile::new(module.clone_for_funcs(&module.funcs()))
-                .with_opt_level(level)
-                .compile()
-                .expect_err("upstream requires constant lengths for fixed-address ranges");
-            assert!(
-                format!("{errors:?}").contains("dynamic length"),
-                "{length}, {level:?}: {errors:?}"
-            );
-        }
-    }
-}
-
 fn lower_source(source: &str) -> (Module, String) {
     lower_source_inner(source, false)
 }
@@ -1516,3 +1350,6 @@ fn assert_verified(module: &Module) {
         "Sonatina verification failed:\n{report}"
     );
 }
+
+#[path = "source_regressions/mod.rs"]
+mod source_regressions;

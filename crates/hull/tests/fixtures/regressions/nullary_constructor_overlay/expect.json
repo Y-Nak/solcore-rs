@@ -1,0 +1,20 @@
+{
+  "checks": {
+    "regions": [
+      {
+        "before": "object \"C\" {",
+        "checks": {
+          "contains": [
+            "_start",
+            "init_",
+            "codecopy(0, dataoffset(\"C\"), size)"
+          ],
+          "not_contains": [
+            "constructor_arg"
+          ]
+        }
+      }
+    ]
+  },
+  "loader": "memory"
+}

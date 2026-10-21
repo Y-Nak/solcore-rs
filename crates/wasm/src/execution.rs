@@ -369,28 +369,25 @@ function main() returns (word) {
         assert_eq!(result.return_word.as_deref(), Some("42"));
     }
 
-    #[test]
-    fn contract_runtime_entry_is_independent_of_helper_names_and_order() {
-        let result = run_source(
-            r#"
-import * from std;
-import * from std.dispatch;
-contract Answer {
-    function a_main_helper() returns (word) {
-        let value: word;
-        assembly { value := calldatasize() }
-        return value;
-    }
-    function main() public returns (uint256) {
-        let value = a_main_helper();
-        assembly { value := add(value, 42) }
-        return uint256(value);
-    }
-}
-"#,
-        );
+    #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/execution", glob: "**/expect.json")]
+    fn source_execution(fixture: dir_test::Fixture<&str>) {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Expected {
+            return_word: String,
+        }
+        let expected: Expected =
+            serde_json::from_str(fixture.content()).expect("execution expectations");
+        let source = std::fs::read_to_string(
+            std::path::Path::new(fixture.path()).with_file_name("main.sol"),
+        )
+        .expect("execution source");
+        let result = run_source(&source);
         assert_eq!(result.status, RunStatus::Success, "{result:?}");
-        assert_eq!(result.return_word.as_deref(), Some("42"));
+        assert_eq!(
+            result.return_word.as_deref(),
+            Some(expected.return_word.as_str())
+        );
     }
 
     #[test]

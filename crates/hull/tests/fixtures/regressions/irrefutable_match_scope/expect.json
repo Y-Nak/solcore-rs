@@ -1,0 +1,15 @@
+{
+  "functions": {
+    "_main_": {
+      "in_order": [
+        "\n  {\n",
+        "let y",
+        "let x",
+        "mstore(128, x)",
+        "\n  }\n",
+        "return x"
+      ]
+    }
+  },
+  "loader": "memory"
+}

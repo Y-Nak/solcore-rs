@@ -749,31 +749,6 @@ fn top_level_no_object_hull_wraps_like_assemble_hs_snapshot() {
 }
 
 #[test]
-fn inline_yul_string_escapes_are_decoded_before_printing() {
-    let yul = render_source(
-        "assembly_string_escapes",
-        r#"function main() returns (word) {
-            let x: word;
-            assembly { x := "a\n\t\"\\b" }
-            return x;
-        }"#,
-    );
-    assert!(yul.contains(r#""a\n\t\"\\b""#), "{yul}");
-    assert!(!yul.contains(r#""a\\n"#), "{yul}");
-}
-
-#[test]
-fn folded_strings_preserve_carriage_returns() {
-    for (value, length) in [("a\rb", 4), ("line one\r\nline two", 19)] {
-        let source = format!(
-            "import * from std; function main() returns (word) {{ return strlenLit(concatLit(\"{value}\", \"!\")); }}"
-        );
-        let yul = render_source("folded_carriage_return", &source);
-        assert!(yul.contains(&format!(":= {length}")), "{yul}");
-    }
-}
-
-#[test]
 fn object_less_source_calls_its_mangled_main_before_returning() {
     let yul = render_source(
         "object_less_main",
@@ -1437,3 +1412,6 @@ fn assert_solc_strict_assembly(solc: &Path, label: &str, yul: &str) {
         yul
     );
 }
+
+#[path = "source_regressions/mod.rs"]
+mod source_regressions;

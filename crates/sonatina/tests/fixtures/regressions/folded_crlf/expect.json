@@ -1,0 +1,8 @@
+{
+  "checks": {
+    "contains": [
+      "return 19.i256"
+    ]
+  },
+  "file_url_imports": true
+}

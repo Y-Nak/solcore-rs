@@ -1,0 +1,10 @@
+{
+  "checks": {
+    "contains": [
+      "\"a\\n\\t\\\"\\\\b\""
+    ],
+    "not_contains": [
+      "\"a\\\\n"
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+enum Box<a> {
+    Box(a)
+}
+enum Nest<a, b> {
+    Nil,
+    Next(a, Nest<comptime<word>, b>)
+}
+function main(x: Nest<word, bool>) returns (word) {
+    return 0;
+}

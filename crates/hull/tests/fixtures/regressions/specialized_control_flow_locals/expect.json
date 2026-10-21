@@ -1,0 +1,7 @@
+{
+  "checks": {
+    "min_count": {
+      "let $if_local": 2
+    }
+  }
+}

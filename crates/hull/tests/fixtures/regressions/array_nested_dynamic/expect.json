@@ -1,0 +1,11 @@
+{
+  "checks": {
+    "contains": [
+      "LValueIdxAccess_lookup",
+      "storeBytesFromMemory",
+      "loadBytesFromStorage",
+      "frombool",
+      "tobool"
+    ]
+  }
+}
