@@ -572,7 +572,7 @@ impl<'db> InferCtx<'db> {
             return None;
         }
         let sig = self.closure_sigs.get(&def)?.clone();
-        self.unify(pending.args[0].clone(), invokable_arg_infer(sig.params));
+        self.unify(invokable_arg_infer(sig.params), pending.args[0].clone());
         self.unify(pending.args[1].clone(), sig.ret);
         let pred = self.pending_obligation_pred(pending).pred;
         Some(Evidence::Derived {

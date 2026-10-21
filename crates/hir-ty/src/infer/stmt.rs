@@ -166,7 +166,7 @@ impl<'db> InferCtx<'db> {
                 // (bool, address, custom instances) is a type error here.
                 if !self.is_storage_index_word_numeric(lhs_ty.clone()) {
                     let word = self.word();
-                    self.unify_expr(body, *lhs, lhs_ty.clone(), word);
+                    self.unify_expr(body, *lhs, word, lhs_ty.clone());
                 }
                 let rhs_ty = self.infer_expr_expected(body, *rhs, Some(lhs_ty.clone()));
                 self.unify_expr(body, *rhs, lhs_ty, rhs_ty);
@@ -201,8 +201,8 @@ impl<'db> InferCtx<'db> {
                 let lhs_ty = self.infer_expr(body, *lhs);
                 let rhs_ty = self.infer_expr(body, *rhs);
                 let word = self.word();
-                self.unify_expr(body, *lhs, lhs_ty, word.clone());
-                self.unify_expr(body, *rhs, rhs_ty, word);
+                self.unify_expr(body, *lhs, word.clone(), lhs_ty);
+                self.unify_expr(body, *rhs, word, rhs_ty);
                 self.unit()
             }
             StmtKind::Match { scrutinees, arms } => {

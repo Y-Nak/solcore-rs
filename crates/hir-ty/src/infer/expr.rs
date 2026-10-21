@@ -99,15 +99,19 @@ impl<'db> InferCtx<'db> {
                     } else {
                         let index_ty = self.infer_expr(body, *index);
                         let ret = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
+                        let param = self.engine.fresh_var();
+                        let actual_ret = self.engine.fresh_var();
                         self.unify_expr(
                             body,
-                            expr_id,
-                            base_ty,
+                            *base,
                             InferTy::Function {
-                                params: vec![index_ty],
-                                ret: Box::new(ret.clone()),
+                                params: vec![param.clone()],
+                                ret: Box::new(actual_ret.clone()),
                             },
+                            base_ty,
                         );
+                        self.unify_expr(body, *index, param, index_ty);
+                        self.unify_expr(body, expr_id, ret.clone(), actual_ret);
                         ret
                     }
                 }
@@ -265,7 +269,7 @@ impl<'db> InferCtx<'db> {
             .as_ref()?
             .iter()
             .position(|name| (*name.atom()).text(self.db) == field)?;
-        self.unify_expr(body, base, loaded_receiver, receiver.clone());
+        self.unify_expr(body, base, receiver.clone(), loaded_receiver);
         let scheme = self.lookup_adt_ctor_scheme(*def, hir_nameres::CtorIndex::from_usize(0))?;
         let instantiated = self.engine.instantiate_scheme(scheme);
         let InferTy::Function { params, ret } = self.accept_instantiated(instantiated) else {
@@ -659,14 +663,16 @@ impl<'db> InferCtx<'db> {
             })
             .collect::<Vec<_>>();
         let ret = expected.unwrap_or_else(|| self.engine.fresh_var());
+        // Arguments were checked against the parameters above. The surrounding
+        // expression supplies the expected return type for this check.
         self.unify_expr(
             body,
             site.call_expr,
-            callee_ty,
             InferTy::Function {
                 params: inferred_args,
                 ret: Box::new(ret.clone()),
             },
+            callee_ty,
         );
         if let Some(params) = &params {
             for (index, (param, arg)) in params.iter().zip(args).enumerate() {
@@ -758,7 +764,7 @@ impl<'db> InferCtx<'db> {
             .collect::<Vec<_>>();
         let ret = expected.unwrap_or_else(|| self.engine.fresh_var());
         if let Some(sig) = callable_sig {
-            self.unify_expr(body, call_expr, sig.ret, ret.clone());
+            self.unify_expr(body, call_expr, ret.clone(), sig.ret);
         }
         let source =
             self.indirect_call_site_source(body, call_expr, callee_expr, callee_ty.clone());
@@ -1230,16 +1236,9 @@ impl<'db> InferCtx<'db> {
                 );
                 (Some(params), Some(ret))
             }
-            InferTy::Error => (None, None),
-            other => {
-                let actual = self.display_infer_ty(other);
-                self.diagnostics.push(TypeckDiagnostic::Mismatch {
-                    span,
-                    expected: "function".to_owned(),
-                    actual,
-                });
-                (None, None)
-            }
+            // The enclosing expression/argument check reports a non-function
+            // expectation against the inferred lambda type.
+            _ => (None, None),
         }
     }
 
@@ -1402,11 +1401,11 @@ impl<'db> InferCtx<'db> {
                 self.unify_expr(
                     body,
                     expr,
-                    callee_ty.clone(),
                     InferTy::Function {
                         params,
                         ret: Box::new(expected_ty),
                     },
+                    callee_ty.clone(),
                 );
             }
         }
@@ -1571,11 +1570,11 @@ impl<'db> InferCtx<'db> {
                 self.unify_expr(
                     body,
                     expr,
-                    callee_ty.clone(),
                     InferTy::Function {
                         params,
                         ret: Box::new(expected_ty),
                     },
+                    callee_ty.clone(),
                 );
             }
         }

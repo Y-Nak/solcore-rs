@@ -1,0 +1,27 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/mismatch_direction_operators/main.sol
+---
+error[SC0201]: type mismatch: expected word, found bool
+  --> /main/main.sol:16:19
+   |
+15 | function binary_result(x: word) {
+16 |     let y: word = x + x;
+   |                   ^^^^^ expression has mismatched type
+17 | }
+   |
+   = note: expected type: word
+   = note: found type: bool
+---
+
+error[SC0201]: type mismatch: expected word, found bool
+  --> /main/main.sol:20:19
+   |
+19 | function unary_result(x: word) {
+20 |     let y: word = ~x;
+   |                   ^^ expression has mismatched type
+21 | }
+   |
+   = note: expected type: word
+   = note: found type: bool
