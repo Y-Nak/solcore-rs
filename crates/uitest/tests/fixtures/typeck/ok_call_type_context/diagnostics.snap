@@ -1,6 +1,6 @@
 ---
 source: crates/test-utils/src/lib.rs
 expression: rendered
-input_file: crates/uitest/tests/fixtures/typeck/ok_index_type_context/main.sol
+input_file: crates/uitest/tests/fixtures/typeck/ok_call_type_context/main.sol
 ---
 no diagnostics

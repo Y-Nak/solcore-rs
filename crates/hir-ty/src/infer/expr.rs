@@ -97,22 +97,20 @@ impl<'db> InferCtx<'db> {
                     ) {
                         ret
                     } else {
-                        let index_ty = self.infer_expr(body, *index);
-                        let ret = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
-                        let param = self.engine.fresh_var();
-                        let actual_ret = self.engine.fresh_var();
-                        self.unify_expr(
-                            body,
-                            *base,
-                            InferTy::Function {
-                                params: vec![param.clone()],
-                                ret: Box::new(actual_ret.clone()),
-                            },
-                            base_ty,
-                        );
-                        self.unify_expr(body, *index, param, index_ty);
-                        self.unify_expr(body, expr_id, ret.clone(), actual_ret);
-                        ret
+                        self.infer_expr(body, *index);
+                        if !matches!(self.engine.resolve(base_ty.clone()), InferTy::Error) {
+                            let actual = self.display_infer_ty(base_ty);
+                            self.emit_expr_error(
+                                body,
+                                expr_id,
+                                TypeckDiagnostic::Mismatch {
+                                    span: self.expr_label_span(body, *base),
+                                    expected: "indexable collection".to_owned(),
+                                    actual,
+                                },
+                            );
+                        }
+                        InferTy::Error
                     }
                 }
             }

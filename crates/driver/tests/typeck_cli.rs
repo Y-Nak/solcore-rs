@@ -899,6 +899,45 @@ fn cli_abi_rejects_colliding_local_contract_filenames_before_writing() {
 }
 
 #[test]
+fn cli_rejects_function_indexing_before_codegen() {
+    let dir = temp_dir("function-indexing");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.sol");
+    fs::write(
+        &input,
+        r#"
+import * from std;
+contract C {
+  function apply(g: function(word) returns (word), x: word) returns (word) {
+    return g[x];
+  }
+  function main() public returns (word) {
+    return apply(lam (x: word) -> word { return x; }, 7);
+  }
+}
+"#,
+    )
+    .expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--emit-hull")
+        .arg("--color=never")
+        .arg("--output-dir")
+        .arg(&dir)
+        .arg(&input)
+        .output();
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+    let output = output.expect("run driver");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("error[SC0201]"), "{stderr}");
+    assert!(stderr.contains("expected indexable collection"), "{stderr}");
+    assert!(!stderr.contains("SC0422"), "{stderr}");
+    assert!(output.stdout.is_empty(), "unexpected Hull output");
+}
+
+#[test]
 fn cli_renders_backend_diagnostics_with_stable_codes() {
     let dir = temp_dir("backend-diagnostic");
     fs::create_dir_all(&dir).expect("create temp dir");
