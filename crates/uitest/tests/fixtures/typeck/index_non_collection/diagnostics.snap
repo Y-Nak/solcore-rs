@@ -1,0 +1,145 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/index_non_collection/main.sol
+---
+error[SC0201]: type mismatch: expected indexable collection, found function(word) returns (word)
+ --> /main/main.sol:4:12
+  |
+3 | function parameter(g: function(word) returns (word), x: word) returns (word) {
+4 |     return g[x];
+  |            ^ expression has mismatched type
+5 | }
+  |
+  = note: expected type: indexable collection
+  = note: found type: function(word) returns (word)
+---
+
+error[SC0201]: type mismatch: expected indexable collection, found function(word) returns (word)
+ --> /main/main.sol:8:12
+  |
+7 | function aliased(g: Callback, x: word) returns (word) {
+8 |     return g[x];
+  |            ^ expression has mismatched type
+9 | }
+  |
+  = note: expected type: indexable collection
+  = note: found type: function(word) returns (word)
+---
+
+error[SC0201]: type mismatch: expected indexable collection, found comptime<function(word) returns (word)>
+  --> /main/main.sol:12:12
+   |
+11 | function staged(comptime g: Callback, x: word) returns (word) {
+12 |     return g[x];
+   |            ^ expression has mismatched type
+13 | }
+   |
+   = note: expected type: indexable collection
+   = note: found type: comptime<function(word) returns (word)>
+---
+
+error[SC0201]: type mismatch: expected indexable collection, found function(a) returns (a)
+  --> /main/main.sol:16:12
+   |
+15 | function generic<a>(g: function(a) returns (a), x: a) returns (a) {
+16 |     return g[x];
+   |            ^ expression has mismatched type
+17 | }
+   |
+   = note: expected type: indexable collection
+   = note: found type: function(a) returns (a)
+---
+
+error[SC0201]: type mismatch: expected indexable collection, found function(word) returns (word)
+  --> /main/main.sol:22:12
+   |
+21 | function named(x: word) returns (word) {
+22 |     return identity[x];
+   |            ^^^^^^^^ expression has mismatched type
+23 | }
+   |
+   = note: expected type: indexable collection
+   = note: found type: function(word) returns (word)
+---
+
+error[SC0201]: type mismatch: expected indexable collection, found t_closure
+  --> /main/main.sol:27:12
+   |
+26 |     let g = lam (value: word) -> word { return value; };
+27 |     return g[x];
+   |            ^ expression has mismatched type
+28 | }
+   |
+   = note: expected type: indexable collection
+   = note: found type: t_closure
+---
+
+error[SC0201]: type mismatch: expected indexable collection, found t_closure
+  --> /main/main.sol:31:13
+   |
+30 | function immediate(x: word) returns (word) {
+31 |     return (lam (value: word) -> word { return value; })[x];
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expression has mismatched type
+32 | }
+   |
+   = note: expected type: indexable collection
+   = note: found type: t_closure
+---
+
+error[SC0201]: type mismatch: expected indexable collection, found word
+  --> /main/main.sol:35:19
+   |
+34 | function scalar(x: word) {
+35 |     let y: word = x[0];
+   |                   ^ expression has mismatched type
+36 | }
+   |
+   = note: expected type: indexable collection
+   = note: found type: word
+---
+
+error[SC0201]: type mismatch: expected indexable collection, found function(word) returns (word)
+  --> /main/main.sol:39:5
+   |
+38 | function assignment(g: Callback, x: word) {
+39 |     g[x] = x;
+   |     ^ expression has mismatched type
+40 | }
+   |
+   = note: expected type: indexable collection
+   = note: found type: function(word) returns (word)
+---
+
+error[SC0201]: type mismatch: expected indexable collection, found function(word) returns (word)
+  --> /main/main.sol:43:12
+   |
+42 | function nested(g: Callback, x: word) returns (word) {
+43 |     return g[x][x];
+   |            ^ expression has mismatched type
+44 | }
+   |
+   = note: expected type: indexable collection
+   = note: found type: function(word) returns (word)
+---
+
+error[SC0101]: undefined name: missing
+  --> /main/main.sol:47:12
+   |
+46 | function unknown_base(x: word) returns (word) {
+47 |     return missing[x];
+   |            ^^^^^^^ unknown name
+48 | }
+   |
+---
+
+error[SC0201]: type mismatch: expected indexable collection, found function(word) returns (word)
+  --> /main/main.sol:52:16
+   |
+51 |     function apply(g: Callback, x: word) returns (word) {
+52 |         return g[x];
+   |                ^ expression has mismatched type
+53 |     }
+   |
+   = note: expected type: indexable collection
+   = note: found type: function(word) returns (word)

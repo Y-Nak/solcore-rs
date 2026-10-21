@@ -106,14 +106,14 @@ impl<'db> InferCtx<'db> {
                         self.unify_pat(body, pat, numeric_expected, ty);
                         expected
                     } else {
-                        let actual = self.display_infer_ty(expected.clone());
+                        let expected = self.display_infer_ty(expected.clone());
                         self.emit_pat_error(
                             body,
                             pat,
                             TypeckDiagnostic::Mismatch {
                                 span: self.pat_label_span(body, pat),
-                                expected: "numeric".to_owned(),
-                                actual,
+                                expected,
+                                actual: "numeric".to_owned(),
                             },
                         );
                         InferTy::Error
@@ -519,13 +519,13 @@ impl<'db> InferCtx<'db> {
                 self.unify_expr(
                     body,
                     expr,
-                    ctor_ty.clone(),
                     InferTy::Function {
                         params: expected_params.clone(),
                         ret: Box::new(expected.clone()),
                     },
+                    ctor_ty.clone(),
                 );
-                self.unify_expr(body, expr, *ret, expected.clone());
+                self.unify_expr(body, expr, expected.clone(), *ret);
                 let expected_params = expected_params
                     .into_iter()
                     .map(|param| self.engine.resolve(param))
@@ -546,11 +546,11 @@ impl<'db> InferCtx<'db> {
                 self.unify_expr(
                     body,
                     expr,
-                    ctor_ty,
                     InferTy::Function {
                         params: inferred_args,
                         ret: Box::new(expected.clone()),
                     },
+                    ctor_ty,
                 );
                 expected
             }
@@ -563,7 +563,7 @@ impl<'db> InferCtx<'db> {
                     return InferTy::Error;
                 }
                 if args.is_empty() {
-                    if !self.unify_expr(body, expr, non_function.clone(), expected.clone()) {
+                    if !self.unify_expr(body, expr, expected.clone(), non_function.clone()) {
                         return InferTy::Error;
                     }
                 } else if !matches!(
@@ -862,14 +862,14 @@ impl<'db> InferCtx<'db> {
             match expected {
                 InferTy::Var(_) | InferTy::Unknown | InferTy::Error => None,
                 other => {
-                    let actual = self.display_infer_ty(other);
+                    let expected = self.display_infer_ty(other);
                     self.emit_pat_error(
                         body,
                         pat,
                         TypeckDiagnostic::Mismatch {
                             span: self.pat_label_span(body, pat),
-                            expected: "tuple".to_owned(),
-                            actual,
+                            expected,
+                            actual: "tuple".to_owned(),
                         },
                     );
                     None
@@ -1069,13 +1069,13 @@ impl<'db> InferCtx<'db> {
                 self.unify_pat(
                     body,
                     pat,
-                    ctor_ty.clone(),
                     InferTy::Function {
                         params: expected_params.clone(),
                         ret: Box::new(expected.clone()),
                     },
+                    ctor_ty.clone(),
                 );
-                self.unify_pat(body, pat, *ret, expected.clone());
+                self.unify_pat(body, pat, expected.clone(), *ret);
                 let expected_params = expected_params
                     .into_iter()
                     .map(|param| self.engine.resolve(param))
@@ -1090,11 +1090,11 @@ impl<'db> InferCtx<'db> {
                 self.unify_pat(
                     body,
                     pat,
-                    ctor_ty,
                     InferTy::Function {
                         params: inferred_args,
                         ret: Box::new(expected.clone()),
                     },
+                    ctor_ty,
                 );
                 expected
             }
@@ -1107,7 +1107,7 @@ impl<'db> InferCtx<'db> {
                     return InferTy::Error;
                 }
                 if args.is_empty() {
-                    if !self.unify_pat(body, pat, concrete.clone(), expected.clone()) {
+                    if !self.unify_pat(body, pat, expected.clone(), concrete.clone()) {
                         return InferTy::Error;
                     }
                 } else {

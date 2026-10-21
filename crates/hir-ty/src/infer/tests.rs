@@ -1734,7 +1734,7 @@ function annotatedCompound(xs: calldata<array<Encoded>>, i: uint256, value: Deco
 }
 
 #[test]
-fn same_named_non_std_calldata_array_keeps_generic_index_typing() {
+fn same_named_non_std_calldata_array_is_not_indexable() {
     let (db, key) = db_with_array_std(
         r#"
 import {RValueIdxAccess} from std;
@@ -1751,10 +1751,11 @@ function read(xs:calldata<array<word>>, i:word) returns (word) {
     let (_, result) = infer_module_function_with_solver(&db, module, "read");
 
     assert!(
-        result
-            .diagnostics
-            .iter()
-            .any(|diagnostic| matches!(diagnostic, TypeckDiagnostic::Mismatch { .. })),
+        result.diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic,
+            TypeckDiagnostic::Mismatch { expected, .. }
+                if expected == "indexable collection"
+        )),
         "{:?}",
         result.diagnostics
     );
