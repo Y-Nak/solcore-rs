@@ -3553,9 +3553,12 @@ name = "solcore-hir"
 version = "0.1.0"
 dependencies = [
  "annotate-snippets",
+ "dir-test",
  "percent-encoding",
  "rustc-hash",
  "salsa",
+ "serde",
+ "serde_json",
  "tracing",
  "url",
 ]
@@ -3571,6 +3574,8 @@ dependencies = [
  "proptest",
  "rustc-hash",
  "salsa",
+ "serde",
+ "serde_json",
  "solcore-hir",
  "solcore-nameres",
  "solcore-parser",
@@ -3584,8 +3589,11 @@ dependencies = [
 name = "solcore-hull"
 version = "0.1.0"
 dependencies = [
+ "dir-test",
  "rustc-hash",
  "salsa",
+ "serde",
+ "serde_json",
  "solcore-hir",
  "solcore-hir-ty",
  "solcore-nameres",
@@ -3599,6 +3607,7 @@ dependencies = [
 name = "solcore-lsp"
 version = "0.1.0"
 dependencies = [
+ "dir-test",
  "line-index",
  "lsp-types",
  "percent-encoding",
@@ -3640,6 +3649,8 @@ dependencies = [
  "logos",
  "proptest",
  "salsa",
+ "serde",
+ "serde_json",
  "solcore-hir",
  "tracing",
 ]
@@ -3651,6 +3662,8 @@ dependencies = [
  "dir-test",
  "insta",
  "salsa",
+ "serde",
+ "serde_json",
  "smallvec",
  "solcore-hir",
  "solcore-hir-ty",
@@ -3669,8 +3682,11 @@ dependencies = [
 name = "solcore-specialize"
 version = "0.1.0"
 dependencies = [
+ "dir-test",
  "rustc-hash",
  "salsa",
+ "serde",
+ "serde_json",
  "solcore-hir",
  "solcore-hir-ty",
  "solcore-nameres",
@@ -3688,10 +3704,12 @@ name = "solcore-test-utils"
 version = "0.1.0"
 dependencies = [
  "annotate-snippets",
+ "dir-test",
  "insta",
  "libc",
  "rustc-hash",
  "salsa",
+ "serde",
  "serde_json",
  "solcore-hir",
  "solcore-nameres",
@@ -3735,6 +3753,7 @@ name = "solcore-wasm"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
+ "dir-test",
  "getrandom 0.2.17",
  "js-sys",
  "revm",
@@ -3763,6 +3782,8 @@ dependencies = [
  "insta",
  "rustc-hash",
  "salsa",
+ "serde",
+ "serde_json",
  "solcore-hir",
  "solcore-hir-ty",
  "solcore-hull",

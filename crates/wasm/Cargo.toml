@@ -37,3 +37,6 @@ js-sys = "0.3"
 # for a final size pass run a modern `wasm-opt -Oz --enable-reference-types` (see playground/README).
 [package.metadata.wasm-pack.profile.custom]
 wasm-opt = false
+
+[dev-dependencies]
+dir-test = "0.4.1"

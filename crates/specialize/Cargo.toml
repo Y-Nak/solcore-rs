@@ -13,6 +13,9 @@ parser = { workspace = true }
 rustc-hash = { workspace = true }
 
 [dev-dependencies]
+dir-test = "0.4.1"
 salsa = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 solcore-test-utils = { path = "../test-utils" }
 url = { workspace = true }

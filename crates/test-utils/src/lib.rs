@@ -18,6 +18,7 @@ use rustc_hash::FxHashSet;
 use url::Url;
 
 pub mod e2e;
+pub mod text_checks;
 
 pub mod reexports {
     pub use hir;
