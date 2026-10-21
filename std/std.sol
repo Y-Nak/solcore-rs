@@ -1108,8 +1108,15 @@ function set_free_memory(loc: word) returns (()) {
 
 // Allocate memory and update the memory pointer.
 function allocate_memory(size: word) returns (word) {
-    let ptr = get_free_memory();
-    set_free_memory(ptr + size);
+    let ptr: word;
+    assembly {
+        ptr := mload(0x40)
+        let end := add(ptr, size)
+        if lt(end, ptr) {
+            revert(0, 0)
+        }
+        mstore(0x40, end)
+    }
     return ptr;
 }
 
