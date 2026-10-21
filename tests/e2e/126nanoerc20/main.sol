@@ -104,7 +104,7 @@ contract Uint {
     // #[(65) -> revert(0xabababababababababababababababababababababababababababababababab000000000000000000000000000000000000000000000000000000000000000000)]
     function failWithLength(length: uint256) public {
         myrevert((0xabababababababababababababababababababababababababababababababab,
-                            Typedef.rep(length)));
+                Typedef.rep(length)));
     }
 
     // Preserve the original helper's right-aligned word representation.

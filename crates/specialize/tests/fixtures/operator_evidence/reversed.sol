@@ -1,6 +1,6 @@
 import * from b;
 import * from a;
-function main() returns(word) {
-  return primAddWord(primAddWord(directB(),directA()),
-    primAddWord(primAddWord(genericB(),genericA()),primAddWord(explicitB(),explicitA())));
+function main() returns (word) {
+    return primAddWord(primAddWord(directB(), directA()),
+        primAddWord(primAddWord(genericB(), genericA()), primAddWord(explicitB(), explicitA())));
 }

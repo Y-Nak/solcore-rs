@@ -1,7 +1,9 @@
 import * from std;
 import * from std.dispatch;
 
-enum Pair { Pair(word, word) }
+enum Pair {
+    Pair(word, word)
+}
 
 contract FoldedMatchScope {
     // #[() -> 3]
@@ -9,7 +11,11 @@ contract FoldedMatchScope {
         let x: word = 1;
         let y: word = 2;
         let observed: word = 0;
-        match (x, y) { case (y, x) { observed = x; } }
+        match (x, y) {
+            case (y, x) {
+                observed = x;
+            }
+        }
         return uint256(primAddWord(x, observed));
     }
 
@@ -18,7 +24,14 @@ contract FoldedMatchScope {
         let value: word = Typedef.rep(value);
         let x: word = 7;
         let z: word = 0;
-        match (z) { case (_) { let x: word = value; assembly { x := add(x, 1) } } }
+        match (z) {
+            case (_) {
+                let x: word = value;
+                assembly {
+                    x := add(x, 1)
+                }
+            }
+        }
         return uint256(primAddWord(x, 1));
     }
 
@@ -31,11 +44,17 @@ contract FoldedMatchScope {
         match (x, y) {
             case (y, x) {
                 x = value;
-                assembly { y := add(x, 100) }
+                assembly {
+                    y := add(x, 100)
+                }
                 observed = y;
             }
         }
-        if (eqWord(x, 7)) { return uint256(observed); } else { return uint256(0); }
+        if (eqWord(x, 7)) {
+            return uint256(observed);
+        } else {
+            return uint256(0);
+        }
     }
 
     // #[(42) -> 49]
@@ -47,10 +66,19 @@ contract FoldedMatchScope {
             case (_) {
                 x = value;
                 let x: word = 7;
-                match ((x, z)) { case ((z, x)) { x = 100; } }
+                match ((x, z)) {
+                    case ((z, x)) {
+                        x = 100;
+                    }
+                }
             }
         }
-        { let x: word = 0; assembly { x := calldatasize() } }
+        {
+            let x: word = 0;
+            assembly {
+                x := calldatasize()
+            }
+        }
         return uint256(primAddWord(x, 7));
     }
 
@@ -61,7 +89,11 @@ contract FoldedMatchScope {
         let observed: word = 0;
         match (Pair(x, y)) {
             case (Pair(y, x)) {
-                match ((x, y)) { case ((y, x)) { observed = primAddWord(x, y); } }
+                match ((x, y)) {
+                    case ((y, x)) {
+                        observed = primAddWord(x, y);
+                    }
+                }
                 observed = primAddWord(observed, x);
             }
         }
@@ -72,7 +104,11 @@ contract FoldedMatchScope {
     function earlyReturn() public returns (uint256) {
         let x: word = 1;
         let y: word = 2;
-        match (x, y) { case (y, x) { return uint256(x); } }
+        match (x, y) {
+            case (y, x) {
+                return uint256(x);
+            }
+        }
         return uint256(x);
     }
 
@@ -82,7 +118,9 @@ contract FoldedMatchScope {
         for (let i = uint256(0); i < uint256(5); i = i + uint256(1)) {
             match (uint256(0)) {
                 case (_) {
-                    if (i == uint256(2)) { continue; } else {}
+                    if (i == uint256(2)) {
+                        continue;
+                    } else {}
                     sum = sum + i;
                 }
             }
@@ -96,7 +134,9 @@ contract FoldedMatchScope {
         for (let i = uint256(0); i < uint256(5); i = i + uint256(1)) {
             match (uint256(0)) {
                 case (_) {
-                    if (i == uint256(2)) { break; } else {}
+                    if (i == uint256(2)) {
+                        break;
+                    } else {}
                     sum = sum + i;
                 }
             }
@@ -107,8 +147,12 @@ contract FoldedMatchScope {
     // #[() -> 8]
     function differentlyTypedLocal() public returns (uint256) {
         let x: word = 7;
-        { let x: bool = true; }
-        assembly { x := add(x, 1) }
+        {
+            let x: bool = true;
+        }
+        assembly {
+            x := add(x, 1)
+        }
         return uint256(x);
     }
 
@@ -116,8 +160,12 @@ contract FoldedMatchScope {
     function differentlyTypedPattern() public returns (uint256) {
         let x: word = 7;
         let flag: bool = true;
-        match (flag) { case (x) { } }
-        assembly { x := add(x, 1) }
+        match (flag) {
+            case (x) {}
+        }
+        assembly {
+            x := add(x, 1)
+        }
         return uint256(x);
     }
 
@@ -125,7 +173,12 @@ contract FoldedMatchScope {
     // #[(false) -> 7]
     function conditionalDeclaration(flag: bool) public returns (uint256) {
         let x: word = 7;
-        { if (flag) { let x: word = 9; } else {} x = 100; }
+        {
+            if (flag) {
+                let x: word = 9;
+            } else {}
+            x = 100;
+        }
         return uint256(x);
     }
 
@@ -133,9 +186,17 @@ contract FoldedMatchScope {
     function closureBeforeTypedShadow(value: uint256) public returns (uint256) {
         let n: word = Typedef.rep(value);
         let observed: word = 0;
-        let get: function() returns (word) = lam () -> word { let v: word; assembly { v := n } return v; };
+        let get: function () returns (word) = lam () -> word {
+            let v: word;
+            assembly {
+                v := n
+            }
+            return v;
+        };
         match ((true, get)) {
-            case ((n, get)) { observed = get(); }
+            case ((n, get)) {
+                observed = get();
+            }
         }
         return uint256(primAddWord(n, observed));
     }
@@ -148,10 +209,16 @@ contract FoldedMatchScope {
         let runtime: word = Typedef.rep(value);
         match (runtime) {
             case (x) {
-                assembly { x := 1 }
+                assembly {
+                    x := 1
+                }
                 observed = x;
             }
         }
-        if (x) { return uint256(primAddWord(observed, 7)); } else { return uint256(0); }
+        if (x) {
+            return uint256(primAddWord(observed, 7));
+        } else {
+            return uint256(0);
+        }
     }
 }

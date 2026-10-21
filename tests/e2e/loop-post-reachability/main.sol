@@ -5,14 +5,18 @@ contract LoopPostReachability {
     // #[(0) -> 99]
     // #[(3) -> 99]
     function coreBreak(count: uint256) public returns (uint256) {
-        for (let i: uint256 = uint256(0); i < count; i = i + uint256(1)) { break; }
+        for (let i: uint256 = uint256(0); i < count; i = i + uint256(1)) {
+            break;
+        }
         return uint256(99);
     }
 
     // #[(0) -> 99]
     // #[(3) -> 0]
     function coreReturn(count: uint256) public returns (uint256) {
-        for (let i: uint256 = uint256(0); i < count; i = i + uint256(1)) { return i; }
+        for (let i: uint256 = uint256(0); i < count; i = i + uint256(1)) {
+            return i;
+        }
         return uint256(99);
     }
 
@@ -23,8 +27,12 @@ contract LoopPostReachability {
     function coreMatch(count: uint256) public returns (uint256) {
         for (let i: uint256 = uint256(0); i < count; i = i + uint256(1)) {
             match (i < uint256(2)) {
-                case true { continue; }
-                case false { break; }
+                case true {
+                    continue;
+                }
+                case false {
+                    break;
+                }
             }
         }
         return i;
@@ -35,7 +43,9 @@ contract LoopPostReachability {
     // #[(5) -> 2]
     function coreContinueOrReturn(count: uint256) public returns (uint256) {
         for (let i: uint256 = uint256(0); i < count; i = i + uint256(1)) {
-            if (i < uint256(2)) { continue; }
+            if (i < uint256(2)) {
+                continue;
+            }
             return i;
         }
         return uint256(99);
@@ -60,7 +70,15 @@ contract LoopPostReachability {
     // #[(3) -> 99]
     function yulBreak(count: uint256) public returns (uint256) {
         let n: word = Typedef.rep(count);
-        assembly { for { let i := 0 } lt(i, n) { i := add(i, 1) } { break } }
+        assembly {
+            for {
+                let i := 0
+            } lt(i, n) {
+                i := add(i, 1)
+            } {
+                break
+            }
+        }
         return uint256(99);
     }
 
@@ -69,9 +87,13 @@ contract LoopPostReachability {
     function yulReturn(count: uint256) public returns (uint256) {
         let n: word = Typedef.rep(count);
         assembly {
-            for { let i := 0 } lt(i, n) { i := add(i, 1) } {
+            for {
+                let i := 0
+            } lt(i, n) {
+                i := add(i, 1)
+            } {
                 mstore(0, i)
-                return(0, 32)
+                return (0, 32)
             }
         }
         return uint256(99);
@@ -86,8 +108,19 @@ contract LoopPostReachability {
         let result: word;
         assembly {
             let i := 0
-            for {} lt(i, n) { i := add(i, 1) } {
-                switch i case 0 { continue } case 1 { continue } default { break }
+            for {} lt(i, n) {
+                i := add(i, 1)
+            } {
+                switch i
+                case 0 {
+                    continue
+                }
+                case 1 {
+                    continue
+                }
+                default {
+                    break
+                }
             }
             result := i
         }
@@ -100,8 +133,16 @@ contract LoopPostReachability {
         let n: word = Typedef.rep(count);
         let result: word;
         assembly {
-            for { let outer := 0 } lt(outer, n) { outer := add(outer, 1) } {
-                for { let inner := 0 } lt(inner, n) { inner := add(inner, 1) } {
+            for {
+                let outer := 0
+            } lt(outer, n) {
+                outer := add(outer, 1)
+            } {
+                for {
+                    let inner := 0
+                } lt(inner, n) {
+                    inner := add(inner, 1)
+                } {
                     result := add(result, 1)
                     continue
                 }
@@ -119,8 +160,12 @@ contract LoopPostReachability {
         let result: word;
         assembly {
             let i := 0
-            for {} lt(i, n) { i := add(i, 1) } {
-                if lt(i, 2) { continue }
+            for {} lt(i, n) {
+                i := add(i, 1)
+            } {
+                if lt(i, 2) {
+                    continue
+                }
                 break
             }
             result := i
@@ -135,8 +180,18 @@ contract LoopPostReachability {
     function yulSwitch(count: uint256) public returns (uint256) {
         let n: word = Typedef.rep(count);
         assembly {
-            for { let i := 0 } lt(i, n) { i := add(i, 1) } {
-                switch n case 1 { break } default { revert(0, 0) }
+            for {
+                let i := 0
+            } lt(i, n) {
+                i := add(i, 1)
+            } {
+                switch n
+                case 1 {
+                    break
+                }
+                default {
+                    revert(0, 0)
+                }
             }
         }
         return uint256(99);
@@ -150,7 +205,14 @@ contract LoopPostReachability {
         assembly {
             function first(n) -> result {
                 result := 99
-                for { let i := 0 } lt(i, n) { i := add(i, 1) } { result := i leave }
+                for {
+                    let i := 0
+                } lt(i, n) {
+                    i := add(i, 1)
+                } {
+                    result := i
+                    leave
+                }
             }
             result := first(n)
         }
@@ -161,7 +223,9 @@ contract LoopPostReachability {
     // #[(1) -> revert(0x)]
     function coreRevert(count: uint256) public returns (uint256) {
         for (let i: uint256 = uint256(0); i < count; i = i + uint256(1)) {
-            assembly { revert(0, 0) }
+            assembly {
+                revert(0, 0)
+            }
         }
         return uint256(99);
     }
@@ -170,7 +234,15 @@ contract LoopPostReachability {
     // #[(1) -> revert(0x)]
     function yulPostRevert(count: uint256) public returns (uint256) {
         let n: word = Typedef.rep(count);
-        assembly { for { let i := 0 } lt(i, n) { revert(0, 0) } { continue } }
+        assembly {
+            for {
+                let i := 0
+            } lt(i, n) {
+                revert(0, 0)
+            } {
+                continue
+            }
+        }
         return uint256(99);
     }
 }

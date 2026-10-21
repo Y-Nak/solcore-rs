@@ -15,7 +15,11 @@ contract ZeroizeMemoryRange {
         let target: word = primAddWord(base, 31);
         let correct: word = 1;
         assembly {
-            for { let i := 0 } lt(i, total) { i := add(i, 1) } {
+            for {
+                let i := 0
+            } lt(i, total) {
+                i := add(i, 1)
+            } {
                 mstore8(add(base, i), 0xa5)
             }
             // Clearing must not depend on the contents of a fixed zero slot.
@@ -24,10 +28,18 @@ contract ZeroizeMemoryRange {
         zeroize_memory(target, length);
         assembly {
             mstore(0x60, 0)
-            for { let i := 0 } lt(i, total) { i := add(i, 1) } {
+            for {
+                let i := 0
+            } lt(i, total) {
+                i := add(i, 1)
+            } {
                 let expected := 0xa5
-                if and(iszero(lt(i, 31)), lt(i, add(31, length))) { expected := 0 }
-                if iszero(eq(byte(0, mload(add(base, i))), expected)) { correct := 0 }
+                if and(iszero(lt(i, 31)), lt(i, add(31, length))) {
+                    expected := 0
+                }
+                if iszero(eq(byte(0, mload(add(base, i))), expected)) {
+                    correct := 0
+                }
             }
         }
         return uint256(correct);

@@ -121,7 +121,9 @@ default impl<t> ABITypeString<t> where t: SigString {
 // A unit in value context is the empty tuple. SigString<()> remains empty
 // because it also represents a method's empty argument/return product.
 impl ABITypeString<()> {
-  function typeStr(x:Proxy<()>) returns (string) { return "()"; }
+    function typeStr(x: Proxy<()>) returns (string) {
+        return "()";
+    }
 }
 
 impl<a, b> ABITypeString<(a, b)> where a: SigString, b: SigString {

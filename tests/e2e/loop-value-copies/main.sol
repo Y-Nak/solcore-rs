@@ -30,7 +30,9 @@ contract LoopValueCopies {
             c = previous;
         }
         let result: word;
-        assembly { result := add(add(mul(a, 100), mul(b, 10)), c) }
+        assembly {
+            result := add(add(mul(a, 100), mul(b, 10)), c)
+        }
         return uint256(result);
     }
 
@@ -46,7 +48,11 @@ contract LoopValueCopies {
             let a := 1
             let b := 2
             let c := 3
-            for { let i := 0 } lt(i, limit) { i := add(i, 1) } {
+            for {
+                let i := 0
+            } lt(i, limit) {
+                i := add(i, 1)
+            } {
                 let previous := a
                 a := b
                 b := c
@@ -107,7 +113,9 @@ contract LoopValueCopies {
             a19 = previous;
         }
         let result: word;
-        assembly { result := add(mul(a0, 100), a19) }
+        assembly {
+            result := add(mul(a0, 100), a19)
+        }
         return uint256(result);
     }
 }

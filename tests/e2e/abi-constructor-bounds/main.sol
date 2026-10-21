@@ -6,6 +6,10 @@ import * from std.dispatch;
 // #[deploy(0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000004010203, value = 0) -> revert(0x08638556)]
 contract ConstructorBounds {
     payload: bytes;
-    constructor(value: memory<bytes>) { payload = value; }
-    function read() public returns (memory<bytes>) { return payload; }
+    constructor(value: memory<bytes>) {
+        payload = value;
+    }
+    function read() public returns (memory<bytes>) {
+        return payload;
+    }
 }

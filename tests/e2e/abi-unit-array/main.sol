@@ -21,34 +21,40 @@ type Units = calldata<array<UnitAlias>>;
 // #[raw(0x375afe13000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000070000000000000000000000000000000000000000000000000000000000000003, value = 0, label = "wrapped((()[],uint256)[])") -> success(0x000000000000000000000000000000000000000000000000000000000000000a)]
 // #[raw(0xf7c73e0200000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002, value = 0, label = "The former malformed units([]) selector must not dispatch") -> revert(0x4924aef0)]
 contract UnitArrays {
-  seed: uint256;
+    seed: uint256;
 
-  constructor(value: uint256) { seed = value; }
-
-  function units(values: Units) public returns (uint256) {
-    return Length.length(values);
-  }
-
-  function at(values: Units, i: uint256) public returns (uint256) {
-    let value: UnitAlias = values[i];
-    return Length.length(values);
-  }
-
-  function nested(values: calldata<array<Units>>, i: uint256) public returns (uint256) {
-    let inner: Units = values[i];
-    return Length.length(inner);
-  }
-
-  function combined(prefix: uint256, values: Units) public returns (uint256) {
-    return prefix + Length.length(values) + seed;
-  }
-
-  function wrapped(values: calldata<array<(Units, uint256)>>) public returns (uint256) {
-    match (values[0]) {
-      case (units, number) { return Length.length(units) + number; }
+    constructor(value: uint256) {
+        seed = value;
     }
-  }
 
-  // Empty argument/return products must keep their existing dispatch identity.
-  function empty() public returns (UnitAlias) { return; }
+    function units(values: Units) public returns (uint256) {
+        return Length.length(values);
+    }
+
+    function at(values: Units, i: uint256) public returns (uint256) {
+        let value: UnitAlias = values[i];
+        return Length.length(values);
+    }
+
+    function nested(values: calldata<array<Units>>, i: uint256) public returns (uint256) {
+        let inner: Units = values[i];
+        return Length.length(inner);
+    }
+
+    function combined(prefix: uint256, values: Units) public returns (uint256) {
+        return prefix + Length.length(values) + seed;
+    }
+
+    function wrapped(values: calldata<array<(Units, uint256)>>) public returns (uint256) {
+        match (values[0]) {
+            case (units, number) {
+                return Length.length(units) + number;
+            }
+        }
+    }
+
+    // Empty argument/return products must keep their existing dispatch identity.
+    function empty() public returns (UnitAlias) {
+        return;
+    }
 }

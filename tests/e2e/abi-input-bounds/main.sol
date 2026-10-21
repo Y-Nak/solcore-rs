@@ -28,26 +28,28 @@ import * from std.dispatch;
 // #[raw(0xf8bfcd2c00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001, value = 0, label = "lazy array requires its complete head") -> revert(0x08638556)]
 // #[raw(0xf8bfcd2c00000000000000000000000000000000000000000000000000000000000000208000000000000000000000000000000000000000000000000000000000000000, value = 0, label = "lazy array length multiplication overflow") -> revert(0x08638556)]
 contract AbiInputBounds {
-  function value() public returns (bytes4) { return bytes4(0x12345678); }
-  function decodeFixed(value: bytes4) public returns (uint256) {
-    return uint256(Typedef.rep(value));
-  }
-  function length(value: memory<bytes>) public returns (uint256) {
-    return uint256(MemorySize.len(value));
-  }
-  function memoryWord(value: memory<bytes>) public returns (uint256) {
-    return abi_decode(value, @uint256, @MemoryWordReader);
-  }
-  function memoryArray(value: memory<bytes>) public returns (uint256) {
-    let items: memory<DynArray<uint256>> =
-      abi_decode(value, @memory<DynArray<uint256>>, @MemoryWordReader);
-    return items[0];
-  }
-  function memoryBytes(value: memory<bytes>) public returns (uint256) {
-    let decoded: memory<bytes> = abi_decode(value, @memory<bytes>, @MemoryWordReader);
-    return uint256(MemorySize.len(decoded));
-  }
-  function arrayCount(values: calldata<array<uint256>>) public returns (uint256) {
-    return values.length();
-  }
+    function value() public returns (bytes4) {
+        return bytes4(0x12345678);
+    }
+    function decodeFixed(value: bytes4) public returns (uint256) {
+        return uint256(Typedef.rep(value));
+    }
+    function length(value: memory<bytes>) public returns (uint256) {
+        return uint256(MemorySize.len(value));
+    }
+    function memoryWord(value: memory<bytes>) public returns (uint256) {
+        return abi_decode(value, @uint256, @MemoryWordReader);
+    }
+    function memoryArray(value: memory<bytes>) public returns (uint256) {
+        let items: memory<DynArray<uint256>> =
+        abi_decode(value, @memory<DynArray<uint256>>, @MemoryWordReader);
+        return items[0];
+    }
+    function memoryBytes(value: memory<bytes>) public returns (uint256) {
+        let decoded: memory<bytes> = abi_decode(value, @memory<bytes>, @MemoryWordReader);
+        return uint256(MemorySize.len(decoded));
+    }
+    function arrayCount(values: calldata<array<uint256>>) public returns (uint256) {
+        return values.length();
+    }
 }

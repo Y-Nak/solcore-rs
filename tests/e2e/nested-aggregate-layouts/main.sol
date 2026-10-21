@@ -1,17 +1,40 @@
 import * from std;
 import * from std.dispatch;
 
-enum Box<a> { Box(a) }
-enum Choice<a> { Empty, Choice(a) }
-enum Product<a> { Product(word, a) }
-struct Record<a> { value: a; }
+enum Box<a> {
+    Box(a)
+}
+enum Choice<a> {
+    Empty,
+    Choice(a)
+}
+enum Product<a> {
+    Product(word, a)
+}
+struct Record<a> {
+    value: a;
+}
 
 function unwrapBoxes(value: Box<Box<Box<Box<Box<Box<Box<Box<Box<Box<Box<Box<Box<Box<Box<Box<Box<Box<Box<Box<Box<Box<Box<Box<word>>>>>>>>>>>>>>>>>>>>>>>>) returns (word) {
-    match (value) { case Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(payload)))))))))))))))))))))))) { return payload; } default { return 0; } }
+    match (value) {
+        case Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(Box(payload)))))))))))))))))))))))) {
+            return payload;
+        }
+        default {
+            return 0;
+        }
+    }
 }
 
 function unwrapMixed(value: Box<Record<Product<Choice<Box<Record<Product<Choice<Box<Record<Product<Choice<Box<Record<Product<Choice<Box<Record<Product<Choice<word>>>>>>>>>>>>>>>>>>>>) returns (word) {
-    match (value) { case Box(Record(Product(_, Choice(Box(Record(Product(_, Choice(Box(Record(Product(_, Choice(Box(Record(Product(_, Choice(Box(Record(Product(_, Choice(payload)))))))))))))))))))) { return payload; } default { return 0; } }
+    match (value) {
+        case Box(Record(Product(_, Choice(Box(Record(Product(_, Choice(Box(Record(Product(_, Choice(Box(Record(Product(_, Choice(Box(Record(Product(_, Choice(payload)))))))))))))))))))) {
+            return payload;
+        }
+        default {
+            return 0;
+        }
+    }
 }
 
 function unwrapRecords(value: Record<Record<Record<Record<Record<Record<Record<Record<Record<Record<Record<Record<Record<Record<Record<Record<Record<Record<Record<Record<Record<Record<Record<Record<word>>>>>>>>>>>>>>>>>>>>>>>>) returns (word) {
