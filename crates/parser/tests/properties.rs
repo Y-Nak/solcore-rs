@@ -84,28 +84,3 @@ fn right_nested_ternary_chain_uses_the_default_stack() {
         "the valid conditional chain should parse before bounded HIR lowering: {diagnostics:#?}"
     );
 }
-
-#[test]
-fn nested_expression_operands_parse_without_repeated_conditional_backtracking() {
-    // Use the same stack size as other nested-source integration tests; the
-    // driver provides its own compilation thread stack for recursive parsing.
-    std::thread::Builder::new()
-        .stack_size(64 * 1024 * 1024)
-        .spawn(|| {
-            // Each of these operands recursively enters the full expression grammar.
-            // An unsuccessful conditional prefix must not cause the operand to be
-            // reparsed at every level (which previously required 2^depth traversals).
-            for (open, close) in [("f(", ")"), ("(", ")"), ("[", "]"), ("f[", "]")] {
-                let depth = 24;
-                let value = format!("{}value{}", open.repeat(depth), close.repeat(depth));
-                for expression in [value.clone(), format!("{value} ? 1 : 2")] {
-                    let source = format!("function main() {{ return {expression}; }}");
-                    let diagnostics = parse_without_large_test_stack(source);
-                    assert!(diagnostics.is_empty(), "{expression}: {diagnostics:#?}");
-                }
-            }
-        })
-        .expect("spawn parser regression")
-        .join()
-        .unwrap();
-}

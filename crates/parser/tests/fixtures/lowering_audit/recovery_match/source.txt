@@ -1,0 +1,3 @@
+enum D { C }
+function bad(x: D) returns (word) { match (x) { case C() { return 1; } } return 7; }
+function good() {}

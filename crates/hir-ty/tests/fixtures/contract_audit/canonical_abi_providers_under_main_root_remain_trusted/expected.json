@@ -1,0 +1,9 @@
+{
+  "roots": [
+    "main_only",
+    "shared"
+  ],
+  "diagnostics": {
+    "count": 0
+  }
+}

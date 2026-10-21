@@ -1,0 +1,4 @@
+contract C {
+               broken :
+               function get() returns (word) { return broken; }
+             }

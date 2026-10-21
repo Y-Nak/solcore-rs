@@ -1,0 +1,19 @@
+{
+  "roots": [
+    "main_only",
+    "shared"
+  ],
+  "diagnostics": {
+    "contains": [
+      {
+        "code": "SC0231",
+        "message": "manual `ABIElementAttribs`"
+      },
+      {
+        "code": "SC0231",
+        "message": "manual `ABITypeString`"
+      }
+    ],
+    "count": 2
+  }
+}

@@ -4168,93 +4168,6 @@ fn productive_instance_cycles_have_finite_distinct_dictionaries() {
 }
 
 #[test]
-fn function_values_have_no_builtin_arity_limit() {
-    for arity in [0, 1, 8, 9, 16, 32] {
-        let params = (0..arity)
-            .map(|i| format!("x{i}:word"))
-            .collect::<Vec<_>>()
-            .join(",");
-        let args = (0..arity).map(|_| "1").collect::<Vec<_>>().join(",");
-        let source = format!(
-            "function f({params}) returns (word) {{ return 7; }} function main() returns (word) {{ let g=f; return g({args}); }}"
-        );
-        let diagnostics = lowered_module_typeck_diagnostics(&source);
-        assert!(diagnostics.is_empty(), "arity {arity}: {diagnostics:?}");
-    }
-}
-
-#[test]
-fn user_defined_concat_lit_is_an_ordinary_function() {
-    let diagnostics = lowered_module_typeck_diagnostics(
-        "function concatLit(x:word) returns(word) { return x; } function main() returns(word) { return concatLit(7); }",
-    );
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
-}
-
-#[test]
-fn unrelated_contract_constructors_do_not_capture_pattern_variables() {
-    let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-contract Other { enum Hidden { value } }
-function main(x:word) returns(word) { match(x) { case value { return value; } } }
-"#,
-    );
-    let resolution = hir_nameres::resolve_module(&db, module);
-    assert!(
-        resolution.diagnostics.is_empty(),
-        "{:?}",
-        resolution.diagnostics
-    );
-    let (_, result) = infer_function(&db, module, "main");
-    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
-}
-
-#[test]
-fn dot_constructors_respect_imported_constructor_identity() {
-    for exported in ["Secret", "Secret(*)"] {
-        let mut db = TestDb::default();
-        let lib_path = PathBuf::from("/main/lib.sol");
-        let main_path = PathBuf::from("/main/main.sol");
-        let lib_file = source_file_at_path(
-            &db,
-            &lib_path,
-            &format!("export {{{exported}}}; enum Secret {{ Hidden(word) }}"),
-        );
-        let main_file = source_file_at_path(
-            &db,
-            &main_path,
-            r#"
-import * from lib;
-enum Decoy { Hidden(word) }
-function forge() returns(Secret) { return .Hidden(7); }
-function inspect(x:Secret) returns(word) { match(x) { case .Hidden(n) { return n; } case _ { return 0; } } }
-"#,
-        );
-        let lib_key =
-            module_key_for_path(LibraryId::Main, &PathBuf::from("/main"), &lib_path).unwrap();
-        let main_key =
-            module_key_for_path(LibraryId::Main, &PathBuf::from("/main"), &main_path).unwrap();
-        db.insert_module_file(lib_key, lib_file);
-        db.insert_module_file(main_key.clone(), main_file);
-        let module = module_id_from_key(&db, &main_key);
-        for name in ["forge", "inspect"] {
-            let (_, result) = infer_module_function_with_solver(&db, module, name);
-            let hidden = result.diagnostics.iter().any(|diagnostic| {
-                matches!(diagnostic, TypeckDiagnostic::ShorthandConstructor { .. })
-            });
-            assert_eq!(
-                hidden,
-                exported == "Secret",
-                "{exported} {name}: {:?}",
-                result.diagnostics
-            );
-        }
-    }
-}
-
-#[test]
 fn structural_invokable_rules_preserve_comptime_transparency() {
     let db = TestDb::default();
     let module = parse_module(&db, "");
@@ -4272,44 +4185,6 @@ fn structural_invokable_rules_preserve_comptime_transparency() {
         solve(&db, env, canonical_goal(&db, goal)),
         Solution::Unique { .. }
     ));
-}
-
-#[test]
-fn comptime_qualifiers_preserve_tuple_and_constructor_shape_inference() {
-    for source in [
-        "function get(comptime value: (word, word)) returns(word) {
-             match(value) { case((head, _)) { return head; } }
-         }",
-        "type StaticPair = comptime<(word, word)>;
-         function get(value: StaticPair) returns(word) {
-             match(value) { case((_, tail)) { return tail; } }
-         }",
-        "function get(comptime value: (word, (word, word))) returns(word) {
-             match(value) { case((_, (head, _))) { return head; } }
-         }",
-        "enum Box { Box(word) }
-         function get(comptime value: Box) returns(word) {
-             match(value) { case(.Box(inner)) { return inner; } }
-         }",
-        "function get(comptime value: word) returns(comptime<(word, word)>) {
-             return (value, value);
-         }",
-    ] {
-        let db = TestDb::default();
-        let module = parse_module(&db, source);
-        let (_, result) = infer_function(&db, module, "get");
-        assert!(
-            result.diagnostics.is_empty(),
-            "{source}\n{:?}",
-            result.diagnostics
-        );
-        for pat in &result.pat_tys {
-            assert!(
-                !matches!(pat.ty.kind(&db), TyKind::Unknown | TyKind::Error),
-                "pattern must retain its expected element type: {source}\n{pat:?}"
-            );
-        }
-    }
 }
 
 #[test]
@@ -4437,28 +4312,6 @@ fn tabled_solver_preserves_lower_priority_seeds_in_preference_cycles() {
             matches!(evidence, Evidence::Superclass { .. }),
             "{evidence:?}"
         );
-    }
-}
-
-#[test]
-fn superclass_diamond_projects_one_given_dictionary() {
-    for parents in ["a:B,a:C", "a:C,a:B"] {
-        let source = format!(
-            r#"
-trait A<a> {{ function f(x:a) returns(word); }}
-trait B<a> where a:A {{}}
-trait C<a> where a:A {{}}
-trait D<a> where {parents} {{}}
-function run<a>(x:a) returns(word) where a:D {{ return A.f(x); }}
-impl A<word> {{ function f(x:word) returns(word) {{ return 7; }} }}
-impl B<word> {{}}
-impl C<word> {{}}
-impl D<word> {{}}
-function main() returns(word) {{ let x:word=0; return run(x); }}
-"#
-        );
-        let diagnostics = lowered_module_typeck_diagnostics(&source);
-        assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 }
 
@@ -4942,31 +4795,6 @@ impl<a,b> Sub<Box<a>,Box<b>> where b:C<a> {}
 }
 
 #[test]
-fn decreasing_instance_chains_typecheck_through_aliases_and_function_values() {
-    for depth in [12, 24] {
-        let nested = format!("{}word{}", "Layer<".repeat(depth), ">".repeat(depth));
-        let source = format!(
-            r#"
-trait C<a> {{}}
-trait Sub<a> where a:C {{}}
-enum Box<a> {{ Box(a) }}
-type Layer(a) = Box<a>;
-impl C<word> {{}}
-impl<a> C<Layer<a>> where a:C {{}}
-impl<a> Sub<Layer<a>> where a:C {{}}
-function require<a>(x:a) returns(word) where a:C {{ return 1; }}
-function main(x:{nested}) returns(word) {{
-    let f = require;
-    return f(x);
-}}
-"#
-        );
-        let diagnostics = lowered_module_typeck_diagnostics(&source);
-        assert!(diagnostics.is_empty(), "{depth}: {diagnostics:?}");
-    }
-}
-
-#[test]
 fn solver_budget_bounds_successful_and_answerless_work() {
     let db = TestDb::default();
     let module = parse_module(
@@ -5001,23 +4829,6 @@ fn solver_budget_bounds_successful_and_answerless_work() {
 }
 
 #[test]
-fn instance_method_bodies_assume_their_declared_superclasses() {
-    for name in ["f", "g"] {
-        let source = format!(
-            r#"
-trait Parent<t> {{ function f(x:t) returns(word); }}
-trait Child<t> where t:Parent {{ function {name}(x:t) returns(word); }}
-trait Sibling<t> where t:Parent {{}}
-impl Sibling<word> {{}}
-impl Child<word> {{ function {name}(x:word) returns(word) {{ return Parent.f(x); }} }}
-"#
-        );
-        let diagnostics = lowered_module_typeck_diagnostics(&source);
-        assert!(diagnostics.is_empty(), "{name}: {diagnostics:#?}");
-    }
-}
-
-#[test]
 fn direct_superclass_predicates_instantiate_aliases_and_secondary_arguments() {
     let db = TestDb::default();
     let module = parse_module(
@@ -5047,3 +4858,6 @@ trait Child<a,b> where a:Parent<Alias<b>> {}
         vec![expected]
     );
 }
+
+#[path = "tests/fixtures.rs"]
+mod fixture_tests;

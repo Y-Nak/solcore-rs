@@ -169,32 +169,7 @@ pub fn parse_diagnostics(db: &dyn Db, file: SourceFile) -> Vec<AnyDiagnostic> {
 
 #[cfg(test)]
 mod tests {
-    use super::{IdentifierContext, is_valid_identifier, is_valid_identifier_in};
-
-    #[test]
-    fn contextual_names_depend_on_the_declaration_role() {
-        assert!(is_valid_identifier_in(
-            "comptime",
-            IdentifierContext::Ordinary
-        ));
-        assert!(!is_valid_identifier_in(
-            "comptime",
-            IdentifierContext::RuntimeParameter
-        ));
-        for name in ["while", "mapping", "derive", "where", "value"] {
-            assert!(is_valid_identifier_in(
-                name,
-                IdentifierContext::RuntimeParameter
-            ));
-        }
-        for context in [
-            IdentifierContext::Ordinary,
-            IdentifierContext::RuntimeParameter,
-        ] {
-            assert!(!is_valid_identifier_in("return", context));
-            assert!(!is_valid_identifier_in("value-name", context));
-        }
-    }
+    use super::is_valid_identifier;
 
     #[test]
     fn validates_identifiers_with_the_source_lexer() {

@@ -63,81 +63,6 @@ fn top_function<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> Functi
         .expect("top-level function")
 }
 
-#[test]
-fn type_identifier_context_preserves_the_parsed_named_type() {
-    for name in ["mapping", "comptime", "while", "derive", "Value"] {
-        let mut needs_type_context = false;
-        for qualified in [false, true] {
-            for (type_arguments, suffix) in [(0, ""), (1, "<word>"), (2, "<word, bool>")] {
-                let db = TestDb::default();
-                let qualifier = if qualified { "M." } else { "" };
-                let source = format!("type Check = {qualifier}{name}{suffix};");
-                let (file, module) = parse_module(&db, "type_name_context", &source);
-                let preserves_named_type = diagnostics(&db, file).is_empty()
-                    && module.items(&db).iter().any(|item| {
-                        matches!(item, Item::TypeAlias(alias)
-                            if matches!(alias.ty(&db).kind(&db), TypeRefKind::Named { name: parsed, .. }
-                                if parsed.atom().text(&db) == name))
-                    });
-                needs_type_context |= !preserves_named_type;
-                assert_eq!(
-                    solcore_parser::is_valid_identifier_in(
-                        name,
-                        solcore_parser::IdentifierContext::TypeReference {
-                            qualified,
-                            type_arguments,
-                        },
-                    ),
-                    preserves_named_type,
-                    "{source}"
-                );
-            }
-        }
-        assert_eq!(
-            solcore_parser::requires_type_identifier_context(name),
-            needs_type_context,
-            "{name}"
-        );
-    }
-}
-
-#[test]
-fn subtraction_spacing_does_not_change_parsing_and_pragmas_keep_hyphens() {
-    for expression in ["a-b", "a -b", "a- b", "a - b", "a-b-c", "a-(b-c)"] {
-        let db = TestDb::default();
-        let source = format!(
-            "pragma no-bounded-variable-condition;\npragma no-patterson-condition Num;\npragma no-generic-instance-for Pair;\nfunction f(a: word, b: word, c: word) returns (word) {{ return {expression}; }}"
-        );
-        let (file, module) = parse_module(&db, "subtraction", &source);
-        assert!(
-            diagnostics(&db, file).is_empty(),
-            "{expression}: {:?}",
-            diagnostics(&db, file)
-        );
-        let names = module
-            .items(&db)
-            .iter()
-            .filter_map(|item| match item {
-                Item::Pragma(pragma) => Some(pragma.name(&db).atom().text(&db).to_owned()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            names,
-            [
-                "no-bounded-variable-condition",
-                "no-patterson-condition",
-                "no-generic-instance-for"
-            ]
-        );
-        assert!(top_function(&db, module, "f").body(&db).is_some());
-    }
-    let db = TestDb::default();
-    let (file, _) = parse_module(&db, "hyphenated-declaration", "function foo-bar() {}");
-    assert!(!diagnostics(&db, file).is_empty());
-    assert!(!solcore_parser::is_valid_identifier("foo-bar"));
-}
-
 fn contract_function<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> FunctionDef<'db> {
     module
         .items(db)
@@ -1022,68 +947,6 @@ fn ternary_expression_is_right_associative_and_allows_a_nested_then_arm() {
 }
 
 #[test]
-fn malformed_statement_contents_do_not_report_the_statement_keyword_as_an_expression() {
-    for statement in [
-        "return g(1,);",
-        "match (x) { case C() { return 1; } }",
-        "if (true) { return g(1,); } else { return 0; }",
-        "for (let i = 0; true; i = 1) { return g(1,); }",
-    ] {
-        let db = TestDb::default();
-        let source = format!("enum D {{ C }}\nfunction f(x: D) returns (word) {{ {statement} }}");
-        let (file, _) = parse_module(&db, "statement-recovery", &source);
-        let errors = diagnostics(&db, file);
-        assert_eq!(errors.len(), 1, "{statement}: {errors:?}");
-        assert_eq!(errors[0].message, "parse error: unexpected `)`");
-    }
-}
-
-#[test]
-fn contextual_while_identifier_can_still_start_an_expression_statement() {
-    let db = TestDb::default();
-    let (file, _) = parse_module(
-        &db,
-        "contextual-while-expression",
-        "function main() { while(1); while = 2; }",
-    );
-    assert!(diagnostics(&db, file).is_empty());
-}
-
-#[test]
-fn statement_recovery_preserves_following_statements_and_functions() {
-    for statement in [
-        "return g(1,);",
-        "match (x) { case C() { return 1; } }",
-        "if (true) { return g(1,); } else if (true) { return 0; } else { return 1; }",
-        "if (true) { return g(1; }",
-        "match (x) { case C( { return 1; } }",
-        "match (x) { case C() { return g(1; } }",
-    ] {
-        let db = TestDb::default();
-        let source = format!(
-            "enum D {{ C }}\nfunction bad(x: D) returns (word) {{ {statement} return 7; }}\nfunction good() {{}}"
-        );
-        let (file, module) = parse_module(&db, "statement-boundary-recovery", &source);
-        assert!(!diagnostics(&db, file).is_empty(), "{statement}");
-        let body = top_function(&db, module, "bad")
-            .body(&db)
-            .expect("recovered function body");
-        let last = *body
-            .top_level_stmts(&db)
-            .last()
-            .expect("trailing statement");
-        let StmtKind::Return(Some(value)) = body.stmts(&db).get(last).kind else {
-            panic!("{statement}: {:?}", body.stmts(&db));
-        };
-        assert!(matches!(
-            &body.exprs(&db).get(value).kind,
-            ExprKind::Lit(hir::ast::function::LitKind::Number(number)) if number == "7"
-        ));
-        assert!(top_function(&db, module, "good").body(&db).is_some());
-    }
-}
-
-#[test]
 fn array_literals_lower_with_empty_nested_and_postfix_index_forms() {
     let db = TestDb::default();
     let (file, module) = parse_module(
@@ -1470,3 +1333,6 @@ fn derive_targets_reject_reserved_identifiers() {
         })
         .expect("enum declaration survives malformed attribute");
 }
+
+#[path = "lowering_regressions/fixtures.rs"]
+mod fixture_tests;

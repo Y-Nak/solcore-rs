@@ -1,0 +1,11 @@
+{
+  "diagnostics": {
+    "contains": [
+      {
+        "code": "SC0231",
+        "message": "manual `ABIElementAttribs`"
+      }
+    ],
+    "all_code": "SC0231"
+  }
+}

@@ -1,0 +1,2 @@
+enum D { C }
+function f(x: D) returns (word) { if (true) { return g(1,); } else { return 0; } }

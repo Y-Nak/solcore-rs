@@ -83,30 +83,6 @@ fn keeps_empty_for_clauses_inline() {
 }
 
 #[test]
-fn formats_pragma_names_separately_from_subtraction() {
-    for name in ["no-patterson-condition", "no - patterson - condition"] {
-        let source = format!(
-            "pragma {name} C,D;pragma no - default - if C;function f(a:word,b:word)returns(word){{return a-b;}}"
-        );
-        assert_eq!(
-            format(&source),
-            "pragma no-patterson-condition C, D;\npragma no-default-if C;\nfunction f(a: word, b: word) returns (word) {\n    return a - b;\n}\n"
-        );
-        assert_stable(&source);
-    }
-}
-
-#[test]
-fn preserves_comments_inside_pragma_names() {
-    let source = "pragma no/* keep */-case C;pragma no-// keep line\ndefault C;";
-    assert_eq!(
-        format(source),
-        "pragma no /* keep */ -case C;\npragma no- // keep line\ndefault C;\n"
-    );
-    assert_stable(source);
-}
-
-#[test]
 fn rejects_invalid_input_without_returning_partial_output() {
     for source in [
         "function f(){let x=;}",
@@ -266,4 +242,12 @@ proptest! {
         let formatted = format(&source);
         prop_assert_eq!(format(&formatted), formatted);
     }
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/format_cases", glob: "**/input.txt")]
+fn exact_formatting_fixture(fixture: Fixture<&str>) {
+    let expected =
+        fs::read_to_string(Path::new(fixture.path()).with_file_name("expected.txt")).unwrap();
+    assert_eq!(format(fixture.content()), expected);
+    assert_stable(fixture.content());
 }

@@ -1,0 +1,4 @@
+pragma no-bounded-variable-condition;
+pragma no-patterson-condition Num;
+pragma no-generic-instance-for Pair;
+function f(a: word, b: word, c: word) returns (word) { return a- b; }

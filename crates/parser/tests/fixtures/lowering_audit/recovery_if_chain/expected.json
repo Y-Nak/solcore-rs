@@ -1,0 +1,14 @@
+{
+  "has_errors": true,
+  "functions": [
+    {
+      "name": "bad",
+      "body": true,
+      "last_return_number": "7"
+    },
+    {
+      "name": "good",
+      "body": true
+    }
+  ]
+}

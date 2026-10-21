@@ -1,0 +1,10 @@
+{
+  "diagnostics": {
+    "contains": [
+      {
+        "code": "SC0231",
+        "message": "manual `ABITypeString`"
+      }
+    ]
+  }
+}

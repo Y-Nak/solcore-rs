@@ -669,44 +669,6 @@ mod tests {
     }
 
     #[test]
-    fn hyphens_are_operators_between_identifiers() {
-        assert_eq!(
-            tokenize("no-bounded-variable-condition"),
-            vec![
-                Token::Ident("no"),
-                Token::Minus,
-                Token::Ident("bounded"),
-                Token::Minus,
-                Token::Ident("variable"),
-                Token::Minus,
-                Token::Ident("condition")
-            ]
-        );
-        assert_eq!(
-            tokenize("no-patterson-condition"),
-            vec![
-                Token::Ident("no"),
-                Token::Minus,
-                Token::Ident("patterson"),
-                Token::Minus,
-                Token::Ident("condition")
-            ]
-        );
-        assert_eq!(
-            tokenize("foo-bar"),
-            vec![Token::Ident("foo"), Token::Minus, Token::Ident("bar")]
-        );
-        // Regular identifiers with underscores.
-        assert_eq!(tokenize("foo_bar"), vec![Token::Ident("foo_bar")]);
-        // Mixed underscores and hyphens.
-        assert_eq!(
-            tokenize("foo_bar-baz"),
-            vec![Token::Ident("foo_bar"), Token::Minus, Token::Ident("baz")]
-        );
-        assert_eq!(tokenize("comptime"), vec![Token::Ident("comptime")]);
-    }
-
-    #[test]
     fn test_invalid_string_escape() {
         let mut lexer = Token::lexer(r#""bad\q""#);
         assert_eq!(lexer.next(), Some(Err(LexError::InvalidStringEscape)));
