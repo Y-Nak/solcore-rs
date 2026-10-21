@@ -26,7 +26,7 @@ pub(super) struct InstanceFact<'db> {
 }
 
 impl<'db> InstanceFact<'db> {
-    pub(super) fn clause(&self) -> ProgramClause<'db> {
+    pub(super) fn clause(&self, db: &'db dyn Db) -> ProgramClause<'db> {
         ProgramClause {
             binder_count: self.binder_count,
             head: self.head,
@@ -35,10 +35,7 @@ impl<'db> InstanceFact<'db> {
                 .iter()
                 .map(|condition| condition.pred)
                 .collect(),
-            origin: ClauseOrigin::Instance {
-                def: self.def,
-                default: self.default,
-            },
+            origin: ClauseOrigin::instance(db, self.def, self.default),
         }
     }
 

@@ -299,9 +299,11 @@ fn evidence_priority<'db>(db: &'db dyn Db, env: TraitEnvId<'db>, evidence: &Evid
     }
     match evidence {
         Evidence::Superclass { .. } => 2,
-        Evidence::Instance { instance, .. } if env.clauses_ref(db).iter().any(|clause| {
-            matches!(clause.origin, ClauseOrigin::Instance { def, default: true } if def == *instance)
-        }) => 3,
+        Evidence::Instance { instance, .. } => env
+            .clauses_ref(db)
+            .iter()
+            .find(|clause| matches!(clause.origin, ClauseOrigin::Instance { def, .. } if def == *instance))
+            .map_or(1, |clause| clause_priority(&clause.origin, false)),
         _ => 1,
     }
 }
@@ -352,9 +354,19 @@ pub(super) fn clause_priority(origin: &ClauseOrigin<'_>, local_given: bool) -> u
         return 0;
     }
     match origin {
-        ClauseOrigin::Instance { default: true, .. } => 3,
+        ClauseOrigin::Instance {
+            kind: InstanceKind::Default,
+            ..
+        } => 3,
+        ClauseOrigin::Instance {
+            kind: InstanceKind::StandardDefault,
+            ..
+        } => 4,
         ClauseOrigin::Superclass(_) => 2,
-        ClauseOrigin::Instance { default: false, .. }
+        ClauseOrigin::Instance {
+            kind: InstanceKind::Regular,
+            ..
+        }
         | ClauseOrigin::Builtin
         | ClauseOrigin::Derived(_)
         | ClauseOrigin::Given => 1,

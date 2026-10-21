@@ -10,7 +10,9 @@
 //! construction, and answer identity. The library owns table allocation,
 //! generator/consumer scheduling, duplicate suppression, and fixpoint
 //! detection. Local givens, instances, superclass projections, and fallback
-//! defaults retain their existing resolution order.
+//! defaults retain their resolution order. Defaults supplied by applications
+//! and external libraries take precedence over standard-library defaults.
+//! A standard fallback remains available when needed for a finite proof.
 //!
 //! Logical discovery shares answers by substitution, clause origin, and local
 //! given provenance. If different dictionaries share a logical answer, a
@@ -234,7 +236,7 @@ pub struct ProgramClause<'db> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum ClauseOrigin<'db> {
     /// User-defined instance declaration.
-    Instance { def: DefId<'db>, default: bool },
+    Instance { def: DefId<'db>, kind: InstanceKind },
     /// Compiler-defined fact.
     Builtin,
     /// Compiler-synthesized instance-like clause.
@@ -245,9 +247,36 @@ pub enum ClauseOrigin<'db> {
     Superclass(DefId<'db>),
 }
 
+/// Instance selection policy, classified once when a clause is constructed.
+/// Standard defaults are library fallbacks; application and dependency
+/// defaults share a higher tier without privileging any particular trait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum InstanceKind {
+    Regular,
+    Default,
+    StandardDefault,
+}
+
 impl<'db> ClauseOrigin<'db> {
+    fn instance(db: &'db dyn Db, def: DefId<'db>, default: bool) -> Self {
+        let kind = if !default {
+            InstanceKind::Regular
+        } else if crate::support::is_std_definition(db, def) {
+            InstanceKind::StandardDefault
+        } else {
+            InstanceKind::Default
+        };
+        Self::Instance { def, kind }
+    }
+
     pub(crate) fn is_default(&self) -> bool {
-        matches!(self, ClauseOrigin::Instance { default: true, .. })
+        matches!(
+            self,
+            Self::Instance {
+                kind: InstanceKind::Default | InstanceKind::StandardDefault,
+                ..
+            }
+        )
     }
 }
 

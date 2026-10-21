@@ -282,7 +282,7 @@ pub(super) fn base_trait_env_clauses<'db>(
             }
             for origin in &source.instance_origins {
                 if let Some(fact) = instance_fact_for_origin(db, origin.module, origin.def_id) {
-                    clauses.push(fact.clause());
+                    clauses.push(fact.clause(db));
                 }
             }
             if let Some(source) = source.derived_generic {
@@ -584,15 +584,16 @@ impl<'db> TraitClauseBuilder<'db> {
             binder_count: type_vars.len() as u32,
             head,
             conditions,
-            origin: ClauseOrigin::Instance {
-                def: instance.def_id_value(self.db),
-                default: instance.default_kw(self.db).is_some(),
-            },
+            origin: ClauseOrigin::instance(
+                self.db,
+                instance.def_id_value(self.db),
+                instance.default_kw(self.db).is_some(),
+            ),
         });
     }
 
     fn add_instance_fact(&mut self, fact: &InstanceFact<'db>) {
-        self.clauses.push(fact.clause());
+        self.clauses.push(fact.clause(self.db));
     }
 
     fn add_local_derived_generic_instances(

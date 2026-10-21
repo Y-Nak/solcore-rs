@@ -1,0 +1,8 @@
+{
+  "result": "unique",
+  "goal": "Choice",
+  "owners": [
+    "main",
+    "std"
+  ]
+}

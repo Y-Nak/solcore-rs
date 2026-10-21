@@ -195,7 +195,10 @@ impl<'db> TabledEngine<'db> {
                 clause.origin,
                 ClauseOrigin::Builtin
                     | ClauseOrigin::Derived(_)
-                    | ClauseOrigin::Instance { default: false, .. }
+                    | ClauseOrigin::Instance {
+                        kind: InstanceKind::Regular,
+                        ..
+                    }
             ) && head_can_unify(self.db, clause, key.pred, &goal_vars)
         })
     }
