@@ -631,8 +631,8 @@ impl<'db> InferCtx<'db> {
                     self.poison_pat(body, pat);
                     Some(TypeckDiagnostic::Mismatch {
                         span: self.pat_label_span(body, pat),
-                        expected: "numeric".to_owned(),
-                        actual: inferred,
+                        expected: inferred,
+                        actual: "numeric".to_owned(),
                     })
                 }
                 _ => None,
