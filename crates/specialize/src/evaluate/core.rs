@@ -97,9 +97,10 @@ struct PendingClone<'db> {
     env: VEnv<'db>,
 }
 
-/// Bindings hidden by declarations in one lexical scope. Save each outer
-/// binding at its declaration point, after evaluating its initializer, so
-/// writes made before shadowing survive when the scope exits.
+/// Bindings hidden by declarations in one lexical scope. Direct declarations
+/// save the outer binding after evaluating their initializer. Residual control
+/// flow registers its declarations after invalidating possible outer writes,
+/// before evaluating any arm, whose writes may never execute.
 #[derive(Default)]
 struct ScopeBindings<'db> {
     shadowed: FxHashMap<String, (Option<MonoExpr<'db>>, bool)>,
@@ -188,7 +189,14 @@ pub(super) struct Evaluator<'db> {
     enforce_comptime: bool,
 }
 
-struct StmtWriteEffectsCollector<'effects, 'db> {
+struct StmtEffects {
+    // Writes before a declaration refer to outer bindings.
+    writes: AssignedNames,
+    // Bindings visible after traversal, excluding nested lexical scopes.
+    declarations: FxHashSet<String>,
+}
+
+struct StmtEffectsCollector<'effects, 'db> {
     db: &'db dyn Db,
     call_effects: &'effects FxHashMap<String, AssignedNames>,
     storage_fields: &'effects FxHashSet<String>,
@@ -198,7 +206,7 @@ struct StmtWriteEffectsCollector<'effects, 'db> {
     effects: AssignedNames,
 }
 
-impl<'db> Visitor<'db> for StmtWriteEffectsCollector<'_, 'db> {
+impl<'db> Visitor<'db> for StmtEffectsCollector<'_, 'db> {
     fn visit_stmt(&mut self, stmt: &MonoStmt<'db>) {
         match &stmt.kind {
             MonoStmtKind::Let { id, .. } => {
@@ -571,10 +579,23 @@ impl<'db> Evaluator<'db> {
             .all(|(index, arm)| index == selected || !self.stmts_introduce_bindings(&arm.body))
     }
 
-    fn control_flow_effects(&mut self, body: &[MonoStmt<'db>]) -> AssignedNames {
-        let mut effects = self.stmts_write_effects(body);
-        effects.merge(self.stmts_binding_effects(body));
-        effects
+    /// Preserve the bindings hidden by declarations before masking those
+    /// declarations for residual control flow. Only writes to an outer binding
+    /// can invalidate its saved value; writes after a declaration belong to the
+    /// new binding. Evaluate each region before masking its declarations for
+    /// later regions, so earlier expressions still see the outer bindings.
+    fn prepare_control_flow_env(
+        &mut self,
+        env: VEnv<'db>,
+        comptime_env: CEnv,
+        effects: StmtEffects,
+        scope: &mut ScopeBindings<'db>,
+    ) -> (VEnv<'db>, CEnv) {
+        let (env, comptime_env) = self.mask_assigned_env(env, comptime_env, &effects.writes);
+        for name in &effects.declarations {
+            scope.declare(name, &env, &comptime_env);
+        }
+        (env, comptime_env)
     }
 
     fn eval_stmt(
@@ -780,12 +801,14 @@ impl<'db> Evaluator<'db> {
                         scope,
                     );
                 }
-                let mut assigned = self.control_flow_effects(&then_body);
-                if let Some(else_body) = else_body.as_deref() {
-                    assigned.merge(self.control_flow_effects(else_body));
-                }
-                let (branch_env, branch_comptime_env) =
-                    self.mask_assigned_env(env.clone(), comptime_env.clone(), &assigned);
+                let effects = self.collect_stmt_effects(FxHashSet::default(), |collector| {
+                    for stmt in then_body.iter().chain(else_body.iter().flatten()) {
+                        collector.visit_stmt(stmt);
+                    }
+                });
+                let (mut branch_env, mut branch_comptime_env) =
+                    self.prepare_control_flow_env(env, comptime_env, effects, scope);
+                let then_bindings = self.stmts_binding_effects(&then_body);
                 let (_, _, then_body) = self.eval_stmts_in_scope(
                     type_reg,
                     branch_env.clone(),
@@ -794,7 +817,13 @@ impl<'db> Evaluator<'db> {
                     ret_comptime,
                     scope,
                 );
+                self.invalidate_assigned_effects(
+                    &then_bindings,
+                    &mut branch_env,
+                    &mut branch_comptime_env,
+                );
                 let else_body = else_body.map(|body| {
+                    let else_bindings = self.stmts_binding_effects(&body);
                     let (_, _, body) = self.eval_stmts_in_scope(
                         type_reg,
                         branch_env.clone(),
@@ -803,12 +832,16 @@ impl<'db> Evaluator<'db> {
                         ret_comptime,
                         scope,
                     );
+                    self.invalidate_assigned_effects(
+                        &else_bindings,
+                        &mut branch_env,
+                        &mut branch_comptime_env,
+                    );
                     body
                 });
-                let (env, comptime_env) = self.mask_assigned_env(env, comptime_env, &assigned);
                 (
-                    env,
-                    comptime_env,
+                    branch_env,
+                    branch_comptime_env,
                     vec![MonoStmt {
                         span,
                         kind: MonoStmtKind::If {
@@ -876,16 +909,20 @@ impl<'db> Evaluator<'db> {
                 self.memory.clear();
                 // Names written anywhere in the loop (init/cond/post/body)
                 // must not fold to their pre-loop constants.
-                let mut assigned = self.control_flow_effects(&body);
-                assigned.merge(self.control_flow_effects(&init));
-                let cond_effects = self.expr_write_effects(&cond);
-                assigned.merge(match cond_effects {
-                    AssignedNames::All => AssignedNames::Names(self.visible_storage_fields()),
-                    effects => effects,
+                let effects = self.collect_stmt_effects(FxHashSet::default(), |collector| {
+                    for stmt in &init {
+                        collector.visit_stmt(stmt);
+                    }
+                    collector.visit_expr(&cond);
+                    for stmt in post.iter().chain(&body) {
+                        collector.visit_stmt(stmt);
+                    }
                 });
-                assigned.merge(self.control_flow_effects(&post));
-                let (loop_env, loop_comptime_env) =
-                    self.mask_assigned_env(env.clone(), comptime_env.clone(), &assigned);
+                let (mut loop_env, mut loop_comptime_env) =
+                    self.prepare_control_flow_env(env, comptime_env, effects, scope);
+                let init_bindings = self.stmts_binding_effects(&init);
+                let post_bindings = self.stmts_binding_effects(&post);
+                let body_bindings = self.stmts_binding_effects(&body);
                 let (_, _, init) = self.eval_stmts_in_scope(
                     type_reg,
                     loop_env.clone(),
@@ -893,6 +930,11 @@ impl<'db> Evaluator<'db> {
                     init,
                     ret_comptime,
                     scope,
+                );
+                self.invalidate_assigned_effects(
+                    &init_bindings,
+                    &mut loop_env,
+                    &mut loop_comptime_env,
                 );
                 self.memory.clear();
                 let cond = self.eval_expr(&loop_env, &loop_comptime_env, cond);
@@ -905,6 +947,11 @@ impl<'db> Evaluator<'db> {
                     ret_comptime,
                     scope,
                 );
+                self.invalidate_assigned_effects(
+                    &post_bindings,
+                    &mut loop_env,
+                    &mut loop_comptime_env,
+                );
                 self.memory.clear();
                 let (_, _, body) = self.eval_stmts_in_scope(
                     type_reg,
@@ -913,6 +960,11 @@ impl<'db> Evaluator<'db> {
                     body,
                     ret_comptime,
                     scope,
+                );
+                self.invalidate_assigned_effects(
+                    &body_bindings,
+                    &mut loop_env,
+                    &mut loop_comptime_env,
                 );
                 self.memory.clear();
                 (
@@ -1170,7 +1222,8 @@ impl<'db> Evaluator<'db> {
         // Desugared source `if` arms can introduce bindings visible
         // after the statement, including from an unexecuted branch.
         // Only actual matches can discard their static columns here.
-        let specialize_columns = !self.if_stmt_spans.contains(&span)
+        let source_if = self.if_stmt_spans.contains(&span);
+        let specialize_columns = !source_if
             && scrutinees
                 .iter()
                 .any(|expr| !self.expr_is_known_value(expr));
@@ -1200,24 +1253,41 @@ impl<'db> Evaluator<'db> {
                 }
             }
         }
-        let mut assigned = AssignedNames::empty();
-        for (arm, _) in &arms {
-            assigned.merge(self.arm_write_effects(arm));
-            if self.if_stmt_spans.contains(&span) {
-                assigned.merge(self.stmts_binding_effects(&arm.body));
+        let (mut env, mut comptime_env, assigned) = if source_if {
+            let effects = self.collect_stmt_effects(FxHashSet::default(), |collector| {
+                for (arm, _) in &arms {
+                    for stmt in &arm.body {
+                        collector.visit_stmt(stmt);
+                    }
+                }
+            });
+            let (env, comptime_env) =
+                self.prepare_control_flow_env(env, comptime_env, effects, scope);
+            (env, comptime_env, AssignedNames::empty())
+        } else {
+            let mut assigned = AssignedNames::empty();
+            for (arm, _) in &arms {
+                assigned.merge(self.arm_write_effects(arm));
             }
-        }
+            (env, comptime_env, assigned)
+        };
         let arms = arms
             .into_iter()
             .map(|(arm, known)| {
-                let mut masked = self.arm_write_effects(&arm);
-                if self.if_stmt_spans.contains(&span) {
-                    // Bindings from either arm are statically visible
-                    // even if their declaration never executes.
-                    masked.merge(assigned.clone());
-                }
-                let (mut arm_env, mut arm_comptime_env) =
-                    self.mask_assigned_env(env.clone(), comptime_env.clone(), &masked);
+                let introduced = if source_if {
+                    self.stmts_binding_effects(&arm.body)
+                } else {
+                    AssignedNames::empty()
+                };
+                let (mut arm_env, mut arm_comptime_env) = if source_if {
+                    // Earlier arms' declarations are visible here, even if
+                    // those arms do not execute. This arm's declarations only
+                    // hide the previous bindings after their initializers.
+                    (env.clone(), comptime_env.clone())
+                } else {
+                    let masked = self.arm_write_effects(&arm);
+                    self.mask_assigned_env(env.clone(), comptime_env.clone(), &masked)
+                };
                 // Patterns bind simultaneously, using the scrutinees'
                 // values before the arm body can assign outer names.
                 self.bind_residual_patterns(
@@ -1227,7 +1297,7 @@ impl<'db> Evaluator<'db> {
                     &mut arm_env,
                     &mut arm_comptime_env,
                 );
-                let (_, _, body) = if self.if_stmt_spans.contains(&span) {
+                let (_, _, body) = if source_if {
                     self.eval_stmts_in_scope(
                         type_reg,
                         arm_env,
@@ -1266,6 +1336,7 @@ impl<'db> Evaluator<'db> {
                         )
                     }
                 };
+                self.invalidate_assigned_effects(&introduced, &mut env, &mut comptime_env);
                 let pats = arm
                     .pats
                     .into_iter()
@@ -1905,8 +1976,21 @@ impl<'db> Evaluator<'db> {
         stmts: &[MonoStmt<'db>],
         locals: FxHashSet<String>,
     ) -> AssignedNames {
+        self.collect_stmt_effects(locals, |collector| {
+            for stmt in stmts {
+                collector.visit_stmt(stmt);
+            }
+        })
+        .writes
+    }
+
+    fn collect_stmt_effects(
+        &mut self,
+        locals: FxHashSet<String>,
+        collect: impl FnOnce(&mut StmtEffectsCollector<'_, 'db>),
+    ) -> StmtEffects {
         let storage_fields = self.visible_storage_fields();
-        let mut collector = StmtWriteEffectsCollector {
+        let mut collector = StmtEffectsCollector {
             db: self.db,
             call_effects: &self.write_effects,
             storage_fields: &storage_fields,
@@ -1915,14 +1999,14 @@ impl<'db> Evaluator<'db> {
             invalidates_memory: false,
             effects: AssignedNames::empty(),
         };
-        for stmt in stmts {
-            collector.visit_stmt(stmt);
-        }
-        let effects = collector.effects;
+        collect(&mut collector);
         if collector.invalidates_memory {
             self.memory.clear();
         }
-        effects
+        StmtEffects {
+            writes: collector.effects,
+            declarations: collector.locals,
+        }
     }
 
     /// Pattern bindings inherit the availability of their corresponding
