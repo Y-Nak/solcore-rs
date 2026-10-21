@@ -1961,14 +1961,14 @@ trait ABIElementAttribs<t> {
     function headSize(p: Proxy<t>) returns (word);
 }
 
-default impl<t> ABIElementAttribs<t> where t: ABIAttribs {
-    function headSize(p: Proxy<t>) returns (word) {
+default impl<t> ABIElementAttribs<ABIElement<t>> where t: ABIAttribs {
+    function headSize(p: Proxy<ABIElement<t>>) returns (word) {
         return ABIAttribs.headSize(@t);
     }
 }
 
-impl<a, b> ABIElementAttribs<(a, b)> where a: ABIAttribs, b: ABIAttribs {
-    function headSize(p: Proxy<(a, b)>) returns (word) {
+impl<a, b> ABIElementAttribs<ABIElement<(a, b)>> where a: ABIAttribs, b: ABIAttribs {
+    function headSize(p: Proxy<ABIElement<(a, b)>>) returns (word) {
         return ABIAttribs.headSize(@ABITuple<(a, b)>);
     }
 }
@@ -2033,14 +2033,14 @@ impl<baseType, baseType_decoded> ABIDecode<ABIDecoder<calldata<DynArray<baseType
 // demand (abiArrayLength / abiArrayGet). Because nothing is materialised here,
 // this works for any decodable element type — including multi-word ADTs such as
 // a sum(...) — which the word-per-slot memory(DynArray(...)) path cannot hold.
-impl<baseType, baseType_decoded> ABIDecode<ABIDecoder<calldata<array<baseType>>, CalldataWordReader>, calldata<array<baseType_decoded>>> where baseType: ABIElementAttribs, ABIDecoder<ABIElement<baseType>, CalldataWordReader>: ABIDecode<baseType_decoded> {
+impl<baseType, baseType_decoded> ABIDecode<ABIDecoder<calldata<array<baseType>>, CalldataWordReader>, calldata<array<baseType_decoded>>> where ABIElement<baseType>: ABIElementAttribs, ABIDecoder<ABIElement<baseType>, CalldataWordReader>: ABIDecode<baseType_decoded> {
     function decode(ptr: ABIDecoder<calldata<array<baseType>>, CalldataWordReader>, currentHeadOffset: word) returns (calldata<array<baseType_decoded>>) {
         let headRdr = WordReader.advance(ptr, currentHeadOffset);
         let dataOffset: word = WordReader.read(headRdr);
         let dataRdr = WordReader.advance(ptr, dataOffset);
         let rdr: CalldataWordReader = getReader(dataRdr);
         let length = WordReader.read(rdr);
-        checkArrayHead(WordReader.advance(rdr, 32), length, ABIElementAttribs.headSize(@baseType));
+        checkArrayHead(WordReader.advance(rdr, 32), length, ABIElementAttribs.headSize(@ABIElement<baseType>));
         let addr: word = Typedef.rep(rdr);
         return Typedef.abs(addr);
     }
@@ -2067,13 +2067,13 @@ function abiArrayLength<t>(a: calldata<array<t>>) returns (uint256) {
 //     head offset; the element's own dynamic decoder follows that offset. This
 //     is uniform across element kinds: a dynamic sum follows it and rebases to
 //     the element start, a bare bytes/string leaf follows it to its length word.
-function abiArrayGet<t, t_decoded>(a: calldata<array<t>>, i: uint256) returns (t_decoded) where t: ABIElementAttribs, ABIDecoder<ABIElement<t>, CalldataWordReader>: ABIDecode<t_decoded> {
+function abiArrayGet<t, t_decoded>(a: calldata<array<t>>, i: uint256) returns (t_decoded) where ABIElement<t>: ABIElementAttribs, ABIDecoder<ABIElement<t>, CalldataWordReader>: ABIDecode<t_decoded> {
     // Bounds check: valid indices are [0, length); i == length is already past
     // the last element, so reject i >= length (mirrors the storage-array guard).
     require(i < abiArrayLength(a), Error(0x7f52b2bf)); // ArrayOutOfBounds()
     let base = CalldataWordReader(Typedef.rep(a));
     let elemRdr = WordReader.advance(base, 32);
-    let stride = ABIElementAttribs.headSize(@t);
+    let stride = ABIElementAttribs.headSize(@ABIElement<t>);
     checkArrayHead(elemRdr, Typedef.rep(abiArrayLength(a)), stride);
     let idx: word = Typedef.rep(i);
     let dec: ABIDecoder<ABIElement<t>, CalldataWordReader> = ABIDecoder(elemRdr);
@@ -2804,7 +2804,7 @@ impl<a, v, i> RValueIdxAccess<(storage<array<a>>, i), v> where storage<a>: CanSt
 // ridx(arr, i), which dispatches here and decodes element i on demand via
 // abiArrayGet. There is deliberately no LValueIdxAccess instance — calldata is
 // immutable, so `arr[i] = …` is (correctly) rejected at compile time.
-impl<t, t_decoded, i> RValueIdxAccess<(calldata<array<t>>, i), t_decoded> where t: ABIElementAttribs, ABIDecoder<ABIElement<t>, CalldataWordReader>: ABIDecode<t_decoded>, i: Typedef<word> {
+impl<t, t_decoded, i> RValueIdxAccess<(calldata<array<t>>, i), t_decoded> where ABIElement<t>: ABIElementAttribs, ABIDecoder<ABIElement<t>, CalldataWordReader>: ABIDecode<t_decoded>, i: Typedef<word> {
     function lookup(xi: (calldata<array<t>>, i)) returns (t_decoded) {
         match (xi) {
             case (a, idx) {

@@ -1,7 +1,7 @@
 import * from std;
 import * from std.dispatch;
-impl ABIElementAttribs<()> {
-    function headSize(p: Proxy<()>) returns (word) {
+impl ABIElementAttribs<ABIElement<()>> {
+    function headSize(p: Proxy<ABIElement<()>>) returns (word) {
         return 64;
     }
 }

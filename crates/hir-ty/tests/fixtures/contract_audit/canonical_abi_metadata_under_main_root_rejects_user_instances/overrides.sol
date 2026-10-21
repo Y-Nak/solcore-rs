@@ -1,8 +1,8 @@
 import * from std;
 import * from dispatch;
 export {};
-impl ABIElementAttribs<uint256> {
-    function headSize(p: Proxy<uint256>) returns (word) {
+impl ABIElementAttribs<ABIElement<uint256>> {
+    function headSize(p: Proxy<ABIElement<uint256>>) returns (word) {
         return 64;
     }
 }

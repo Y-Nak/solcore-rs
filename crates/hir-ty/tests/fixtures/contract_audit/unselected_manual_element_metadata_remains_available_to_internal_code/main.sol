@@ -1,7 +1,7 @@
 import * from std;
 import * from std.dispatch;
-impl ABIElementAttribs<address> {
-    function headSize(p: Proxy<address>) returns (word) {
+impl ABIElementAttribs<ABIElement<address>> {
+    function headSize(p: Proxy<ABIElement<address>>) returns (word) {
         return 64;
     }
 }
@@ -11,7 +11,7 @@ impl ABITypeString<address> {
     }
 }
 function privateLayout() returns (word) {
-    return ABIElementAttribs.headSize(@address);
+    return ABIElementAttribs.headSize(@ABIElement<address>);
 }
 function privateSignature() returns (string) {
     return ABITypeString.typeStr(@address);
