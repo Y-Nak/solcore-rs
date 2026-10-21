@@ -15,6 +15,13 @@ pub fn run(run_fixture: impl Fn(&Path) -> Result<(), E2eFailure>) -> Result<(), 
     run_matrix(fixtures, run_fixture)
 }
 
+/// Runs the arithmetic part of the matrix inside `unchecked { ... }` blocks.
+pub fn run_unchecked(
+    run_fixture: impl Fn(&Path) -> Result<(), E2eFailure>,
+) -> Result<(), E2eFailure> {
+    run_matrix(unchecked_fixtures, run_fixture)
+}
+
 /// Exercises integer ABI codecs using independently encoded calldata and results.
 pub fn run_abi(run_fixture: impl Fn(&Path) -> Result<(), E2eFailure>) -> Result<(), E2eFailure> {
     run_matrix(abi::fixtures, run_fixture)
@@ -64,6 +71,8 @@ enum Operation {
     Not,
     Compare,
     Bounds,
+    /// Unary `-x`; only exercised by the unchecked matrix.
+    Neg,
 }
 
 const OPERATIONS: [Operation; 11] = [
@@ -94,6 +103,7 @@ impl Operation {
             Self::Not => "not",
             Self::Compare => "cmp",
             Self::Bounds => "bounds",
+            Self::Neg => "neg",
         }
     }
 
@@ -108,6 +118,7 @@ impl Operation {
             Self::Or => "x | y",
             Self::Xor => "x ^ y",
             Self::Not => "~x",
+            Self::Neg => "-x",
             Self::Compare | Self::Bounds => unreachable!("these operations have custom bodies"),
         }
     }
@@ -115,7 +126,7 @@ impl Operation {
     fn arity(self) -> usize {
         match self {
             Self::Bounds => 0,
-            Self::Not => 1,
+            Self::Not | Self::Neg => 1,
             _ => 2,
         }
     }
@@ -184,6 +195,8 @@ impl Operation {
             (false, Self::Not) => &[(N(0), N(0)), (Max, N(0)), (N(0x0f), N(0))],
             (false, Self::Compare) => &[(N(1), N(2)), (N(2), N(1)), (Max, Max), (N(0), Max)],
             (_, Self::Bounds) => &[(Min, Max)],
+            (true, Self::Neg) => &[(N(5), N(0)), (Min, N(0)), (N(0), N(0))],
+            (false, Self::Neg) => &[(N(0), N(0)), (N(1), N(0)), (Max, N(0))],
         }
     }
 }
@@ -233,6 +246,7 @@ impl IntegerType {
             Operation::Bounds => {
                 return format!("({}, {})", literal(&self.min), literal(&self.max));
             }
+            Operation::Neg => -a,
         };
         if matches!(
             operation,
@@ -243,6 +257,74 @@ impl IntegerType {
         } else {
             literal(&value)
         }
+    }
+
+    /// The result of an operation inside `unchecked`: arithmetic wraps to the
+    /// type's width (so `MIN / -1` is `MIN`), while division and modulo by zero
+    /// still panic.
+    fn expected_unchecked(&self, operation: Operation, a: &BigInt, b: &BigInt) -> String {
+        if matches!(operation, Operation::Div | Operation::Mod) && b == &BigInt::from(0) {
+            return panic(0x12);
+        }
+        let value = match operation {
+            Operation::Add => a + b,
+            Operation::Sub => a - b,
+            Operation::Mul => a * b,
+            Operation::Div => a / b,
+            Operation::Mod => a % b,
+            Operation::Neg => -a,
+            _ => unreachable!("only arithmetic runs in the unchecked matrix"),
+        };
+        let modulus = BigInt::from(1) << self.bits;
+        let wrapped = ((value - &self.min) % &modulus + &modulus) % &modulus + &self.min;
+        literal(&wrapped)
+    }
+
+    fn unchecked_source(&self, name: &str) -> String {
+        let family = if self.signed { "signed" } else { "unsigned" };
+        let suffix = format!("{}{}", if self.signed { "I" } else { "U" }, self.bits);
+        let mut source = format!(
+            "import * from std;\nimport * from std.{family};\nimport * from std.unchecked.{family};\nimport * from std.dispatch;\ncontract UncheckedOperations {{\n"
+        );
+        for operation in UNCHECKED_OPERATIONS {
+            for &(a, b) in operation.inputs(self.signed) {
+                let inputs = [self.operand(a), self.operand(b)];
+                let args = inputs[..operation.arity()]
+                    .iter()
+                    .map(literal)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let expected = self.expected_unchecked(operation, &inputs[0], &inputs[1]);
+                writeln!(source, "// #[({args}) -> {expected}]").unwrap();
+            }
+            let parameters = ["a: uint256", "b: uint256"][..operation.arity()].join(", ");
+            writeln!(
+                source,
+                "function {}{suffix}({parameters}) public returns (uint256) {{",
+                operation.name()
+            )
+            .unwrap();
+            for (&variable, &parameter) in ["x", "y"]
+                .iter()
+                .zip(["a", "b"].iter())
+                .take(operation.arity())
+            {
+                writeln!(
+                    source,
+                    "let {variable}: {name} = Typedef.abs(Typedef.rep({parameter}));"
+                )
+                .unwrap();
+            }
+            writeln!(
+                source,
+                "unchecked {{ return uint256(Typedef.rep({})); }}",
+                operation.expression()
+            )
+            .unwrap();
+            source.push_str("}\n");
+        }
+        source.push_str("}\n");
+        source
     }
 
     fn source(&self, name: &str) -> String {
@@ -351,6 +433,38 @@ fn fixtures() -> Vec<(String, String)> {
         .collect()
 }
 
+const UNCHECKED_OPERATIONS: [Operation; 6] = [
+    Operation::Add,
+    Operation::Sub,
+    Operation::Mul,
+    Operation::Div,
+    Operation::Mod,
+    Operation::Neg,
+];
+
+/// Returns one `unchecked` source fixture per integer type (12 types including
+/// `uint256`, 336 execution cases).
+fn unchecked_fixtures() -> Vec<(String, String)> {
+    let mut types = integer_types();
+    let magnitude = BigInt::from(1) << 256usize;
+    types.push((
+        "uint256".to_owned(),
+        IntegerType {
+            signed: false,
+            bits: 256,
+            min: BigInt::from(0),
+            max: magnitude - 1,
+        },
+    ));
+    types
+        .into_iter()
+        .map(|(name, ty)| {
+            let source = ty.unchecked_source(&name);
+            (format!("unchecked_{name}"), source)
+        })
+        .collect()
+}
+
 fn integer_types() -> Vec<(String, IntegerType)> {
     let mut types = Vec::new();
     for signed in [true, false] {
@@ -394,6 +508,26 @@ mod tests {
             );
         }
         assert_eq!(cases, 433);
+    }
+
+    #[test]
+    fn unchecked_matrix_sources_parse_and_format() {
+        let fixtures = unchecked_fixtures();
+        assert_eq!(fixtures.len(), 12);
+        let mut cases = 0;
+        for (name, source) in fixtures {
+            assert_eq!(source.matches("function ").count(), 6, "{name}");
+            assert_eq!(source.matches("unchecked {").count(), 6, "{name}");
+            cases += source.matches("// #[").count();
+            let formatted = format_source(&source, &FormatOptions::default())
+                .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+            assert_eq!(
+                format_source(&formatted, &FormatOptions::default()).unwrap(),
+                formatted,
+                "{name}: formatting must be idempotent"
+            );
+        }
+        assert_eq!(cases, 336);
     }
 
     #[test]

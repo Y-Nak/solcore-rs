@@ -3240,6 +3240,27 @@ contract C {
 }
 
 #[test]
+fn unchecked_block_arithmetic_folds_with_wrapping() {
+    let output = specialize_src_with_std(
+        r#"
+import * from std;
+import * from std.unchecked.unsigned;
+
+contract C {
+  function main() public returns (uint256) {
+    unchecked {
+      return uint256(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff) + uint256(1);
+    }
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(main_return_number(&output), Some("0".to_owned()));
+}
+
+#[test]
 fn unfolding_never_discards_an_unused_checked_operation() {
     let output = specialize_src_with_std(
         r#"

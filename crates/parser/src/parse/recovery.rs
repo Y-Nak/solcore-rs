@@ -102,7 +102,7 @@ pub(super) fn is_structured_statement_start(token: &Token<'_>) -> bool {
 }
 
 fn is_statement_start_token(token: &Token<'_>) -> bool {
-    is_structured_statement_start(token) || matches!(token, Token::Ident("while"))
+    is_structured_statement_start(token) || matches!(token, Token::Ident("while" | "unchecked"))
 }
 
 pub(super) fn refine_body_parse_error<'src>(
