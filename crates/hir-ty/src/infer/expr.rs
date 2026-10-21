@@ -189,9 +189,8 @@ impl<'db> InferCtx<'db> {
                 else_expr,
             } => {
                 let input = self.if_expr_match_input(body, expr_id, *cond, *then_expr, *else_expr);
-                let cond_ty = self.infer_expr(body, input.cond);
                 let bool_ty = self.bool();
-                self.unify_expr(body, input.cond, cond_ty, bool_ty);
+                self.infer_expr_expected(body, input.cond, Some(bool_ty));
                 let then_ty = self.infer_expr_expected(body, input.then_expr, expected.clone());
                 let else_ty = self.infer_expr_expected(body, input.else_expr, expected.clone());
                 if !self.report_numeric_if_branch_mismatch(

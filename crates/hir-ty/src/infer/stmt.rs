@@ -226,9 +226,8 @@ impl<'db> InferCtx<'db> {
                 body: for_body,
             } => {
                 self.infer_stmt_sequence(body, init);
-                let cond_ty = self.infer_expr(body, *cond);
                 let bool_ty = self.bool();
-                self.unify_expr(body, *cond, cond_ty, bool_ty);
+                self.infer_expr_expected(body, *cond, Some(bool_ty));
                 self.infer_stmt_sequence(body, post);
                 self.infer_stmt_sequence(body, for_body);
                 self.unit()
@@ -240,9 +239,8 @@ impl<'db> InferCtx<'db> {
             } => {
                 let input =
                     self.if_stmt_match_input(body, stmt_id, *cond, then_body, else_body.as_deref());
-                let cond_ty = self.infer_expr(body, input.cond);
                 let bool_ty = self.bool();
-                self.unify_expr(body, input.cond, cond_ty, bool_ty);
+                self.infer_expr_expected(body, input.cond, Some(bool_ty));
                 let then_ty = self.infer_stmt_sequence(body, &input.then_body);
                 let else_ty = input
                     .else_body
