@@ -124,6 +124,15 @@
   color: var(--text-secondary);
 }
 
+.tutorial-link {
+  text-decoration: none;
+}
+
+.tutorial-link:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: 2px;
+}
+
 .button:hover,
 .icon-button:hover,
 .select-control__shell:hover {

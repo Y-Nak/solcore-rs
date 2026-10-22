@@ -8,6 +8,11 @@ This is a prototype implementation of Solidity's new type system. It is function
 
 Try it in the [online playground](https://playground.solcore.soliditylang.org/).
 
+Learn with the English [Solcore Tutorial](solcore-tutorial/README.md): a guided
+path from your first program to traits, compile-time computation, and a tested
+contract. Every runnable listing comes from the playground's tested examples.
+Local playground builds include the book under **Tutorial** in the toolbar.
+
 ## Language and standard library
 
 The Rust compiler and its regression tests define the supported Solcore

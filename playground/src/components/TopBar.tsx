@@ -131,6 +131,15 @@ export function TopBar({
       </div>
 
       <div className="topbar__controls">
+        <a
+          className="button button--secondary tutorial-link"
+          href={`${import.meta.env.BASE_URL}tutorial/index.html`}
+          target="solcore-tutorial"
+          onClick={() => { window.name = "solcore-tutorial-playground"; }}
+          title="Learn Solcore with runnable examples"
+        >
+          Tutorial
+        </a>
         <label className="select-control">
           <span>Example</span>
           <span className="select-control__shell">

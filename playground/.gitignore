@@ -15,3 +15,4 @@ dist-ssr/
 
 # soljson is downloaded by `npm run fetch:solc` (scripts/fetch-soljson.mjs)
 public/solc/
+public/tutorial/

@@ -39,6 +39,6 @@ npm run test:wasm
 
 The native check compiles all playground sources. The tutorial check validates chapters, includes, example IDs, file selections, and integration URLs without network requests. The WASM tests execute the learning examples on both solc and Sonatina; rebuild WASM first after compiler changes. These checks are part of the existing CI workflow.
 
-The initial material was developed against base commit `d796716186242e3d53a50dd3c096a8077af3ac88`. Thereafter, included sources and CI keep it aligned with its checkout. The standard-library revision and intentional compatibility differences remain documented in the repository's [README](../README.md) and [semantic differences](../SEMANTIC_DIFFERENCES.md).
+Included sources and CI keep the tutorial aligned with its checkout. The Rust compiler and its regression tests define the supported language; see the repository's [README](../README.md) and [standard-library maintenance policy](../std/README.md).
 
 See [the design notes](src/appendix-design.md) for the official Rust, Go, and Svelte tutorials that informed the teaching format and the playground integration decision. This book follows the repository's [Apache-2.0 license](../LICENSE).

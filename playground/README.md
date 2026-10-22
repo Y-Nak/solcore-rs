@@ -87,11 +87,19 @@ also has a copy button. Generating these outputs does not deploy or execute code
 ## Development
 
 Use wasm-pack 0.15.0, as pinned in CI, for the custom WASM build profile.
+The integrated [Solcore Tutorial](../solcore-tutorial/README.md) also requires
+mdBook (`cargo install mdbook --version 0.4.52 --locked`, as pinned in CI).
+The normal development and build commands generate the English book and serve
+it at `tutorial/`, linked from the toolbar. Its example links use the same
+playground build, including when `VITE_BASE` configures a deployment subpath.
+Run `npm run build:tutorial` again after editing the book or its included examples.
+Run `npm run test:tutorial` to check source includes and navigation without building WASM.
 
 On a fresh checkout, generate the local wasm packages once before installing JavaScript dependencies:
 
 ```sh
-npm run build:wasm
+wasm-pack build ../crates/wasm --target web --out-dir pkg --profile wasm-release
+wasm-pack build ../crates/lsp --target web --out-dir pkg --profile wasm-release -- --features wasm
 npm install
 npm run dev
 ```
