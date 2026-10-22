@@ -97,18 +97,20 @@ impl<'db> InferCtx<'db> {
                     ) {
                         ret
                     } else {
-                        let index_ty = self.infer_expr(body, *index);
-                        let ret = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
-                        self.unify_expr(
-                            body,
-                            expr_id,
-                            base_ty,
-                            InferTy::Function {
-                                params: vec![index_ty],
-                                ret: Box::new(ret.clone()),
-                            },
-                        );
-                        ret
+                        self.infer_expr(body, *index);
+                        if !matches!(self.engine.resolve(base_ty.clone()), InferTy::Error) {
+                            let actual = self.display_infer_ty(base_ty);
+                            self.emit_expr_error(
+                                body,
+                                expr_id,
+                                TypeckDiagnostic::Mismatch {
+                                    span: self.expr_label_span(body, *base),
+                                    expected: "indexable collection".to_owned(),
+                                    actual,
+                                },
+                            );
+                        }
+                        InferTy::Error
                     }
                 }
             }
@@ -185,9 +187,8 @@ impl<'db> InferCtx<'db> {
                 else_expr,
             } => {
                 let input = self.if_expr_match_input(body, expr_id, *cond, *then_expr, *else_expr);
-                let cond_ty = self.infer_expr(body, input.cond);
                 let bool_ty = self.bool();
-                self.unify_expr(body, input.cond, cond_ty, bool_ty);
+                self.infer_expr_expected(body, input.cond, Some(bool_ty));
                 let then_ty = self.infer_expr_expected(body, input.then_expr, expected.clone());
                 let else_ty = self.infer_expr_expected(body, input.else_expr, expected.clone());
                 if !self.report_numeric_if_branch_mismatch(
@@ -265,7 +266,7 @@ impl<'db> InferCtx<'db> {
             .as_ref()?
             .iter()
             .position(|name| (*name.atom()).text(self.db) == field)?;
-        self.unify_expr(body, base, loaded_receiver, receiver.clone());
+        self.unify_expr(body, base, receiver.clone(), loaded_receiver);
         let scheme = self.lookup_adt_ctor_scheme(*def, hir_nameres::CtorIndex::from_usize(0))?;
         let instantiated = self.engine.instantiate_scheme(scheme);
         let InferTy::Function { params, ret } = self.accept_instantiated(instantiated) else {
@@ -659,14 +660,16 @@ impl<'db> InferCtx<'db> {
             })
             .collect::<Vec<_>>();
         let ret = expected.unwrap_or_else(|| self.engine.fresh_var());
+        // Arguments were checked against the parameters above. The surrounding
+        // expression supplies the expected return type for this check.
         self.unify_expr(
             body,
             site.call_expr,
-            callee_ty,
             InferTy::Function {
                 params: inferred_args,
                 ret: Box::new(ret.clone()),
             },
+            callee_ty,
         );
         if let Some(params) = &params {
             for (index, (param, arg)) in params.iter().zip(args).enumerate() {
@@ -758,7 +761,7 @@ impl<'db> InferCtx<'db> {
             .collect::<Vec<_>>();
         let ret = expected.unwrap_or_else(|| self.engine.fresh_var());
         if let Some(sig) = callable_sig {
-            self.unify_expr(body, call_expr, sig.ret, ret.clone());
+            self.unify_expr(body, call_expr, ret.clone(), sig.ret);
         }
         let source =
             self.indirect_call_site_source(body, call_expr, callee_expr, callee_ty.clone());
@@ -909,6 +912,7 @@ impl<'db> InferCtx<'db> {
         let ty = self.normalize_aliases(ty);
         match self.engine.resolve(ty) {
             InferTy::Function { params, ret } => Some(ClosureSig { params, ret: *ret }),
+            InferTy::Comptime(inner) => self.callable_sig_for_ty(*inner),
             _ => None,
         }
     }
@@ -1230,16 +1234,9 @@ impl<'db> InferCtx<'db> {
                 );
                 (Some(params), Some(ret))
             }
-            InferTy::Error => (None, None),
-            other => {
-                let actual = self.display_infer_ty(other);
-                self.diagnostics.push(TypeckDiagnostic::Mismatch {
-                    span,
-                    expected: "function".to_owned(),
-                    actual,
-                });
-                (None, None)
-            }
+            // The enclosing expression/argument check reports a non-function
+            // expectation against the inferred lambda type.
+            _ => (None, None),
         }
     }
 
@@ -1348,15 +1345,14 @@ impl<'db> InferCtx<'db> {
                 )
             }
             BinOp::And | BinOp::Or => {
+                // `&&`/`||` are built-in short-circuit operators (see
+                // specialize's evaluator and the hull emitter's native
+                // if/then/else lowering), not overloadable via `and`/`or`
+                // functions, so both operands must be `bool` directly.
                 let bool_ty = self.bool();
-                self.infer_operator_function_call_expected(
-                    body,
-                    expr,
-                    lhs_expr,
-                    rhs_expr,
-                    if op == BinOp::And { "and" } else { "or" },
-                    Some(bool_ty),
-                )
+                self.infer_expr_expected(body, lhs_expr, Some(bool_ty.clone()));
+                self.infer_expr_expected(body, rhs_expr, Some(bool_ty.clone()));
+                bool_ty
             }
             BinOp::Error => InferTy::Error,
         }
@@ -1403,11 +1399,11 @@ impl<'db> InferCtx<'db> {
                 self.unify_expr(
                     body,
                     expr,
-                    callee_ty.clone(),
                     InferTy::Function {
                         params,
                         ret: Box::new(expected_ty),
                     },
+                    callee_ty.clone(),
                 );
             }
         }
@@ -1572,11 +1568,11 @@ impl<'db> InferCtx<'db> {
                 self.unify_expr(
                     body,
                     expr,
-                    callee_ty.clone(),
                     InferTy::Function {
                         params,
                         ret: Box::new(expected_ty),
                     },
+                    callee_ty.clone(),
                 );
             }
         }
