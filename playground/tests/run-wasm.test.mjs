@@ -176,12 +176,33 @@ test(`${backend}: AMM watches track committed swaps and discard changes from wat
   assert.ok(stale.every(result => result.error && result.value === null));
 });
 
+test(`${backend}: tutorial-bounded-counter keeps manual state after a rejected increment`, async () => {
+  const content = await readFile(new URL('../src/examples/tutorial-bounded-counter/BoundedCounter.sol', import.meta.url), 'utf8');
+  const input = { files: [{ path: 'BoundedCounter.sol', content }], entry: 'BoundedCounter.sol', options, sandboxEpoch: 175 };
+  const invoke = (signature, args) => run({ ...input, manual: {
+    contract: 'BoundedCounter', signature, arguments: JSON.stringify(args), constructorArguments: '[]', simulate: false,
+  } }).execution;
+  assert.equal(invoke('read()', []).decoded, '0');
+  assert.equal(invoke('remaining()', []).decoded, '10');
+  assert.equal(invoke('add(uint256)', [4]).status, 'success');
+  assert.equal(invoke('read()', []).decoded, '4');
+  assert.equal(invoke('remaining()', []).decoded, '6');
+  assert.equal(invoke('add(uint256)', [6]).status, 'success');
+  assert.equal(invoke('add(uint256)', [1]).status, 'revert');
+  assert.equal(invoke('read()', []).decoded, '10');
+  assert.equal(invoke('remaining()', []).decoded, '0');
+});
+
 for (const [directory, entry, helpers, count] of [
   ['std-usage', 'Calculator.sol', [], 4],
   ['option', 'Splitter.sol', ['option.sol'], 4],
   ['generics', 'Registry.sol', [], 6],
   ['pattern-matching', 'Escrow.sol', [], 6],
   ['invariants', 'Amm.sol', ['pool.sol'], 5],
+  ['tutorial-basics', 'Basics.sol', [], 5],
+  ['tutorial-counter', 'Counter.sol', [], 3],
+  ['tutorial-bounded-counter', 'BoundedCounter.sol', [], 5],
+  ['comptime', 'Answer.sol', [], 1],
 ]) {
   test(`${backend}: ${directory} example tests pass together and replay setup for the final check`, async () => {
     const files = await Promise.all([entry, ...helpers].map(async path => ({
