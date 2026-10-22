@@ -4148,7 +4148,7 @@ contract C {
 }
 
 #[test]
-fn if_statement_specializes_through_pre_typeck_match_view() {
+fn if_statement_preserves_shared_scope_through_pre_typeck_view() {
     let (_db, output) = specialize_src(
         r#"
 contract C {
@@ -4177,18 +4177,23 @@ contract C {
             function.name.contains("main").then_some(function)
         })
         .expect("specialized main");
-    let MonoStmtKind::Match { scrutinees, arms } = &main.body[1].kind else {
+    let MonoStmtKind::If {
+        cond,
+        then_body,
+        else_body,
+    } = &main.body[1].kind
+    else {
         panic!(
-            "expected if statement to specialize as match: {:#?}",
+            "expected if statement to preserve its shared scope: {:#?}",
             main.body
         );
     };
-    assert_eq!(scrutinees.len(), 1);
-    assert_eq!(arms.len(), 2);
-    assert!(matches!(&arms[0].pats[0].kind, MonoPatKind::Con { ctor, .. } if ctor.name == "true"));
-    assert!(matches!(&arms[1].pats[0].kind, MonoPatKind::Con { ctor, .. } if ctor.name == "false"));
-    assert!(matches!(arms[0].body[0].kind, MonoStmtKind::Assign { .. }));
-    assert!(matches!(arms[1].body[0].kind, MonoStmtKind::Assign { .. }));
+    assert!(matches!(&cond.kind, MonoExprKind::Var(_)));
+    assert!(matches!(then_body[0].kind, MonoStmtKind::Assign { .. }));
+    assert!(matches!(
+        else_body.as_ref().unwrap()[0].kind,
+        MonoStmtKind::Assign { .. }
+    ));
 }
 
 #[test]

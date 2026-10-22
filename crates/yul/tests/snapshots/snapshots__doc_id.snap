@@ -1,6 +1,5 @@
 ---
 source: crates/yul/tests/snapshots.rs
-assertion_line: 107
 expression: "render_source(\"doc_id\",\nr#\"\nimport * from std;\nimport * from std.dispatch;\n\ncontract IdDoc {\n  function id(x : uint256) public returns (uint256) {\n    return x;\n  }\n}\n\"#,)"
 ---
 object "IdDocDeploy" {
@@ -103,50 +102,50 @@ object "IdDocDeploy" {
       }
       function usr$Typedef_rep_d6e4e5fa6$memory_dda73d3aeLbytes_dc4f6af34J_word(src$x_31) -> gen$result_32 {
         {
-          let src$$match_bind17_33
-          src$$match_bind17_33 := src$x_31
+          let src$$match_bind15_33
+          src$$match_bind15_33 := src$x_31
           let src$w_34
-          src$w_34 := src$$match_bind17_33
+          src$w_34 := src$$match_bind15_33
           gen$result_32 := src$w_34
           leave
         }
       }
       function usr$Typedef_rep_d6e4e5fa6$memory_dda73d3aeLstring_d2d06d9f7J_word(src$x_35) -> gen$result_36 {
         {
-          let src$$match_bind11_37
-          src$$match_bind11_37 := src$x_35
+          let src$$match_bind10_37
+          src$$match_bind10_37 := src$x_35
           let src$w_38
-          src$w_38 := src$$match_bind11_37
+          src$w_38 := src$$match_bind10_37
           gen$result_36 := src$w_38
           leave
         }
       }
       function usr$Typedef_rep_d87df7559$uint256_d2edb4603_word(src$x_39) -> gen$result_40 {
         {
-          let src$$match_bind21_41
-          src$$match_bind21_41 := src$x_39
+          let src$$match_bind19_41
+          src$$match_bind19_41 := src$x_39
           let src$w_42
-          src$w_42 := src$$match_bind21_41
+          src$w_42 := src$$match_bind19_41
           gen$result_40 := src$w_42
           leave
         }
       }
       function usr$Typedef_rep_df279797b$calldata_d8debf069Lbytes_dc4f6af34J_word(src$x_43) -> gen$result_44 {
         {
-          let src$$match_bind18_45
-          src$$match_bind18_45 := src$x_43
+          let src$$match_bind16_45
+          src$$match_bind16_45 := src$x_43
           let src$w_46
-          src$w_46 := src$$match_bind18_45
+          src$w_46 := src$$match_bind16_45
           gen$result_44 := src$w_46
           leave
         }
       }
       function usr$WordReader_advance_dbba4aaa0_pcb6af4462cd5d163$ABIDecoder_da57c46d1Luint256_d2edb4603_CalldataWordReader_d3137e4ffJ(src$decoder_47, src$offset_48) -> gen$result_49 {
         {
-          let src$$match_bind19_50
-          src$$match_bind19_50 := src$decoder_47
+          let src$$match_bind17_50
+          src$$match_bind17_50 := src$decoder_47
           let src$ptr_51
-          src$ptr_51 := src$$match_bind19_50
+          src$ptr_51 := src$$match_bind17_50
           let _v18
           _v18 := usr$WordReader_advance_ddbeacc0b$CalldataWordReader_d3137e4ff(src$ptr_51, src$offset_48)
           gen$result_49 := _v18
@@ -155,10 +154,10 @@ object "IdDocDeploy" {
       }
       function usr$WordReader_advance_ddbeacc0b$CalldataWordReader_d3137e4ff(src$reader_52, src$offset_53) -> gen$result_54 {
         {
-          let src$$match_bind22_55
-          src$$match_bind22_55 := src$reader_52
+          let src$$match_bind20_55
+          src$$match_bind20_55 := src$reader_52
           let src$ptr_56
-          src$ptr_56 := src$$match_bind22_55
+          src$ptr_56 := src$$match_bind20_55
           let _v19
           _v19 := usr$opcodes_calldatasize_dee48adc5()
           usr$std_checkReaderRange_d0e2d0f8d(src$ptr_56, _v19, src$offset_53)
@@ -170,10 +169,10 @@ object "IdDocDeploy" {
       }
       function usr$WordReader_read_dad71a7e5_pcb6af4462cd5d163$ABIDecoder_da57c46d1Luint256_d2edb4603_CalldataWordReader_d3137e4ffJ(src$decoder_57) -> gen$result_58 {
         {
-          let src$$match_bind20_59
-          src$$match_bind20_59 := src$decoder_57
+          let src$$match_bind18_59
+          src$$match_bind18_59 := src$decoder_57
           let src$ptr_60
-          src$ptr_60 := src$$match_bind20_59
+          src$ptr_60 := src$$match_bind18_59
           let _v21
           _v21 := usr$WordReader_read_df18f24f1$CalldataWordReader_d3137e4ff(src$ptr_60)
           gen$result_58 := _v21
@@ -182,10 +181,10 @@ object "IdDocDeploy" {
       }
       function usr$WordReader_read_df18f24f1$CalldataWordReader_d3137e4ff(src$reader_61) -> gen$result_62 {
         {
-          let src$$match_bind23_63
-          src$$match_bind23_63 := src$reader_61
+          let src$$match_bind21_63
+          src$$match_bind21_63 := src$reader_61
           let src$ptr_64
-          src$ptr_64 := src$$match_bind23_63
+          src$ptr_64 := src$$match_bind21_63
           let _v22
           _v22 := usr$opcodes_calldatasize_dee48adc5()
           usr$std_checkReaderRange_d0e2d0f8d(src$ptr_64, _v22, 32)
@@ -217,102 +216,92 @@ object "IdDocDeploy" {
         {
           mstore(0x40, memoryguard(128))
           let _v28
+          _v28 := usr$opcodes_calldatasize_dee48adc5()
           let _v29
-          _v29 := usr$opcodes_calldatasize_dee48adc5()
-          let _v30
-          _v30 := usr$std_ge_df0bec9f4_p5e420170974cc44a$word(_v29, 4)
-          _v28 := _v30
-          switch _v28
-            case false {
-              /* false */
-              {
-              }
-            }
+          _v29 := usr$std_ge_df0bec9f4_p5e420170974cc44a$word(_v28, 4)
+          switch _v29
             case true {
               {
-                /* true */
-                {
-                  {
-                    let _v31
-                    let _v32
-                    _v32 := usr$dispatch_selector_matches_de46e52b9_p0d3b3470d1df7eed$Method_dcbe49e39LDispatchNameTy_IdDoc_id_d5611abab_NonPayable_da3e44601_uint256_d2edb4603_uint256_d2edb4603_fnLuint256_d2edb4603JRuint256_d2edb4603JJ()
-                    _v31 := _v32
-                    switch _v31
-                      case false {
-                        /* false */
+                let _v30
+                let _v31
+                _v31 := usr$dispatch_selector_matches_de46e52b9_p0d3b3470d1df7eed$Method_dcbe49e39LDispatchNameTy_IdDoc_id_d5611abab_NonPayable_da3e44601_uint256_d2edb4603_uint256_d2edb4603_fnLuint256_d2edb4603JRuint256_d2edb4603JJ()
+                _v30 := _v31
+                switch _v30
+                  case false {
+                    /* false */
+                    {
+                    }
+                  }
+                  case true {
+                    {
+                      /* true */
+                      {
                         {
-                        }
-                      }
-                      case true {
-                        {
-                          /* true */
                           {
-                            {
-                              {
-                                let _v33
-                                let _v34
-                                let _v35
-                                _v33 := false
-                                _v34 := 0xb5988ea3
-                                let _v36
-                                _v36 := usr$opcodes_callvalue_d4847a28f()
-                                let _v37
-                                _v37 := usr$Eq_eq_d6d5d59e2$word(_v36, 0)
-                                usr$std_require_d22809541(_v37, false, 0xb5988ea3, 911)
-                              }
-                              {
-                                let _v38
-                                _v38 := usr$opcodes_calldatasize_dee48adc5()
-                                let _v39
-                                _v39 := usr$std_ge_df0bec9f4_p5e420170974cc44a$word(_v38, 36)
-                                usr$std_require_d22809541(_v39, false, 0x08638556, 911)
-                                let src$ptr_69
-                                src$ptr_69 := 4
-                                let src$args_70
-                                let _v40
-                                _v40 := usr$std_abi_decode_debc005b9_p88856831ae5400d8$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(4)
-                                src$args_70 := _v40
-                                let src$rets_71
-                                let _v41
-                                _v41 := usr$doc_id_IdDoc_id_df22a7aef(src$args_70)
-                                src$rets_71 := _v41
-                                let src$ptr_72
-                                let _v42
-                                _v42 := usr$std_abi_encode_d3b55212b_pf53eab52cb3ebeea$uint256_d2edb4603(src$rets_71)
-                                src$ptr_72 := _v42
-                                let _v43
-                                _v43 := usr$MemoryPointer_ptr_dbc7e9939$memory_dda73d3aeLbytes_dc4f6af34J(src$ptr_72)
-                                let _v44
-                                _v44 := usr$MemorySize_len_da518cdbc$memory_dda73d3aeLbytes_dc4f6af34J(src$ptr_72)
-                                usr$opcodes_return__d05fa185f(_v43, _v44)
-                              }
-                            }
+                            let _v32
+                            let _v33
+                            let _v34
+                            _v32 := false
+                            _v33 := 0xb5988ea3
+                            let _v35
+                            _v35 := usr$opcodes_callvalue_d4847a28f()
+                            let _v36
+                            _v36 := usr$Eq_eq_d6d5d59e2$word(_v35, 0)
+                            usr$std_require_d22809541(_v36, false, 0xb5988ea3, 911)
+                          }
+                          {
+                            let _v37
+                            _v37 := usr$opcodes_calldatasize_dee48adc5()
+                            let _v38
+                            _v38 := usr$std_ge_df0bec9f4_p5e420170974cc44a$word(_v37, 36)
+                            usr$std_require_d22809541(_v38, false, 0x08638556, 911)
+                            let src$ptr_69
+                            src$ptr_69 := 4
+                            let src$args_70
+                            let _v39
+                            _v39 := usr$std_abi_decode_debc005b9_p88856831ae5400d8$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(4)
+                            src$args_70 := _v39
+                            let src$rets_71
+                            let _v40
+                            _v40 := usr$doc_id_IdDoc_id_df22a7aef(src$args_70)
+                            src$rets_71 := _v40
+                            let src$ptr_72
+                            let _v41
+                            _v41 := usr$std_abi_encode_d3b55212b_pf53eab52cb3ebeea$uint256_d2edb4603(src$rets_71)
+                            src$ptr_72 := _v41
+                            let _v42
+                            _v42 := usr$MemoryPointer_ptr_dbc7e9939$memory_dda73d3aeLbytes_dc4f6af34J(src$ptr_72)
+                            let _v43
+                            _v43 := usr$MemorySize_len_da518cdbc$memory_dda73d3aeLbytes_dc4f6af34J(src$ptr_72)
+                            usr$opcodes_return__d05fa185f(_v42, _v43)
                           }
                         }
                       }
+                    }
                   }
-                }
               }
+            }
+            case false {
             }
           {
             {
+              let _v44
               let _v45
               let _v46
+              _v44 := false
+              _v45 := 0xb5988ea3
               let _v47
-              _v45 := false
-              _v46 := 0xb5988ea3
+              _v47 := usr$opcodes_callvalue_d4847a28f()
               let _v48
-              _v48 := usr$opcodes_callvalue_d4847a28f()
-              let _v49
-              _v49 := usr$Eq_eq_d6d5d59e2$word(_v48, 0)
-              usr$std_require_d22809541(_v49, false, 0xb5988ea3, 911)
+              _v48 := usr$Eq_eq_d6d5d59e2$word(_v47, 0)
+              usr$std_require_d22809541(_v48, false, 0xb5988ea3, 911)
             }
             {
+              let _v49
               let _v50
               let _v51
-              let _v52
-              _v50 := false
-              _v51 := 0x4924aef0
+              _v49 := false
+              _v50 := 0x4924aef0
               usr$std_revertWithError_d94ee902a(false, 0x4924aef0, 911)
             }
             stop()
@@ -361,80 +350,80 @@ object "IdDocDeploy" {
       }
       function usr$std_abi_decode_debc005b9_p88856831ae5400d8$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(src$decodable_93) -> gen$result_94 {
         let src$decoder_95
+        let _v52
+        _v52 := usr$HasWordReader_getWordReader_d92d4533d$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff(src$decodable_93)
+        src$decoder_95 := _v52
         let _v53
-        _v53 := usr$HasWordReader_getWordReader_d92d4533d$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff(src$decodable_93)
-        src$decoder_95 := _v53
-        let _v54
-        _v54 := usr$ABIDecode_decode_d84af4302_pcb6af4462cd5d163$ABIDecoder_da57c46d1Luint256_d2edb4603_CalldataWordReader_d3137e4ffJ_uint256_d2edb4603(src$decoder_95, 0)
-        gen$result_94 := _v54
+        _v53 := usr$ABIDecode_decode_d84af4302_pcb6af4462cd5d163$ABIDecoder_da57c46d1Luint256_d2edb4603_CalldataWordReader_d3137e4ffJ_uint256_d2edb4603(src$decoder_95, 0)
+        gen$result_94 := _v53
         leave
       }
       function usr$std_abi_encode_d3b55212b_pf53eab52cb3ebeea$uint256_d2edb4603(src$val_96) -> gen$result_97 {
         let src$ret_98
-        let _v55
-        _v55 := usr$std_get_free_memory_d1dc44c02()
-        src$ret_98 := _v55
+        let _v54
+        _v54 := usr$std_get_free_memory_d1dc44c02()
+        src$ret_98 := _v54
         let src$start_99
-        let _v56
-        _v56 := usr$Add_add_d2e932f0d$word(src$ret_98, 32)
-        src$start_99 := _v56
+        let _v55
+        _v55 := usr$Add_add_d2e932f0d$word(src$ret_98, 32)
+        src$start_99 := _v55
         let src$tail_100
+        let _v56
+        _v56 := usr$Add_add_d2e932f0d$word(src$start_99, 32)
         let _v57
-        _v57 := usr$Add_add_d2e932f0d$word(src$start_99, 32)
+        _v57 := usr$ABIEncode_encodeInto_dd2f16529$uint256_d2edb4603(src$val_96, src$start_99, 0, _v56)
+        src$tail_100 := _v57
         let _v58
-        _v58 := usr$ABIEncode_encodeInto_dd2f16529$uint256_d2edb4603(src$val_96, src$start_99, 0, _v57)
-        src$tail_100 := _v58
-        let _v59
-        _v59 := usr$Sub_sub_dd601c728$word(src$tail_100, src$start_99)
-        usr$opcodes_mstore_d7415bc7e(src$ret_98, _v59)
+        _v58 := usr$Sub_sub_dd601c728$word(src$tail_100, src$start_99)
+        usr$opcodes_mstore_d7415bc7e(src$ret_98, _v58)
         usr$std_set_free_memory_d65c817cd(src$tail_100)
         gen$result_97 := src$ret_98
         leave
       }
       function usr$std_checkReaderRange_d0e2d0f8d(src$ptr_101, src$end_102, src$count_103) {
+        let _v59
+        _v59 := usr$std_le_d7eb3f6cb_pe07c9bede8644ed9$word(src$ptr_101, src$end_102)
+        usr$std_require_d22809541(_v59, false, 0x08638556, 911)
         let _v60
-        _v60 := usr$std_le_d7eb3f6cb_pe07c9bede8644ed9$word(src$ptr_101, src$end_102)
-        usr$std_require_d22809541(_v60, false, 0x08638556, 911)
+        _v60 := usr$Sub_sub_dd601c728$word(src$end_102, src$ptr_101)
         let _v61
-        _v61 := usr$Sub_sub_dd601c728$word(src$end_102, src$ptr_101)
-        let _v62
-        _v62 := usr$std_le_d7eb3f6cb_pe07c9bede8644ed9$word(src$count_103, _v61)
-        usr$std_require_d22809541(_v62, false, 0x08638556, 911)
+        _v61 := usr$std_le_d7eb3f6cb_pe07c9bede8644ed9$word(src$count_103, _v60)
+        usr$std_require_d22809541(_v61, false, 0x08638556, 911)
       }
-      function usr$std_ge_df0bec9f4_p5e420170974cc44a$word(src$x_104, src$y_105) -> _v63 {
-        let _v64
-        _v64 := usr$std_le_d7eb3f6cb_p5e420170974cc44a$word(src$y_105, src$x_104)
-        _v63 := _v64
+      function usr$std_ge_df0bec9f4_p5e420170974cc44a$word(src$x_104, src$y_105) -> _v62 {
+        let _v63
+        _v63 := usr$std_le_d7eb3f6cb_p5e420170974cc44a$word(src$y_105, src$x_104)
+        _v62 := _v63
         leave
       }
       function usr$std_get_free_memory_d1dc44c02() -> gen$result_106 {
-        let _v65
-        _v65 := usr$opcodes_mload_d8413229c(0x40)
-        gen$result_106 := _v65
+        let _v64
+        _v64 := usr$opcodes_mload_d8413229c(0x40)
+        gen$result_106 := _v64
         leave
       }
-      function usr$std_le_d7eb3f6cb_p5e420170974cc44a$word(src$x_107, src$y_108) -> _v66 {
+      function usr$std_le_d7eb3f6cb_p5e420170974cc44a$word(src$x_107, src$y_108) -> _v65 {
+        let _v66
+        _v66 := usr$Ord_gt_dbce4d001_p5e420170974cc44a$word(src$x_107, src$y_108)
         let _v67
-        _v67 := usr$Ord_gt_dbce4d001_p5e420170974cc44a$word(src$x_107, src$y_108)
-        let _v68
-        _v68 := usr$std_not_dd1ce4f4b(_v67)
-        _v66 := _v68
+        _v67 := usr$std_not_dd1ce4f4b(_v66)
+        _v65 := _v67
         leave
       }
-      function usr$std_le_d7eb3f6cb_pe07c9bede8644ed9$word(src$x_109, src$y_110) -> _v69 {
+      function usr$std_le_d7eb3f6cb_pe07c9bede8644ed9$word(src$x_109, src$y_110) -> _v68 {
+        let _v69
+        _v69 := usr$Ord_gt_dbce4d001_pe07c9bede8644ed9$word(src$x_109, src$y_110)
         let _v70
-        _v70 := usr$Ord_gt_dbce4d001_pe07c9bede8644ed9$word(src$x_109, src$y_110)
-        let _v71
-        _v71 := usr$std_not_dd1ce4f4b(_v70)
-        _v69 := _v71
+        _v70 := usr$std_not_dd1ce4f4b(_v69)
+        _v68 := _v70
         leave
       }
-      function usr$std_not_dd1ce4f4b(_v72) -> _v73 {
-        switch _v72
+      function usr$std_not_dd1ce4f4b(_v71) -> _v72 {
+        switch _v71
           case false {
             /* false */
             {
-              _v73 := true
+              _v72 := true
               leave
             }
           }
@@ -442,47 +431,37 @@ object "IdDocDeploy" {
             {
               /* true */
               {
-                _v73 := false
+                _v72 := false
                 leave
               }
             }
           }
       }
-      function usr$std_require_d22809541(_v74, _v75, _v76, _v77) {
-        let _v78
-        let _v79
-        _v79 := usr$std_not_dd1ce4f4b(_v74)
-        _v78 := _v79
-        switch _v78
-          case false {
-            /* false */
-            {
-            }
-          }
+      function usr$std_require_d22809541(_v73, _v74, _v75, _v76) {
+        let _v77
+        _v77 := usr$std_not_dd1ce4f4b(_v73)
+        switch _v77
           case true {
-            {
-              /* true */
-              {
-                usr$std_revertWithError_d94ee902a(_v75, _v76, _v77)
-              }
-            }
+            usr$std_revertWithError_d94ee902a(_v74, _v75, _v76)
+          }
+          case false {
           }
       }
-      function usr$std_revertWithError_d94ee902a(_v80, _v81, _v82) {
-        switch _v80
+      function usr$std_revertWithError_d94ee902a(_v78, _v79, _v80) {
+        switch _v78
           case false {
             /* Error */
             {
-              let src$$match_bind7_111
-              src$$match_bind7_111 := _v81
+              let src$$match_bind6_111
+              src$$match_bind6_111 := _v79
               let src$selector_112
-              src$selector_112 := src$$match_bind7_111
+              src$selector_112 := src$$match_bind6_111
               usr$opcodes_mstore_d7415bc7e(0, src$selector_112)
               usr$opcodes_revert__df9f680cd(28, 4)
             }
           }
           case true {
-            switch _v81
+            switch _v79
               case false {
                 /* Empty */
                 {
@@ -493,19 +472,19 @@ object "IdDocDeploy" {
                 {
                   /* Msg */
                   {
-                    let src$$match_bind10_113
-                    src$$match_bind10_113 := _v82
+                    let src$$match_bind9_113
+                    src$$match_bind9_113 := _v80
                     let src$msg_114
-                    src$msg_114 := src$$match_bind10_113
+                    src$msg_114 := src$$match_bind9_113
                     let src$msg__115
+                    let _v81
+                    _v81 := usr$Typedef_rep_d6e4e5fa6$memory_dda73d3aeLstring_d2d06d9f7J_word(src$msg_114)
+                    src$msg__115 := _v81
+                    let _v82
+                    _v82 := usr$Add_add_d2e932f0d$word(src$msg__115, 32)
                     let _v83
-                    _v83 := usr$Typedef_rep_d6e4e5fa6$memory_dda73d3aeLstring_d2d06d9f7J_word(src$msg_114)
-                    src$msg__115 := _v83
-                    let _v84
-                    _v84 := usr$Add_add_d2e932f0d$word(src$msg__115, 32)
-                    let _v85
-                    _v85 := usr$opcodes_mload_d8413229c(src$msg__115)
-                    usr$opcodes_revert__df9f680cd(_v84, _v85)
+                    _v83 := usr$opcodes_mload_d8413229c(src$msg__115)
+                    usr$opcodes_revert__df9f680cd(_v82, _v83)
                   }
                 }
               }

@@ -392,8 +392,9 @@ pub struct InferenceResult<'db> {
     pub root_scheme: TyScheme<'db>,
     /// Expression type table.
     pub expr_tys: Vec<ExprTy<'db>>,
-    /// Callable signatures for inferred nominal closure types. Backends use
-    /// these signatures to lower the original lambda body and parameters.
+    /// Callable signatures for inferred nominal closure types. Their identities
+    /// remain nominal during trait selection; backends use these signatures to
+    /// lower the original lambda body and parameters.
     pub closure_tys: Vec<(DefId<'db>, Ty<'db>)>,
     /// Pattern type table.
     pub pat_tys: Vec<PatTy<'db>>,

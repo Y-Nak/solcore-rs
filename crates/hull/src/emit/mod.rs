@@ -19,13 +19,13 @@ use hir::{
 };
 use hir_ty::{
     AliasNormalizer, BinderEnv, BuiltinTyCtor, Ty as SemTy, TyCtor, TyKind as SemTyKind,
-    TypeLowering, UserTyCtorKind, contract::FrontendTransform, is_canonical_std_def_named,
+    TypeLowering, UserTyCtorKind, is_canonical_std_def_named,
 };
 use parser::parse_file_to_hir;
 use specialize::{
     MonoArm, MonoBuiltinCtor, MonoCallOrigin, MonoContract, MonoEntry, MonoExpr, MonoExprArm,
     MonoExprKind, MonoFunction, MonoId, MonoIntrinsic, MonoItem, MonoModule, MonoPat, MonoPatKind,
-    MonoStmt, MonoStmtKind, MonoStorageIndexKind, decode_string_literal,
+    MonoStmt, MonoStmtKind, MonoStorageIndexKind, collect_leaking_let_stmts, decode_string_literal,
 };
 
 use crate::{
@@ -79,7 +79,6 @@ struct Emitter<'db> {
     function_names: BTreeSet<String>,
     layout_stack: Vec<(DefId<'db>, Vec<SemTy<'db>>)>,
     layout_finiteness: layout_finiteness::LayoutFiniteness<'db>,
-    if_stmt_spans: Vec<Span<'db>>,
     predeclared_lets: Vec<PredeclaredLet<'db>>,
     /// Runtime allocators for compile-time string literals, keyed by decoded
     /// UTF-8 bytes so equivalent literal spellings share one helper.

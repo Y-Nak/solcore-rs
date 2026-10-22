@@ -1,0 +1,3 @@
+{
+  "source": "crates/parser/tests/fixtures/corpus/ok/test/examples/cases/closure-free-var-std.sol"
+}

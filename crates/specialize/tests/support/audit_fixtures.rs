@@ -38,6 +38,7 @@ struct DiagnosticCheck {
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum DiagnosticKind {
+    FreeTypeVariable,
     ComptimeEvaluationFailed,
     IntegerErasure,
     MissingEvidence,
@@ -49,6 +50,9 @@ impl DiagnosticKind {
         matches!(
             (self, actual),
             (
+                Self::FreeTypeVariable,
+                SpecializeDiagnosticKind::FreeTypeVariable { .. }
+            ) | (
                 Self::ComptimeEvaluationFailed,
                 SpecializeDiagnosticKind::ComptimeEvaluationFailed { .. }
             ) | (

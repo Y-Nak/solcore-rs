@@ -416,7 +416,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 cond,
                 then_body,
                 else_body,
-            } => self.if_stmt(stmt_id, *cond, then_body, else_body.as_deref(), span)?,
+            } => self.if_stmt(stmt_id, *cond, then_body, else_body.as_deref())?,
             StmtKind::Block { body } => MonoStmtKind::Block(
                 body.iter()
                     .map(|stmt| self.stmt(*stmt))
@@ -487,15 +487,6 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             ty = closed;
         }
         ty = self.normalize_body_ty(ty);
-        if matches!(&expr.kind, ExprKind::Lambda { .. })
-            && let TyKind::Named {
-                ctor: TyCtor::User(user),
-                ..
-            } = ty.kind(self.driver.db)
-            && let Some(signature) = self.index.closure_tys.get(&user.def)
-        {
-            ty = self.normalize_body_ty(self.subst.apply_ty(self.driver.db, *signature));
-        }
         let mono_ty = self.driver.mono_ty(ty, "expression", expr.span)?;
         if let Some(evidence) = self.string_coercion_evidence(expr_id) {
             let source_ty = self.source_string_ty();
@@ -1088,7 +1079,6 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         fallback_cond: Id<Expr<'db>>,
         fallback_then_body: &[Id<Stmt<'db>>],
         fallback_else_body: Option<&[Id<Stmt<'db>>]>,
-        span: Span<'db>,
     ) -> Option<MonoStmtKind<'db>> {
         let planned = self
             .desugar_view()
@@ -1111,28 +1101,15 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             });
         };
 
-        let cond = self.expr(cond)?;
-        let bool_ty = cond.ty;
-        let then_body = self.stmts(&then_body)?;
-        let else_body = match else_body.as_deref() {
-            Some(body) => self.stmts(body)?,
-            None => Vec::new(),
-        };
-
-        Some(MonoStmtKind::Match {
-            scrutinees: vec![cond],
-            arms: vec![
-                MonoArm {
-                    span,
-                    pats: vec![self.bool_ctor_pat(true, bool_ty, span)],
-                    body: then_body,
-                },
-                MonoArm {
-                    span,
-                    pats: vec![self.bool_ctor_pat(false, bool_ty, span)],
-                    body: else_body,
-                },
-            ],
+        // Source `if` branches share their enclosing declaration scope.
+        // Keep that distinction until Hull lowering; ordinary match arms are lexical.
+        Some(MonoStmtKind::If {
+            cond: self.expr(cond)?,
+            then_body: self.stmts(&then_body)?,
+            else_body: match else_body.as_deref() {
+                Some(body) => Some(self.stmts(body)?),
+                None => None,
+            },
         })
     }
 
@@ -1517,15 +1494,65 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     }
 
     fn normalize_body_ty(&self, ty: Ty<'db>) -> Ty<'db> {
-        let Some(resolution) = self.driver.try_module_resolution(self.info.module) else {
-            return ty;
+        // Recursive callable signatures have no finite Mono representation.
+        // mono_ty reports the existing non-concrete-type diagnostic for them.
+        self.erase_closure_ty(ty, &mut FxHashSet::default())
+            .unwrap_or_else(|| Ty::unknown(self.driver.db))
+    }
+
+    // Instance selection has already used the nominal closure identity. Mono
+    // needs its callable representation, including inside tuple/function types.
+    fn erase_closure_ty(
+        &self,
+        ty: Ty<'db>,
+        visiting: &mut FxHashSet<DefId<'db>>,
+    ) -> Option<Ty<'db>> {
+        let db = self.driver.db;
+        let ty = match self.driver.try_module_resolution(self.info.module) {
+            Some(resolution) => {
+                AliasNormalizer::new(db, self.info.module, &resolution.item_resolutions)
+                    .normalize_ty(ty)
+            }
+            None => ty,
         };
-        AliasNormalizer::new(
-            self.driver.db,
-            self.info.module,
-            &resolution.item_resolutions,
-        )
-        .normalize_ty(ty)
+        Some(match ty.kind(db) {
+            TyKind::Named {
+                ctor: TyCtor::User(user),
+                args,
+            } if args.is_empty() && self.index.closure_tys.contains_key(&user.def) => {
+                if !visiting.insert(user.def) {
+                    return None;
+                }
+                let signature = self.subst.apply_ty(db, self.index.closure_tys[&user.def]);
+                let signature = self.erase_closure_ty(signature, visiting)?;
+                visiting.remove(&user.def);
+                signature
+            }
+            TyKind::Named { ctor, args } => Ty::named(
+                db,
+                *ctor,
+                args.iter()
+                    .map(|ty| self.erase_closure_ty(*ty, visiting))
+                    .collect::<Option<_>>()?,
+            ),
+            TyKind::Function { params, ret } => Ty::function(
+                db,
+                params
+                    .iter()
+                    .map(|ty| self.erase_closure_ty(*ty, visiting))
+                    .collect::<Option<_>>()?,
+                self.erase_closure_ty(*ret, visiting)?,
+            ),
+            TyKind::Tuple(elems) => Ty::tuple(
+                db,
+                elems
+                    .iter()
+                    .map(|ty| self.erase_closure_ty(*ty, visiting))
+                    .collect::<Option<_>>()?,
+            ),
+            TyKind::Comptime(inner) => Ty::comptime(db, self.erase_closure_ty(*inner, visiting)?),
+            TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => ty,
+        })
     }
 
     fn array_lit_expr(
