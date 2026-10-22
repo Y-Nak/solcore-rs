@@ -1,0 +1,17 @@
+/* Keep prose readable alongside complete, copyable examples. */
+.content main { line-height: 1.7; }
+.content pre { line-height: 1.5; }
+.content details {
+  margin: 1.5em 0;
+  padding: 0.75em 1em;
+  border: 1px solid var(--table-border-color);
+  border-radius: 4px;
+}
+.content summary { cursor: pointer; font-weight: 600; }
+.content a[data-playground-link] { font-weight: 600; }
+.content a:focus-visible, .content summary:focus-visible {
+  outline: 2px solid var(--links);
+  outline-offset: 3px;
+}
+.content table { display: block; overflow-x: auto; }
+@media print { .content details > * { display: block; } }

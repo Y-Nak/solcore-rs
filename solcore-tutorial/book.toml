@@ -1,0 +1,20 @@
+[book]
+title = "The Solcore Tutorial"
+description = "Learn Solcore by reading, running, and changing tested examples."
+authors = ["Solcore contributors"]
+language = "en"
+multilingual = false
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+additional-css = ["theme/tutorial.css"]
+additional-js = ["theme/tutorial.js"]
+git-repository-url = "https://github.com/Y-Nak/solcore-rs"
+
+[output.html.playground]
+runnable = false
