@@ -2,7 +2,9 @@ import * from std;
 import * from std.dispatch;
 
 function capture(x: word) returns (function (word) returns (word)) {
-    return lam (y: word) -> word { return x; };
+    return lam (y: word) -> word {
+        return x;
+    };
 }
 
 contract CaptureCollision {

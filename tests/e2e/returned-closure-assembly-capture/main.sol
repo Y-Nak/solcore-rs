@@ -4,7 +4,9 @@ import * from std.dispatch;
 function capture(x: word) returns (function () returns (word)) {
     return lam () -> word {
         let out: word;
-        assembly { out := x }
+        assembly {
+            out := x
+        }
         return out;
     };
 }

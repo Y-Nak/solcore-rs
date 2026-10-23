@@ -332,3 +332,112 @@ fn expression_match_bindings_inherit_scrutinee_availability_and_shadow_outer_nam
         assert!(matches!(&args[0].kind, MonoExprKind::Var(id) if id.name == "y"));
     }
 }
+
+#[test]
+fn closure_expression_match_labels_capture_before_pattern_binders() {
+    let db = TestDb::default();
+    let file = SourceFile::new(
+        &db,
+        "memory:///closure-pattern-label.sol".parse().unwrap(),
+        Some(String::new()),
+    );
+    let hir = parse_file_to_hir(&db, file).module(&db);
+    let span = hir.span(&db);
+    let word = MonoTy::new_unchecked(Ty::builtin(&db, BuiltinTyCtor::Word));
+    let pair = MonoTy::new_unchecked(Ty::tuple(&db, vec![word.ty(), word.ty()]));
+    let id = |name: &str| MonoId {
+        span,
+        ty: word,
+        name: name.to_owned(),
+    };
+    let variable = |name: &str| MonoExpr {
+        span,
+        ty: word,
+        kind: MonoExprKind::Var(id(name)),
+    };
+    let literal = |number| int_expr(BigInt::from_u64(number), word, span);
+    let module = MonoModule {
+        module: hir.def_id(&db),
+        frontend_desugar: FrontendDesugarPlan { bodies: Vec::new() },
+        entry_points: vec![],
+        items: vec![],
+    };
+    let closure = MonoExpr {
+        span,
+        ty: MonoTy::new_unchecked(Ty::function(&db, vec![word.ty()], word.ty())),
+        kind: MonoExprKind::Lambda {
+            name: "match_label".into(),
+            params: vec![MonoParam {
+                span,
+                ty: word,
+                mode: ParamMode::Runtime,
+                name: "value".into(),
+            }],
+            body: vec![MonoStmt {
+                span,
+                kind: MonoStmtKind::Return(Some(MonoExpr {
+                    span,
+                    ty: word,
+                    kind: MonoExprKind::Match {
+                        scrutinee: Box::new(MonoExpr {
+                            span,
+                            ty: pair,
+                            kind: MonoExprKind::Tuple(vec![literal(9), variable("value")]),
+                        }),
+                        arms: vec![
+                            MonoExprArm {
+                                span,
+                                pat: MonoPat {
+                                    span,
+                                    ty: pair,
+                                    kind: MonoPatKind::Tuple(vec![
+                                        MonoPat {
+                                            span,
+                                            ty: word,
+                                            kind: MonoPatKind::Var(id("label")),
+                                        },
+                                        MonoPat {
+                                            span,
+                                            ty: word,
+                                            kind: MonoPatKind::ComptimeLabel(variable("label")),
+                                        },
+                                    ]),
+                                },
+                                expr: variable("label"),
+                            },
+                            MonoExprArm {
+                                span,
+                                pat: MonoPat {
+                                    span,
+                                    ty: pair,
+                                    kind: MonoPatKind::Wildcard,
+                                },
+                                expr: literal(0),
+                            },
+                        ],
+                    },
+                })),
+            }],
+        },
+    };
+    let mut evaluator = Evaluator::new(&db, &module, 100, 32);
+    let env = VEnv::from_iter([("label".to_owned(), literal(17))]);
+    let comptime_env = CEnv::from_iter(["label".to_owned()]);
+    let closure = evaluator.eval_expr(&env, &comptime_env, closure);
+    assert!(
+        evaluator.diagnostics.is_empty(),
+        "{:?}",
+        evaluator.diagnostics
+    );
+    for (input, expected) in [(17, 9), (23, 0)] {
+        assert_eq!(
+            evaluator.eval_closure_dispatch(&closure, &[literal(input)], word, span),
+            Some(literal(expected)),
+        );
+    }
+    assert!(
+        evaluator.diagnostics.is_empty(),
+        "{:?}",
+        evaluator.diagnostics
+    );
+}

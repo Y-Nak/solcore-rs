@@ -1563,40 +1563,8 @@ impl<'db> Evaluator<'db> {
                 ty,
                 kind: expr.kind,
             },
-            MonoExprKind::Lambda { name, params, body } => {
-                // Keep the identity of unavailable captures before substitution.
-                // Caller values can use the same source name as a callee local.
-                let unavailable_uses = self
-                    .closure_capture_uses(&params, &body)
-                    .into_iter()
-                    .filter(|id| {
-                        env.get(&id.name)
-                            .is_some_and(|value| self.value_is_unavailable(value))
-                    })
-                    .collect::<FxHashSet<_>>();
-                let type_reg = build_type_reg(&params, &[]);
-                let ret_comptime = lambda_ret_is_comptime(self.db, ty.ty());
-                let mut env = env.clone();
-                let mut comptime_env = comptime_env.clone();
-                for param in &params {
-                    env.remove(&param.name);
-                    comptime_env.remove(&param.name);
-                }
-                let (_, _, body) =
-                    self.eval_stmts(&type_reg, env, comptime_env, body, ret_comptime);
-                // Evaluate first: dead branches can remove an unavailable
-                // capture. Surviving reads, assignment targets, and assembly
-                // references still require the erased local's runtime binding.
-                if self.closure_capture_uses(&params, &body).iter().any(|id| {
-                    self.unavailable_values.contains(&id.name) || unavailable_uses.contains(id)
-                }) {
-                    return self.unavailable_value(ty, span);
-                }
-                MonoExpr {
-                    span,
-                    ty,
-                    kind: MonoExprKind::Lambda { name, params, body },
-                }
+            kind @ MonoExprKind::Lambda { .. } => {
+                self.eval_lambda(env, comptime_env, MonoExpr { span, ty, kind })
             }
             MonoExprKind::Tuple(elems) => MonoExpr {
                 span,

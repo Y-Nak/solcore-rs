@@ -44,6 +44,87 @@ pub(super) struct LiftedClosure<'db> {
 }
 
 impl<'db> Evaluator<'db> {
+    /// Only closed values may be substituted beneath a lambda's binders.
+    /// Symbolic captures stay in their defining scope and become explicit
+    /// arguments to the lifted body, including reads and writes in assembly.
+    pub(super) fn eval_lambda(
+        &mut self,
+        env: &VEnv<'db>,
+        comptime_env: &CEnv,
+        mut expr: MonoExpr<'db>,
+    ) -> MonoExpr<'db> {
+        if let Some((_, captures)) = bound_closure_parts_mut(&mut expr) {
+            for capture in captures {
+                *capture = self.eval_expr(env, comptime_env, capture.clone());
+            }
+            // A bound closure's payload belongs to the enclosing scope, not
+            // the synthetic forwarding lambda's parameter scope. Preserve its
+            // binders so reevaluation retains the same callable identity.
+            return expr;
+        }
+        let MonoExpr { span, ty, kind } = expr;
+        let MonoExprKind::Lambda { name, params, body } = kind else {
+            unreachable!("lambda expression")
+        };
+        let capture_uses = self.closure_capture_uses(&params, &body);
+        let unavailable_uses = capture_uses
+            .iter()
+            .filter(|id| {
+                env.get(&id.name)
+                    .is_some_and(|value| self.value_is_unavailable(value))
+            })
+            .cloned()
+            .collect::<FxHashSet<_>>();
+        let capture_names = capture_uses
+            .iter()
+            .map(|id| &id.name)
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut closed_env = capture_names
+            .into_iter()
+            .filter_map(|name| env.get_key_value(name))
+            .filter(|(_, value)| self.expr_is_known_value(value) && self.value_is_closed(value))
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect::<VEnv<'db>>();
+        let mut local_comptime = comptime_env.clone();
+        for param in &params {
+            closed_env.remove(&param.name);
+            local_comptime.remove(&param.name);
+        }
+        let type_reg = build_type_reg(&params, &[]);
+        let ret_comptime = lambda_ret_is_comptime(self.db, ty.ty());
+        let (_, _, body) =
+            self.eval_stmts(&type_reg, closed_env, local_comptime, body, ret_comptime);
+        // Dead branches may discard unavailable captures. Reject only uses
+        // that survive evaluation, including assignment and assembly targets.
+        if self
+            .closure_capture_uses(&params, &body)
+            .iter()
+            .any(|id| self.unavailable_values.contains(&id.name) || unavailable_uses.contains(id))
+        {
+            return self.unavailable_value(ty, span);
+        }
+        let captures = self.closure_captures(&params, &body);
+        let expr = MonoExpr {
+            span,
+            ty,
+            kind: MonoExprKind::Lambda { name, params, body },
+        };
+        if !captures.iter().any(|id| env.contains_key(&id.name)) {
+            return expr;
+        }
+        let Some((target, captures)) = self.lift_closure(&expr) else {
+            return expr;
+        };
+        let captures = captures
+            .into_iter()
+            .map(|capture| match &capture.kind {
+                MonoExprKind::Var(id) => env.get(&id.name).cloned().unwrap_or(capture),
+                _ => capture,
+            })
+            .collect();
+        self.bound_closure(&target, captures, ty, span)
+    }
+
     /// Callable identities have no runtime representation, including when they
     /// occur inside a statically known product or constructor. Such values stay
     /// in the evaluator; only their captured runtime payload is materialized.
@@ -143,9 +224,11 @@ impl<'db> Evaluator<'db> {
         let mut bindings = Vec::new();
         let mut values = Vec::new();
         for capture in captures {
-            let (value, binding) = self.materialize_callable_payload(capture);
+            // Callable identities remain static even when one closure captures
+            // another. Materialize only their recursively nested runtime data.
+            let (value, mut capture_bindings) = self.capture_static_value(capture, true);
             values.push(value);
-            bindings.push(binding);
+            bindings.append(&mut capture_bindings);
         }
         // Capture the value at closure construction, before a later assignment
         // or shadowing declaration can change what its free variable denotes.
@@ -426,24 +509,13 @@ impl<'db> Evaluator<'db> {
             }
             _ => {}
         }
-        let MonoExprKind::Lambda { name, params, body } = &expr.kind else {
+        let MonoExprKind::Lambda { params, body, .. } = &expr.kind else {
             return None;
         };
         // A bound closure is a forwarding lambda built below. Preserve its
         // original target identity when it crosses another function boundary.
-        if name.starts_with("$bound_closure:")
-            && let [
-                MonoStmt {
-                    kind:
-                        MonoStmtKind::Return(Some(MonoExpr {
-                            kind: MonoExprKind::Call { callee, args, .. },
-                            ..
-                        })),
-                    ..
-                },
-            ] = body.as_slice()
-        {
-            return Some((callee.clone(), args[params.len()..].to_vec()));
+        if let Some((target, captures)) = bound_closure_parts(expr) {
+            return Some((target.clone(), captures.to_vec()));
         }
         if let Some(lifted) = self
             .lifted_closures
@@ -499,7 +571,7 @@ impl<'db> Evaluator<'db> {
     }
 
     fn bound_closure(
-        &self,
+        &mut self,
         target: &MonoId<'db>,
         captures: Vec<MonoExpr<'db>>,
         ty: MonoTy<'db>,
@@ -526,7 +598,7 @@ impl<'db> Evaluator<'db> {
             .iter()
             .enumerate()
             .map(|(index, ty)| MonoParam {
-                name: format!("$arg{index}"),
+                name: self.fresh_clone_name(&format!("$arg{index}")),
                 mode: ParamMode::Runtime,
                 ty: MonoTy::new_unchecked(*ty),
                 span,
@@ -638,6 +710,67 @@ impl<'db> Evaluator<'db> {
         visitor.stmts(body);
         uses
     }
+
+    fn value_is_closed(&self, expr: &MonoExpr<'db>) -> bool {
+        let mut visitor = CaptureCollector {
+            evaluator: self,
+            locals: FxHashSet::default(),
+            captures: BTreeMap::new(),
+            uses: None,
+        };
+        visitor.visit_expr(expr);
+        visitor.captures.is_empty()
+    }
+}
+
+fn bound_closure_parts<'a, 'db>(
+    expr: &'a MonoExpr<'db>,
+) -> Option<(&'a MonoId<'db>, &'a [MonoExpr<'db>])> {
+    let MonoExprKind::Lambda { name, params, body } = &expr.kind else {
+        return None;
+    };
+    if !name.starts_with("$bound_closure:") {
+        return None;
+    }
+    let [
+        MonoStmt {
+            kind:
+                MonoStmtKind::Return(Some(MonoExpr {
+                    kind: MonoExprKind::Call { callee, args, .. },
+                    ..
+                })),
+            ..
+        },
+    ] = body.as_slice()
+    else {
+        return None;
+    };
+    Some((callee, args.get(params.len()..)?))
+}
+
+fn bound_closure_parts_mut<'a, 'db>(
+    expr: &'a mut MonoExpr<'db>,
+) -> Option<(&'a mut MonoId<'db>, &'a mut [MonoExpr<'db>])> {
+    let MonoExprKind::Lambda { name, params, body } = &mut expr.kind else {
+        return None;
+    };
+    if !name.starts_with("$bound_closure:") {
+        return None;
+    }
+    let [
+        MonoStmt {
+            kind:
+                MonoStmtKind::Return(Some(MonoExpr {
+                    kind: MonoExprKind::Call { callee, args, .. },
+                    ..
+                })),
+            ..
+        },
+    ] = body.as_mut_slice()
+    else {
+        return None;
+    };
+    Some((callee, args.get_mut(params.len()..)?))
 }
 
 fn callable_payload_parameter<'db>(
@@ -826,6 +959,11 @@ impl<'db> Visitor<'db> for CaptureCollector<'_, 'db> {
                     self.visit_expr(expr);
                 }
                 for arm in arms {
+                    // Labels are evaluated in the enclosing environment before
+                    // any binding from this arm enters scope.
+                    for pat in &arm.pats {
+                        self.visit_pat(pat);
+                    }
                     if self.evaluator.if_stmt_spans.contains(&stmt.span) {
                         self.stmts_in_scope(&arm.body);
                         continue;
@@ -866,6 +1004,7 @@ impl<'db> Visitor<'db> for CaptureCollector<'_, 'db> {
             MonoExprKind::Match { scrutinee, arms } => {
                 self.visit_expr(scrutinee);
                 for arm in arms {
+                    self.visit_pat(&arm.pat);
                     let saved = self.locals.clone();
                     collect_pat_binders(&arm.pat, &mut self.locals);
                     self.visit_expr(&arm.expr);
