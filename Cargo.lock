@@ -3691,7 +3691,6 @@ name = "solcore-test-utils"
 version = "0.1.0"
 dependencies = [
  "annotate-snippets",
- "dir-test",
  "insta",
  "libc",
  "rustc-hash",

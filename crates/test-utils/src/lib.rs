@@ -229,26 +229,6 @@ pub fn repo_root_from_manifest(manifest_dir: impl AsRef<Path>) -> PathBuf {
         .to_path_buf()
 }
 
-/// Returns a stable, slash-separated key for a fixture inside this checkout.
-/// Canonicalize both paths so symlinked checkouts and Windows verbatim paths
-/// resolve to the same repository-relative key.
-pub fn fixture_path_key(manifest_dir: impl AsRef<Path>, source_path: impl AsRef<Path>) -> String {
-    let root = repo_root_from_manifest(manifest_dir)
-        .canonicalize()
-        .expect("repository root");
-    let source = source_path
-        .as_ref()
-        .canonicalize()
-        .expect("source fixture path");
-    source
-        .strip_prefix(root)
-        .expect("repository fixture path")
-        .iter()
-        .map(|part| part.to_str().expect("UTF-8 fixture path"))
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
 pub fn load_fixture_case<Db>(
     db: &mut Db,
     root: &Path,

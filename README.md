@@ -1,6 +1,7 @@
 # solcore-rs
 
-`solcore-rs` is the reference implementation of Solcore, written in Rust.
+Experimental Core Solidity Compiler
+This is a prototype implementation of Solidity's new type system. It is functional and can produce executable EVM code.
 
 > [!WARNING]
 > This project is a work in progress and is not ready for production use.
@@ -27,6 +28,20 @@ regression set, as documented in its
 ```sh
 cargo build --workspace --locked
 cargo test --workspace --locked
+```
+
+## Run the compiler
+
+From the repository root, compile an example and print the generated Yul:
+
+```sh
+cargo run -p solcore-driver -- tests/e2e/00answer/main.sol --emit-yul
+```
+
+Replace the example path with your own `.sol` file. For all available options:
+
+```sh
+cargo run -p solcore-driver -- --help
 ```
 
 ## Formatting Solcore
@@ -56,29 +71,6 @@ inputs are printed in argument order unless `--write` or `--check` is selected.
 Inputs are individual files; directories are not searched recursively. `--check` exits
 with status 1 when formatting differs; invalid syntax, arguments, or I/O errors
 exit with status 2.
-
-Formatting reuses the existing lexer and parser through
-`solcore_parser::format::format_source`. It changes whitespace while retaining
-the original token, literal, and comment text, and verifies that the token and
-comment sequence is unchanged. Syntax errors prevent formatting. The initial
-style preserves explicit continuation line breaks and existing CRLF line
-endings; automatic line wrapping and a configurable maximum line width are not
-implemented yet.
-
-The native and browser language servers use the same formatter for document
-formatting, respecting the editor's indentation and final-newline preferences.
-Documents with syntax errors are left unchanged in the editor.
-
-The existing CI tests also require Solcore test fixtures, E2E sources, fuzz
-seeds, playground examples, and the standard library to be formatted. Only
-unparseable fixtures in the designated syntax-error test directories are exempt.
-Run this check locally with `cargo test -p solcore-parser --test formatting --locked`.
-
-Before `--write` replaces any file, every input is read and formatted, and all
-changed results are staged in the destination directories. Individual files
-are replaced atomically with their permissions preserved. Symlinks and
-read-only files are rejected. A later filesystem failure during replacement
-can still leave earlier files formatted; this is not a multi-file transaction.
 
 ## License
 
