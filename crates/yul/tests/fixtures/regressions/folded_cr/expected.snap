@@ -1,0 +1,20 @@
+---
+source: crates/yul/tests/source_regressions/mod.rs
+---
+object "OutputDeploy" {
+  code {
+  }
+  object "Output" {
+    code {
+      function usr$source_fixture_main_ddf7d0ce7() -> gen$result_0 {
+        gen$result_0 := 4
+        leave
+      }
+      let _mainresult := usr$source_fixture_main_ddf7d0ce7()
+      {
+        mstore(0, _mainresult)
+        return(0, 32)
+      }
+    }
+  }
+}
