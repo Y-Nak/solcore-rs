@@ -20,6 +20,28 @@ use url::Url;
 pub mod e2e;
 pub mod text_checks;
 
+/// Read one test suite's `//~ namespace: expectation` comments.
+///
+/// Line numbers are one-based so malformed expectations can identify their
+/// source location. Comments belonging to another suite are left untouched.
+pub fn source_directives<'a>(
+    source: &'a str,
+    namespace: &'a str,
+) -> impl Iterator<Item = (usize, &'a str)> {
+    source.lines().enumerate().filter_map(move |(line, text)| {
+        let directive = text.trim_start().strip_prefix("//~")?.trim_start();
+        let Some((name, value)) = directive.split_once(':') else {
+            assert!(
+                directive.split_whitespace().next() != Some(namespace),
+                "line {}: expected //~ {namespace}: expectation",
+                line + 1
+            );
+            return None;
+        };
+        (name.trim() == namespace).then_some((line + 1, value.trim()))
+    })
+}
+
 pub mod reexports {
     pub use hir;
     pub use nameres;
@@ -431,14 +453,15 @@ pub fn assert_diagnostics_snapshot(fixture_root: &Path, rendered: &str) {
     });
 }
 
-pub fn run_in_large_stack(assertion: impl FnOnce() + Send + 'static) {
+pub fn run_in_large_stack<T: Send + 'static>(assertion: impl FnOnce() -> T + Send + 'static) -> T {
     let result = thread::Builder::new()
         .stack_size(64 * 1024 * 1024)
         .spawn(assertion)
         .expect("spawn fixture assertion")
         .join();
-    if let Err(payload) = result {
-        panic::resume_unwind(payload);
+    match result {
+        Ok(value) => value,
+        Err(payload) => panic::resume_unwind(payload),
     }
 }
 
