@@ -2,10 +2,12 @@
 
 **Goal:** call a public function with arguments and turn a result into a repeatable assertion.
 
-[Open in playground: Calculator](https://playground.solcore.soliditylang.org/#/examples/std-usage?tab=run&view=tests)
+<div class="tutorial-exercise" data-title="Calculator tests">
+<a class="tutorial-example" href="../projects/std-usage.json?tab=run&amp;view=tests">Open Calculator tests in a full tab</a>
+</div>
 
 ```solidity
-{{#include ../../playground/src/examples/std-usage/Calculator.sol}}
+{{#include ../examples/std-usage/Calculator.sol}}
 ```
 
 ## The contract interface

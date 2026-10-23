@@ -2,16 +2,18 @@
 
 **Goal:** run a contract and identify its imports, entry point, and return value.
 
-[Open in playground: Hello contract](https://playground.solcore.soliditylang.org/#/examples/contract-output?tab=run)
+<div class="tutorial-exercise" data-title="Hello contract">
+<a class="tutorial-example" href="../projects/contract-output.json?tab=run">Open Hello contract in a full tab</a>
+</div>
 
 ```solidity
-{{#include ../../playground/src/examples/contract-output/Hello.sol}}
+{{#include ../examples/contract-output/Hello.sol}}
 ```
 
 ## Run it
 
-1. Open the example and leave **Backend** set to **solc**.
-2. Open the **Run** tab, then click **Run** for `main`.
+1. Click **Try here** above to open the editor within this page. It uses the **solc** backend by default.
+2. In the editor, open the **Run** tab, then click **Run** for `main`.
 3. Find the returned word: **42**. A successful compilation alone is not an execution result.
 
 The first run can take longer while the browser loads the compiler. This program returns a value rather than printing text to a terminal. Gas used describes execution work; its exact value can change with the compiler and backend, so it is not the goal of this exercise.

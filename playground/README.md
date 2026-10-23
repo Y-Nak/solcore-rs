@@ -87,13 +87,10 @@ also has a copy button. Generating these outputs does not deploy or execute code
 ## Development
 
 Use wasm-pack 0.15.0, as pinned in CI, for the custom WASM build profile.
-The integrated [Solcore Tutorial](../solcore-tutorial/README.md) also requires
-mdBook (`cargo install mdbook --version 0.4.52 --locked`, as pinned in CI).
-The normal development and build commands generate the English book and serve
-it at `tutorial/`, linked from the toolbar. Its example links use the same
-playground build, including when `VITE_BASE` configures a deployment subpath.
-Run `npm run build:tutorial` again after editing the book or its included examples.
-Run `npm run test:tutorial` to check source includes and navigation without building WASM.
+Playground development and builds are independent of the tutorial and do not
+require mdBook. The [Solcore Tutorial](../solcore-tutorial/README.md) owns its
+curriculum sources and bundles this application through the generic project
+interface described below.
 
 On a fresh checkout, generate the local wasm packages once before installing JavaScript dependencies:
 
@@ -205,10 +202,15 @@ same project in multiple tabs simultaneously.
 npm run build
 ```
 
-The build script downloads soljson, rebuilds both wasm packages, runs `tsc --noEmit`, then runs `vite build`.
+The build script downloads soljson, rebuilds both WASM packages, checks TypeScript,
+and builds the Playground into `dist/`. The reusable `buildPlayground({ outDir,
+base })` function in `scripts/build.mjs` also lets another static site bundle the
+same editor and runtime. It includes local compiler, LSP, and solc assets, with no
+knowledge of the site's content.
 
 After building, `npm run test:wasm` checks execution through the generated WASM
-package with each backend. `npm run test:unit` checks the JavaScript helpers and workspace updates.
+package with each backend. `npm run test:unit` checks the JavaScript helpers,
+project loading, routing, and workspace updates.
 
 ## Deploy
 

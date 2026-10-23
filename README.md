@@ -10,8 +10,9 @@ Try it in the [online playground](https://playground.solcore.soliditylang.org/).
 
 Learn with the English [Solcore Tutorial](solcore-tutorial/README.md): a guided
 path from your first program to traits, compile-time computation, and a tested
-contract. Every runnable listing comes from the playground's tested examples.
-Local playground builds include the book under **Tutorial** in the toolbar.
+contract. The tutorial owns and tests its source examples.
+The book bundles the Playground editor and compiler to run those projects in
+the page and can be distributed as a standalone static site.
 
 ## Language and standard library
 

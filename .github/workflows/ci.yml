@@ -150,6 +150,14 @@ jobs:
         working-directory: playground
         run: npm run build
 
+      - name: Test and build standalone tutorial
+        working-directory: solcore-tutorial
+        run: |
+          npm test
+          npm run build:book
+          npm run test:bundle
+          npm run test:wasm
+
       - name: Test playground WASM execution
         working-directory: playground
         run: npm run test:wasm

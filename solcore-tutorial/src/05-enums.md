@@ -6,10 +6,12 @@ transition from awaiting payment to funded to released.
 This `Escrow` records numbers for learning. It does not receive or transfer
 Ether, or restrict who can call its methods.
 
-[Open Escrow in the Playground](https://playground.solcore.soliditylang.org/#/examples/pattern-matching?tab=run&view=tests)
+<div class="tutorial-exercise" data-title="Escrow states">
+<a class="tutorial-example" href="../projects/pattern-matching.json?tab=run&amp;view=tests">Open Escrow states in a full tab</a>
+</div>
 
 ```solidity
-{{#include ../../playground/src/examples/pattern-matching/Escrow.sol}}
+{{#include ../examples/pattern-matching/Escrow.sol}}
 ```
 
 `AwaitingPayment` carries no data. `Funded(uint256)` and `Released(uint256)`

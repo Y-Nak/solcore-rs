@@ -4,10 +4,12 @@
 implementation with `impl`. An enum represents a switch's state; a trait
 defines how to change that state.
 
-[Open LightSwitch in the Playground](https://playground.solcore.soliditylang.org/#/examples/trait?tab=run&view=tests)
+<div class="tutorial-exercise" data-title="LightSwitch traits">
+<a class="tutorial-example" href="../projects/trait.json?tab=run&amp;view=tests">Open LightSwitch traits in a full tab</a>
+</div>
 
 ```solidity
-{{#include ../../playground/src/examples/trait/LightSwitch.sol}}
+{{#include ../examples/trait/LightSwitch.sol}}
 ```
 
 `trait Toggle<a>` requires a `toggle` function that takes an `a` and returns

@@ -1,37 +1,9 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { build } from "esbuild";
-import { readExampleLocation } from "../src/share/exampleLink.js";
+import { loadProjects } from "./projects.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const playgroundOrigin = "https://playground.solcore.soliditylang.org";
-
-/** Load the same registry and source files that Vite ships, without a browser. */
-export async function loadExamples(root = repositoryRoot) {
-  const bundled = await build({
-    entryPoints: [join(root, "playground/src/examples/index.ts")],
-    bundle: true,
-    write: false,
-    platform: "node",
-    format: "esm",
-    plugins: [{
-      name: "tutorial-example-sources",
-      setup(builder) {
-        builder.onResolve({ filter: /\.sol\?raw$/ }, (args) => ({
-          path: resolve(args.resolveDir, args.path.slice(0, -4)),
-          namespace: "solcore-source",
-        }));
-        builder.onLoad({ filter: /.*/, namespace: "solcore-source" }, async (args) => ({
-          contents: await readFile(args.path, "utf8"),
-          loader: "text",
-        }));
-      },
-    }],
-  });
-  const module = await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString("base64")}`);
-  return module.examples;
-}
 
 async function markdownFiles(directory) {
   const files = [];
@@ -79,10 +51,12 @@ function links(markdown) {
 }
 
 /** Validate local book dependencies and routes; never request external URLs. */
-export async function checkTutorial({ root = repositoryRoot, examples } = {}) {
+export async function checkTutorial({ root = repositoryRoot, projects } = {}) {
   const source = join(root, "solcore-tutorial/src");
-  const registry = examples ?? await loadExamples(root);
-  const examplesById = new Map(registry.map((example) => [example.id, example]));
+  const registry = projects ?? await loadProjects(root);
+  const projectsById = new Map(registry.map((project) => [project.id, project]));
+  const testedSources = new Set(registry.flatMap((project) => project.files.map((file) =>
+    resolve(root, "solcore-tutorial/examples", project.id, file.path))));
   const errors = [];
   const report = (file, message) => errors.push(`${relative(root, file)}: ${message}`);
   const summary = join(source, "SUMMARY.md");
@@ -92,11 +66,21 @@ export async function checkTutorial({ root = repositoryRoot, examples } = {}) {
     const markdown = await readFile(file, "utf8");
     for (const match of markdown.matchAll(/\{\{#include\s+([^}\n]+)\}\}/g)) {
       const target = match[1].trim().split(":")[0];
-      if (!await isFile(resolve(dirname(file), target))) report(file, `missing include: ${target}`);
+      const included = resolve(dirname(file), target);
+      if (!await isFile(included)) report(file, `missing include: ${target}`);
+      else if (included.endsWith(".sol") && !testedSources.has(included)) {
+        report(file, `source include is not owned and tested by the tutorial: ${target}`);
+      }
     }
     for (const match of markdown.matchAll(/^```(?:sol|solcore|solidity)\s*\n([\s\S]*?)^```\s*$/gm)) {
       if (!/^\s*\{\{#include\s+[^}\n]+\}\}\s*$/.test(match[1])) {
         report(file, "Solcore code blocks must include a tested source file instead of copying code");
+      } else {
+        const target = match[1].match(/\{\{#include\s+([^}\n]+)\}\}/)[1].trim().split(":")[0];
+        const included = resolve(dirname(file), target);
+        if (!included.endsWith(".sol") && await isFile(included) && !testedSources.has(included)) {
+          report(file, `source include is not owned and tested by the tutorial: ${target}`);
+        }
       }
     }
 
@@ -109,19 +93,24 @@ export async function checkTutorial({ root = repositoryRoot, examples } = {}) {
         let url;
         try { url = new URL(target); }
         catch { report(file, `malformed URL: ${target}`); continue; }
-        if (url.origin !== playgroundOrigin || !url.hash.startsWith("#/examples")) continue;
-        const location = readExampleLocation(url.hash);
-        if (!location) { report(file, `malformed playground route: ${target}`); continue; }
-        const example = examplesById.get(location.id);
-        if (!example) { report(file, `unknown playground example: ${location.id}`); continue; }
-        if (location.view.file && !example.files.some((item) => item.path === location.view.file)) {
-          report(file, `unknown file ${location.view.file} in playground example ${location.id}`);
+        if (url.origin === "https://playground.solcore.soliditylang.org" && url.hash.startsWith("#/examples")) {
+          report(file, `exercise must use a tutorial-owned project: ${target}`);
         }
       } else {
         const path = target.split(/[?#]/)[0];
         let decoded;
         try { decoded = decodeURIComponent(path); }
         catch { report(file, `malformed local link: ${target}`); continue; }
+        const projectLink = decoded.match(/^(?:\.\.\/)+projects\/([^/]+)\.json$/);
+        if (projectLink) {
+          const project = projectsById.get(projectLink[1]);
+          if (!project) { report(file, `unknown tutorial project: ${projectLink[1]}`); continue; }
+          const params = new URL(target, "https://tutorial.invalid/src/").searchParams;
+          if (params.has("file") && !project.files.some((item) => item.path === params.get("file"))) {
+            report(file, `unknown file ${params.get("file")} in tutorial project ${project.id}`);
+          }
+          continue;
+        }
         if (!await isFile(resolve(dirname(file), decoded))) report(file, `missing local link: ${target}`);
       }
     }
@@ -135,6 +124,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     console.error(errors.join("\n"));
     process.exitCode = 1;
   } else {
-    console.log("Tutorial chapter links, source includes, and playground routes are valid.");
+    console.log("Tutorial chapter links, tested source includes, and project routes are valid.");
   }
 }

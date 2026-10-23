@@ -25,9 +25,6 @@ import reentrancyVault from "./reentrancy/Vault.sol?raw";
 import reentrancyReentrancy from "./reentrancy/reentrancy.sol?raw";
 import reentrancyContext from "./reentrancy/context.sol?raw";
 import comptimeAnswer from "./comptime/Answer.sol?raw";
-import tutorialBasics from "./tutorial-basics/Basics.sol?raw";
-import tutorialCounter from "./tutorial-counter/Counter.sol?raw";
-import tutorialBoundedCounter from "./tutorial-bounded-counter/BoundedCounter.sol?raw";
 
 export interface ExampleFile {
   path: string;
@@ -164,33 +161,6 @@ export const examples: PlaygroundExample[] = [
     entry: "Answer.sol",
     files: [
       { path: "Answer.sol", content: comptimeAnswer },
-    ],
-  },
-  {
-    id: "tutorial-basics",
-    name: "Tutorial: basics",
-    description: "Small examples of functions, local variables, reassignment, conditionals, and loops.",
-    entry: "Basics.sol",
-    files: [
-      { path: "Basics.sol", content: tutorialBasics },
-    ],
-  },
-  {
-    id: "tutorial-counter",
-    name: "Tutorial: counter",
-    description: "A counter introduces constructor initialization, persistent storage, and stateful tests.",
-    entry: "Counter.sol",
-    files: [
-      { path: "Counter.sol", content: tutorialCounter },
-    ],
-  },
-  {
-    id: "tutorial-bounded-counter",
-    name: "Tutorial: bounded counter",
-    description: "The tutorial capstone: preserve a capacity invariant with an explicit guard and test expected reverts.",
-    entry: "BoundedCounter.sol",
-    files: [
-      { path: "BoundedCounter.sol", content: tutorialBoundedCounter },
     ],
   },
 ];

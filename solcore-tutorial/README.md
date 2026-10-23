@@ -4,41 +4,62 @@ An English, exercise-led introduction to the current `solcore-rs` implementation
 
 The curriculum moves from a first return value through variables, functions, control flow, tests, storage, enums, modules, traits, generics, and `comptime`, then finishes with a bounded-counter exercise. It assumes basic programming knowledge but no prior Rust or Solidity knowledge.
 
-## Read and build
+## Build and distribute the standalone tutorial
 
-Keep this directory inside the repository: code listings include the actual tested sources in `playground/src/examples/`.
+The distribution includes the book, editor, compiler, language server, solc, browser EVM, and tutorial project sources. Readers can edit and run code inside a lesson without using the public Playground or installing compiler tools. **Try here** loads the bundled editor in an iframe on demand. **Open in full tab** provides more room and keeps the same project's saved edits. Only one exercise is open in a chapter at a time.
+
+The tutorial owns its [project catalog](examples/catalog.json), `.sol` examples, chapter source, theme, and build commands. It reuses the Playground application as a project editor; tutorial exercises are not registered in the ordinary Playground example menu. The Playground does not build or distribute this book.
+
+Install Rust through rustup, Node.js with npm, wasm-pack 0.15.0, and mdBook 0.4.52. Prepare the shared runtime dependencies from a fresh repository checkout:
 
 ```sh
+cargo install wasm-pack --version 0.15.0 --locked
 cargo install mdbook --version 0.4.52 --locked
-mdbook serve solcore-tutorial --open
+cd playground
+wasm-pack build ../crates/wasm --target web --out-dir pkg --profile wasm-release
+wasm-pack build ../crates/lsp --target web --out-dir pkg --profile wasm-release -- --features wasm
+npm ci
+cd ../solcore-tutorial
+npm run build
+npm run preview
 ```
 
-The standalone book uses the public playground, whose deployed revision may differ from this checkout. For a matching local tutorial and playground, first follow the [fresh-checkout setup](src/appendix-tools.md) to generate both WASM packages. After that:
+Open `http://127.0.0.1:4177/`. Copy or archive the **entire `solcore-tutorial/book/` directory** to distribute it; the repository and a separate Playground deployment are not needed by readers. The directory contains `projects/` with the generated tutorial projects and `playground/` with the editor and runtime assets.
+
+Serve it over HTTP(S), with `.wasm` files served as `application/wasm`. Opening HTML directly with `file://` does not support the module workers. Relative asset URLs allow the same directory to be hosted at `/` or a nested path without rebuilding. Building requires dependency downloads; reading, editing, compilation, and execution use the bundled files at runtime. External reference links remain optional.
+
+Each project has its own local saved workspace, separate from the ordinary Playground. Chapters using the same project share those edits. **Reset project** restores its original source. Saves are local to the browser and origin; URLs do not contain edited code.
+
+## Develop the book
+
+Run these commands from `solcore-tutorial/`:
 
 ```sh
-cd playground
-npm ci
-npm run dev
+npm run build       # Rebuild shared WASM and solc assets, then the tutorial.
+npm run build:book  # Reuse prepared WASM/solc assets; rebuild prose, projects, and editor.
+npm run preview    # Serve book/ at http://127.0.0.1:4177/.
 ```
 
-This also requires the Rust toolchain and wasm-pack 0.15.0; see [local tools](src/appendix-tools.md). Open **Tutorial** in the playground toolbar, or visit `/tutorial/index.html`. `npm run build` builds both together into `playground/dist`, with the book under `tutorial/`. `npm run build:tutorial` alone generates `playground/public/tutorial/`; Vite serves that directory during development and copies it when building. Rebuild the tutorial after editing its text or included examples.
+Use the full build after compiler or language-server changes. The faster book build is useful after editing prose, curriculum sources, or editor frontend code. Both produce a standalone `book/`; neither changes the ordinary Playground's example list or output directory.
 
-The integrated build rewrites example links to its sibling playground, including deployments under `VITE_BASE`. The Markdown source keeps usable public links. Example links reuse one named browser tab; no compiler iframe is loaded while reading.
+For a prose-only preview, `mdbook serve solcore-tutorial --open` works from the repository root. This includes the tutorial's source listings but does not generate project JSON or bundle the editor. Project links are disabled in that preview. Re-run the complete tutorial build before distribution.
 
 ## Maintain the learning contract
 
-Each chapter should explain a goal, provide a runnable example, state expected results, and include an exercise with a hint or answer. Add runnable code to the playground registry and tests, then use a fenced mdBook `include` in the chapter. Do not maintain a second copy of complete code in prose. Update expectations when behavior changes.
+Each chapter should explain a goal, provide a runnable example, state expected results, and include an exercise with a hint or answer. Add a project to `examples/catalog.json` and its source files to `examples/<id>/`. Each catalog entry declares `id`, `name`, `description`, `entry`, and a list of workspace-relative `files`. Include every helper source needed by that project. Keep complete code in those files and use fenced mdBook includes in chapters; do not duplicate complete code in prose.
+
+Chapter links use `../projects/<id>.json`, optionally followed by a query selecting a file, tab, or view. The tutorial build generates the project and rewrites the link to the bundled editor. Mark a primary exercise link with `class="tutorial-example"` inside a `class="tutorial-exercise"` container with a descriptive `data-title`. The theme enhances that link into an accessible inline editor in complete builds. Other project links remain full-tab links. Update expectations when behavior changes.
+
+From `solcore-tutorial/`, run the checks for the curriculum and distribution:
 
 ```sh
-cargo test -p solcore-driver --test playground_examples --locked
-cd playground
-npm run test:tutorial
-npm run build:tutorial
+npm test
 npm run test:wasm
+npm run test:bundle
 ```
 
-The native check compiles all playground sources. The tutorial check validates chapters, includes, example IDs, file selections, and integration URLs without network requests. The WASM tests execute the learning examples on both solc and Sonatina; rebuild WASM first after compiler changes. These checks are part of the existing CI workflow.
+Build first before checking the distribution, and prepare current WASM assets before running execution tests. Tutorial checks validate chapters, source includes, catalog entries, file selections, and generated project links. Runtime tests execute curriculum sources using the shared compiler and browser EVM. Distribution checks verify local HTML links and bundled compiler, language-server, and solc assets. These checks keep the book and its own examples aligned while allowing the ordinary Playground examples to evolve independently.
 
-Included sources and CI keep the tutorial aligned with its checkout. The Rust compiler and its regression tests define the supported language; see the repository's [README](../README.md) and [standard-library maintenance policy](../std/README.md).
+The Rust compiler and its regression tests define the supported language; see the repository's [README](../README.md) and [standard-library maintenance policy](../std/README.md).
 
-See [the design notes](src/appendix-design.md) for the official Rust, Go, and Svelte tutorials that informed the teaching format and the playground integration decision. This book follows the repository's [Apache-2.0 license](../LICENSE).
+See [the design notes](src/appendix-design.md) for the official Rust, Go, and Svelte tutorials that informed the teaching format and integration decision. This book follows the repository's [Apache-2.0 license](../LICENSE).

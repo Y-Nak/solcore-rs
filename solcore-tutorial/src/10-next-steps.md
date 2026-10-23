@@ -4,16 +4,18 @@
 examples. This chapter explores a module that restricts how its state can
 be constructed, then suggests a next project.
 
-[Open Amm in the Playground](https://playground.solcore.soliditylang.org/#/examples/invariants?tab=run&view=tests)
+<div class="tutorial-exercise" data-title="AMM invariants">
+<a class="tutorial-example" href="../projects/invariants.json?tab=run&amp;view=tests">Open AMM invariants in a full tab</a>
+</div>
 
 ```solidity
-{{#include ../../playground/src/examples/invariants/Amm.sol}}
+{{#include ../examples/invariants/Amm.sol}}
 ```
 
 The representation of `Pool` lives in a separate file:
 
 ```solidity
-{{#include ../../playground/src/examples/invariants/pool.sol}}
+{{#include ../examples/invariants/pool.sol}}
 ```
 
 `export { Pool, ... }` exports the type without its constructor, unlike
@@ -52,10 +54,13 @@ checks have distinct roles.
 
 | What to explore | Example | Where to look |
 | --- | --- | --- |
-| Mappings and absent ownership | [Mini NFT](https://playground.solcore.soliditylang.org/#/examples/mini-nft?tab=run&view=calls) | `Option<address>`, `mint`, `exists` |
-| Composing behavior with traits | [Composition](https://playground.solcore.soliditylang.org/#/examples/composition?tab=run&view=calls) | `engine.sol` and its three contracts |
-| Dividing responsibilities across modules | [Extensions](https://playground.solcore.soliditylang.org/#/examples/extensions?tab=run&view=calls) | Storage and transfer hooks |
-| Lambdas and locking wrappers | [Reentrancy](https://playground.solcore.soliditylang.org/#/examples/reentrancy?tab=run&view=calls) | `withWriteLock`, `withReadLock`, `lam` |
+| Mappings and absent ownership | [Mini NFT](../projects/mini-nft.json?tab=run&view=calls) | `Option<address>`, `mint`, `exists` |
+| Composing behavior with traits | [Composition](../projects/composition.json?tab=run&view=calls) | `engine.sol` and its three contracts |
+| Dividing responsibilities across modules | [Extensions](../projects/extensions.json?tab=run&view=calls) | Storage and transfer hooks; use the **solc** backend |
+| Lambdas and locking wrappers | [Reentrancy](../projects/reentrancy.json?tab=run&view=calls) | `withWriteLock`, `withReadLock`, `lam` |
+
+Use **solc** for Extensions: its current Sonatina output compiles but exceeds
+the browser runner's deployment gas limit.
 
 These are examples for studying design. Composition's signature example
 omits replay protection using a nonce, chain ID, and contract address.

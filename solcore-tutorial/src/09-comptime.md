@@ -4,10 +4,12 @@
 Distinguish values known while compiling from arguments supplied by a
 future caller.
 
-[Open Answer in the Playground](https://playground.solcore.soliditylang.org/#/examples/comptime?tab=run&view=tests)
+<div class="tutorial-exercise" data-title="Compile-time answer">
+<a class="tutorial-example" href="../projects/comptime.json?tab=run&amp;view=tests">Open Compile-time answer in a full tab</a>
+</div>
 
 ```solidity
-{{#include ../../playground/src/examples/comptime/Answer.sol}}
+{{#include ../examples/comptime/Answer.sol}}
 ```
 
 The parameter `comptime value: uint256` requires a value known at compile

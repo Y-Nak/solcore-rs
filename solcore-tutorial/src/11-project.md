@@ -2,9 +2,13 @@
 
 **Goal:** combine persistent state, a condition, rejection, and tests in a small feature you can explain.
 
-Start from [the Counter example](https://playground.solcore.soliditylang.org/#/examples/tutorial-counter?tab=run&view=tests). Keep its constructor, `add`, and `read`. Your counter should accept a total of at most **10** units. Adding more than the remaining capacity must revert, without changing the count. Add a public `remaining()` function returning `uint256`.
+Start from the Counter example below. Keep its constructor, `add`, and `read`. Your counter should accept a total of at most **10** units. Adding more than the remaining capacity must revert, without changing the count. Add a public `remaining()` function returning `uint256`.
 
-This is a numeric exercise, not a payment or token contract. Any caller may add; access control is outside its scope.
+This is a numeric exercise, not a payment or token contract. Any caller may add; access control is outside its scope. The starter shares your saved Counter edits from the state chapter; use **Reset project** if you want the original source.
+
+<div class="tutorial-exercise" data-title="Counter starter">
+<a class="tutorial-example" href="../projects/tutorial-counter.json?tab=run&amp;view=tests">Open the Counter starter in a full tab</a>
+</div>
 
 ## Write the behavior first
 
@@ -36,12 +40,14 @@ Use an `if` at the beginning of `add`. If `amount > uint256(10) - count`, call `
 <details>
 <summary>Complete, tested solution</summary>
 
-Save any experiment you want to keep before switching examples.
+The solution has its own saved workspace, so opening it keeps your Counter starter edits.
 
-[Open in playground: Bounded counter solution](https://playground.solcore.soliditylang.org/#/examples/tutorial-bounded-counter?tab=run&view=tests)
+<div class="tutorial-exercise" data-title="Bounded counter solution">
+<a class="tutorial-example" href="../projects/tutorial-bounded-counter.json?tab=run&amp;view=tests">Open the bounded counter solution in a full tab</a>
+</div>
 
 ```solidity
-{{#include ../../playground/src/examples/tutorial-bounded-counter/BoundedCounter.sol}}
+{{#include ../examples/tutorial-bounded-counter/BoundedCounter.sol}}
 ```
 
 All **five** test steps should pass. The expected revert is itself a passing test when rejection occurs. The subsequent read verifies that the count is still `10`.

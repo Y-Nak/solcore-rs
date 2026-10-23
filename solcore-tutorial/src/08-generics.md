@@ -4,10 +4,12 @@
 state its required capabilities with `where`. The example is a version
 registry, with an ordering that compares the major version first.
 
-[Open Registry in the Playground](https://playground.solcore.soliditylang.org/#/examples/generics?tab=run&view=tests)
+<div class="tutorial-exercise" data-title="Generic Registry">
+<a class="tutorial-example" href="../projects/generics.json?tab=run&amp;view=tests">Open Generic Registry in a full tab</a>
+</div>
 
 ```solidity
-{{#include ../../playground/src/examples/generics/Registry.sol}}
+{{#include ../examples/generics/Registry.sol}}
 ```
 
 `max<a>(x: a, y: a)` takes two values of the same type and returns that

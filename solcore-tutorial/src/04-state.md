@@ -2,10 +2,12 @@
 
 **Goal:** distinguish a local binding from contract storage, and a test assertion from a committed state change.
 
-[Open in playground: Tutorial — Counter](https://playground.solcore.soliditylang.org/#/examples/tutorial-counter?tab=run&view=tests)
+<div class="tutorial-exercise" data-title="Persistent counter">
+<a class="tutorial-example" href="../projects/tutorial-counter.json?tab=run&amp;view=tests">Open Persistent counter in a full tab</a>
+</div>
 
 ```solidity
-{{#include ../../playground/src/examples/tutorial-counter/Counter.sol}}
+{{#include ../examples/tutorial-counter/Counter.sol}}
 ```
 
 `count` is a contract field. Its value survives calls to the same deployed instance. The constructor runs once per deployment and initializes it to `0`. `add` updates that field; `read` returns it. A new instance starts at zero again.

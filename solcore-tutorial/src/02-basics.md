@@ -2,10 +2,12 @@
 
 **Goal:** follow a local variable through a helper call, an `if`, and a loop.
 
-[Open in playground: Tutorial — Basics](https://playground.solcore.soliditylang.org/#/examples/tutorial-basics?tab=run&view=tests)
+<div class="tutorial-exercise" data-title="Values and control flow">
+<a class="tutorial-example" href="../projects/tutorial-basics.json?tab=run&amp;view=tests">Open Values and control flow in a full tab</a>
+</div>
 
 ```solidity
-{{#include ../../playground/src/examples/tutorial-basics/Basics.sol}}
+{{#include ../examples/tutorial-basics/Basics.sol}}
 ```
 
 ## Predict and run

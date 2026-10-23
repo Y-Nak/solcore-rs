@@ -6,14 +6,16 @@ caller can decide how to handle it.
 The `Option` used here is defined in the example's `option.sol`; it is not
 a built-in standard-library type.
 
-[Open Splitter in the Playground](https://playground.solcore.soliditylang.org/#/examples/option?tab=run&view=tests)
+<div class="tutorial-exercise" data-title="Splitter and Option">
+<a class="tutorial-example" href="../projects/option.json?tab=run&amp;view=tests">Open Splitter and Option in a full tab</a>
+</div>
 
 ## A reusable module
 
 Select `option.sol` in the file list.
 
 ```solidity
-{{#include ../../playground/src/examples/option/option.sol}}
+{{#include ../examples/option/option.sol}}
 ```
 
 The `a` in `Option<a>` is a type parameter. For `Option<uint256>`, `Some`
@@ -36,7 +38,7 @@ Return to `Splitter.sol`. `from option` refers to the example's
 file used for compilation.
 
 ```solidity
-{{#include ../../playground/src/examples/option/Splitter.sol}}
+{{#include ../examples/option/Splitter.sol}}
 ```
 
 `share` uses `unwrapOr` to choose `0` when the result is absent.

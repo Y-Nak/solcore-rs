@@ -1,29 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import NodeModule, { createRequire } from 'node:module';
-import { dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import vm from 'node:vm';
-import init, { compile, run, set_solc, watch } from 'solcore-wasm';
-import { bindSolc } from '../src/compiler/solcBinding.js';
-import { SOLJSON_FILE } from '../src/compiler/solcRelease.js';
+import { backends, initializeBrowserWasm } from '../../scripts/test-support/browser-wasm.mjs';
 
 // Exercise the actual browser WASM package and the examples shipped by the UI.
-await init({
-  module_or_path: await readFile(new URL('../../crates/wasm/pkg/solcore_wasm_bg.wasm', import.meta.url)),
-});
-// `npm run fetch:solc` downloads the soljson build the browser loads. It is a
-// CommonJS script, but this package treats `.js` files as ES modules.
-const soljsonPath = fileURLToPath(new URL(`../public/solc/${SOLJSON_FILE}`, import.meta.url));
-const soljson = { exports: {} };
-vm.runInThisContext(NodeModule.wrap(await readFile(soljsonPath, 'utf8')), { filename: soljsonPath })(
-  soljson.exports, createRequire(soljsonPath), soljson, soljsonPath, dirname(soljsonPath),
-);
-const solc = bindSolc(soljson.exports);
-set_solc(solc.compile);
+const { compile, run, watch } = await initializeBrowserWasm();
 
-for (const backend of ['solc', 'sonatina']) {
+for (const backend of backends) {
 const options = { emitHull: true, emitYul: true, emitSonatina: true, emitAbi: true, backend };
 
 test(`${backend}: browser WASM runs the bundled Hello contract without changing Compile output`, async () => {
@@ -176,32 +159,12 @@ test(`${backend}: AMM watches track committed swaps and discard changes from wat
   assert.ok(stale.every(result => result.error && result.value === null));
 });
 
-test(`${backend}: tutorial-bounded-counter keeps manual state after a rejected increment`, async () => {
-  const content = await readFile(new URL('../src/examples/tutorial-bounded-counter/BoundedCounter.sol', import.meta.url), 'utf8');
-  const input = { files: [{ path: 'BoundedCounter.sol', content }], entry: 'BoundedCounter.sol', options, sandboxEpoch: 175 };
-  const invoke = (signature, args) => run({ ...input, manual: {
-    contract: 'BoundedCounter', signature, arguments: JSON.stringify(args), constructorArguments: '[]', simulate: false,
-  } }).execution;
-  assert.equal(invoke('read()', []).decoded, '0');
-  assert.equal(invoke('remaining()', []).decoded, '10');
-  assert.equal(invoke('add(uint256)', [4]).status, 'success');
-  assert.equal(invoke('read()', []).decoded, '4');
-  assert.equal(invoke('remaining()', []).decoded, '6');
-  assert.equal(invoke('add(uint256)', [6]).status, 'success');
-  assert.equal(invoke('add(uint256)', [1]).status, 'revert');
-  assert.equal(invoke('read()', []).decoded, '10');
-  assert.equal(invoke('remaining()', []).decoded, '0');
-});
-
 for (const [directory, entry, helpers, count] of [
   ['std-usage', 'Calculator.sol', [], 4],
   ['option', 'Splitter.sol', ['option.sol'], 4],
   ['generics', 'Registry.sol', [], 6],
   ['pattern-matching', 'Escrow.sol', [], 6],
   ['invariants', 'Amm.sol', ['pool.sol'], 5],
-  ['tutorial-basics', 'Basics.sol', [], 5],
-  ['tutorial-counter', 'Counter.sol', [], 3],
-  ['tutorial-bounded-counter', 'BoundedCounter.sol', [], 5],
   ['comptime', 'Answer.sol', [], 1],
 ]) {
   test(`${backend}: ${directory} example tests pass together and replay setup for the final check`, async () => {

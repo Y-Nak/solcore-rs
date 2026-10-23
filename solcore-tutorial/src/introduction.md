@@ -14,9 +14,11 @@ Solcore is an experimental language targeting the Ethereum Virtual Machine (EVM)
 
 Every chapter gives you a goal, an example, an expected result, and a small change to try. Predict the result before running it. The expandable hints let you get unstuck without reading the solution first. At the end of a chapter, explain the result in your own words before continuing.
 
-Use the **Open in playground** links to load the complete example, including its helper files. They open a separate tab in the built book, so the explanation stays available. Select the **solc** backend for your first pass. The exercises are also tested with Sonatina.
+Choose **Try here** in a chapter to open an editable example inside the page, including its helper files. The editor loads only when requested; **Close editor** releases it while keeping your saved code. Only one inline editor is open on a page at a time. Use **Open in full tab** whenever you want more space or the full Playground controls.
 
-The book bundled at the playground's `/tutorial/` path links to that same build. If you are reading the Markdown source or a standalone book build, links instead point to the public playground. That deployment may lag behind this checkout; use the [local tools](appendix-tools.md) when a new example is missing or behaves differently.
+The distributed tutorial includes its own Playground, compiler, and example sources. Running a lesson does not contact the public Playground or send your code to a compilation service. Serve the complete tutorial folder over HTTP; after its files load, execution happens in your browser. See [local tools](appendix-tools.md) for build and serving commands. The tutorial owns the projects used by its lessons; they do not depend on the ordinary Playground example menu. Plain mdBook previews include the source listings but disable editing links until you build the complete tutorial.
+
+The inline editor uses the **solc** backend by default. The exercises are also tested with Sonatina, which you can select in the full-tab view.
 
 ## Three ways to execute
 
@@ -26,12 +28,14 @@ The book bundled at the playground's `/tutorial/` path links to that same build.
 | **Run all tests from start** | Comments containing inputs and expected results | A separate fresh test deployment; `send` steps persist within it |
 | **Call function** under **Try calls** | Exploring public functions manually | Changes persist between calls until reset or source changes |
 
-Opening a link selects code and a view; it does **not** run the program. Tests and manual calls use separate contract instances. A passed test does not prepare the state of your manual calls.
+Opening an editor selects code and a view; it does **not** run the program. Tests and manual calls use separate contract instances. A passed test does not prepare the state of your manual calls.
 
 ## Keep your experiments
 
-The playground saves one workspace in this browser. Opening a different example replaces that workspace; opening the same example may preserve your edits. Copy code you want to keep to a local file **before** moving to another example. A shared example URL does not contain your edits, arguments, or contract state.
+Each tutorial project saves its source files in a separate workspace in this browser. Returning to that project restores your edits, and opening another lesson does not replace them. Chapters using the same project share its workspace. Project workspaces are separate from the ordinary Playground workspace. The inline editor and its **Open in full tab** view use the same saved source; keep only one editor open for a given project.
 
-To restore an example, choose **Reset workspace** (which returns to Hello), then reopen that chapter's example link. To keep your source but clear manual state, use **Reset contract** instead. Keep one active playground tab to avoid competing saved workspaces.
+Choose **Reset project** to restore that project's original source. To keep your source but clear manual contract state, use **Reset contract** instead. Closing an editor or reloading the page also starts a new execution session; saved source is not saved contract state.
+
+Browser storage is a convenience, not an export. Copy code you want to keep to a local file, especially before clearing site data or using a private window. A shared project URL identifies the bundled project; it does not contain your edits, arguments, or contract state.
 
 [Start with your first program →](01-first-program.md)
