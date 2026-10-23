@@ -509,6 +509,10 @@ mod tests {
         assert_eq!(tokenize("!="), vec![Token::NotEq]);
         assert_eq!(tokenize(">="), vec![Token::GreaterEq]);
         assert_eq!(tokenize("<="), vec![Token::LessEq]);
+        // Shifts stay single tokens so nested generic closers `>>` lex
+        // unchanged; the parser joins adjacent tokens into `<<`/`<<=`.
+        assert_eq!(tokenize("<<"), vec![Token::Less, Token::Less]);
+        assert_eq!(tokenize(">>="), vec![Token::Greater, Token::GreaterEq]);
         assert_eq!(tokenize("&&"), vec![Token::AndAnd]);
         assert_eq!(tokenize("||"), vec![Token::OrOr]);
         assert_eq!(tokenize("+="), vec![Token::PlusEq]);

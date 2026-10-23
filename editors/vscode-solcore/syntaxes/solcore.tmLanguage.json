@@ -171,11 +171,15 @@
       "patterns": [
         {
           "name": "keyword.operator.assignment.solcore",
-          "match": ":=|\\+=|-=|\\*=|/=|\\^=|&=|\\|=|%=|~="
+          "match": "<<=|>>=|:=|\\+=|-=|\\*=|/=|\\^=|&=|\\|=|%=|~="
         },
         {
           "name": "keyword.operator.arrow.solcore",
           "match": "->|=>"
+        },
+        {
+          "name": "keyword.operator.bitwise.solcore",
+          "match": "<<|>>"
         },
         {
           "name": "keyword.operator.comparison.solcore",

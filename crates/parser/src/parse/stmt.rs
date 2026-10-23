@@ -25,6 +25,9 @@ where
         .or(just(Token::AmpEq).to(ParsedAssignOp::BitAndEq))
         .or(just(Token::PipeEq).to(ParsedAssignOp::BitOrEq))
         .or(just(Token::PercentEq).to(ParsedAssignOp::ModEq))
+        // `<<=` and `>>=` lex as `<` `<=` and `>` `>=`.
+        .or(adjacent_tokens_parser(Token::Less, Token::LessEq).to(ParsedAssignOp::ShlEq))
+        .or(adjacent_tokens_parser(Token::Greater, Token::GreaterEq).to(ParsedAssignOp::ShrEq))
         .map_with(|op, e| ParsedSpanned::new(op, e.span()))
 }
 
@@ -111,6 +114,8 @@ fn compound_bin_op(op: ParsedAssignOp) -> Option<function::BinOp> {
         ParsedAssignOp::BitAndEq => Some(function::BinOp::BitAnd),
         ParsedAssignOp::BitOrEq => Some(function::BinOp::BitOr),
         ParsedAssignOp::ModEq => Some(function::BinOp::Mod),
+        ParsedAssignOp::ShlEq => Some(function::BinOp::Shl),
+        ParsedAssignOp::ShrEq => Some(function::BinOp::Shr),
     }
 }
 

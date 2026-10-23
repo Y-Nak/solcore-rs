@@ -3261,6 +3261,25 @@ contract C {
 }
 
 #[test]
+fn constant_shifts_fold() {
+    let output = specialize_src_with_std(
+        r#"
+import * from std;
+
+contract C {
+  function main() public returns (uint256) {
+    return (uint256(3) << 255) >> 254;
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    // (3 << 255) keeps only the lowest bit at position 255.
+    assert_eq!(main_return_number(&output), Some("2".to_owned()));
+}
+
+#[test]
 fn unfolding_never_discards_an_unused_checked_operation() {
     let output = specialize_src_with_std(
         r#"

@@ -731,6 +731,10 @@ pub(crate) enum ParsedAssignOp {
     BitOrEq,
     /// `%=` assignment.
     ModEq,
+    /// `<<=` assignment.
+    ShlEq,
+    /// `>>=` assignment.
+    ShrEq,
 }
 
 /// Parsed statement payload.

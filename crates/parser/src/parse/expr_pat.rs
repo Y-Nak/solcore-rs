@@ -278,12 +278,26 @@ where
             parsed_bin_op_expr(lhs, op, rhs, e.span())
         });
 
+    // As in Solidity, shifts bind looser than `+ -` and tighter than `&`.
+    let shift_op = adjacent_tokens_parser(Token::Less, Token::Less)
+        .to(function::BinOp::Shl)
+        .or(adjacent_tokens_parser(Token::Greater, Token::Greater).to(function::BinOp::Shr))
+        .map_with(|op, e| ParsedSpanned::new(op, e.span()));
+    let shift = add
+        .clone()
+        .foldl_with(shift_op.then(add).repeated(), |lhs, (op, rhs), e| {
+            parsed_bin_op_expr(lhs, op, rhs, e.span())
+        })
+        // Boxing bounds the nested combinator type, keeping the per-level
+        // stack use of the operator ladder within the debug test-thread stack.
+        .boxed();
+
     let bit_and_op = just(Token::Amp)
         .to(function::BinOp::BitAnd)
         .map_with(|op, e| ParsedSpanned::new(op, e.span()));
-    let bit_and = add
+    let bit_and = shift
         .clone()
-        .foldl_with(bit_and_op.then(add).repeated(), |lhs, (op, rhs), e| {
+        .foldl_with(bit_and_op.then(shift).repeated(), |lhs, (op, rhs), e| {
             parsed_bin_op_expr(lhs, op, rhs, e.span())
         });
 
@@ -306,13 +320,20 @@ where
         })
         .boxed();
 
-    let rel_op = select! {
-        Token::Less => function::BinOp::Lt,
-        Token::Greater => function::BinOp::Gt,
-        Token::LessEq => function::BinOp::LtEq,
-        Token::GreaterEq => function::BinOp::GtEq,
-    }
-    .map_with(|op, e| ParsedSpanned::new(op, e.span()));
+    // `<<=` and `>>=` lex as `<` `<=` and `>` `>=`. Leave them to the compound
+    // assignment parser: once a comparison consumed the `<`, expression
+    // recovery would turn the rest into an error instead of backtracking.
+    let compound_shift = adjacent_tokens_parser(Token::Less, Token::LessEq)
+        .or(adjacent_tokens_parser(Token::Greater, Token::GreaterEq));
+    let rel_op = compound_shift
+        .not()
+        .ignore_then(select! {
+            Token::Less => function::BinOp::Lt,
+            Token::Greater => function::BinOp::Gt,
+            Token::LessEq => function::BinOp::LtEq,
+            Token::GreaterEq => function::BinOp::GtEq,
+        })
+        .map_with(|op, e| ParsedSpanned::new(op, e.span()));
     let rel = bit_or
         .clone()
         .then(rel_op.then(bit_or).or_not())

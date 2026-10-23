@@ -8,6 +8,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             | BinOp::Mul
             | BinOp::Div
             | BinOp::Mod
+            | BinOp::Shl
+            | BinOp::Shr
             | BinOp::UncheckedAdd
             | BinOp::UncheckedSub
             | BinOp::UncheckedMul

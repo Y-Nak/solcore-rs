@@ -324,6 +324,17 @@ fn needs_space(
     {
         return false;
     }
+    // Shift operators lex as two adjacent tokens (`<<` is `<` `<`, `<<=` is
+    // `<` `<=`); separating them would change the program.
+    if previous.range.end == current.range.start
+        && matches!(
+            (left, right),
+            (Token::Less, Token::Less | Token::LessEq)
+                | (Token::Greater, Token::Greater | Token::GreaterEq)
+        )
+    {
+        return false;
+    }
     if left == &Token::LBrace && right == &Token::RBrace {
         return false;
     }

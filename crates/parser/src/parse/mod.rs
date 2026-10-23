@@ -1483,6 +1483,56 @@ match (left, right) {
         }
     }
 
+    fn render_expr(expr: &ParsedExpr<'_>) -> String {
+        match &expr.kind {
+            ParsedExprKind::Ident((name, _)) => (*name).to_owned(),
+            ParsedExprKind::BinOp { lhs, op, rhs } => {
+                format!("({} {:?} {})", render_expr(lhs), op.elem, render_expr(rhs))
+            }
+            other => format!("{other:?}"),
+        }
+    }
+
+    fn render_return(source: &str) -> Result<String, Vec<ParsedError>> {
+        let parsed = parse_body_statements(source, (0..source.len()).into());
+        if !parsed.errors.is_empty() {
+            return Err(parsed.errors);
+        }
+        match parsed.output.as_slice() {
+            [
+                ParsedStmt {
+                    kind: ParsedStmtKind::Return(Some(expr)),
+                    ..
+                },
+            ] => Ok(render_expr(expr)),
+            other => panic!("expected one return statement: {other:#?}"),
+        }
+    }
+
+    #[test]
+    fn shifts_bind_between_additive_and_bitwise_operators() {
+        for (source, expected) in [
+            ("{ return a + b << c & d; }", "(((a Add b) Shl c) BitAnd d)"),
+            ("{ return a >> b >> c; }", "((a Shr b) Shr c)"),
+            ("{ return a << b < c; }", "((a Shl b) Lt c)"),
+            ("{ return a > b; }", "(a Gt b)"),
+            ("{ return a >= b; }", "(a GtEq b)"),
+        ] {
+            assert_eq!(render_return(source).unwrap(), expected, "{source}");
+        }
+    }
+
+    #[test]
+    fn shift_operators_require_adjacent_tokens() {
+        for source in [
+            "{ return a > > b; }",
+            "{ return a < < b; }",
+            "{ a < <= b; }",
+        ] {
+            assert!(render_return(source).is_err(), "{source} must not parse");
+        }
+    }
+
     #[test]
     fn if_statement_requires_a_parenthesized_condition() {
         let source = "{ if (condition) { return 1; } else { return 0; } }";

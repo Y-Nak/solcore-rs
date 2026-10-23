@@ -431,6 +431,10 @@ pub enum BinOp {
     Div,
     /// Remainder.
     Mod,
+    /// Left shift (`<<`).
+    Shl,
+    /// Right shift (`>>`): arithmetic for signed types, logical otherwise.
+    Shr,
     /// Bitwise and.
     BitAnd,
     /// Bitwise xor.

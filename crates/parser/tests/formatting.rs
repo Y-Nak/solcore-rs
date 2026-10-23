@@ -103,6 +103,16 @@ fn formats_unchecked_blocks_like_blocks() {
 }
 
 #[test]
+fn keeps_shift_operator_tokens_together() {
+    let source = "function f(x:word,y:Pair<word,Pair<word,word>>)returns(word){let a=x<<1;x>>=a;x<<=1;let p=@P<Q<word>>;return x>>a>y.fst?a:x>=a?1:0;}";
+    assert_eq!(
+        format(source),
+        "function f(x: word, y: Pair<word, Pair<word, word>>) returns (word) {\n    let a = x << 1;\n    x >>= a;\n    x <<= 1;\n    let p = @P<Q<word>>;\n    return x >> a > y.fst ? a : x >= a ? 1 : 0;\n}\n"
+    );
+    assert_stable(source);
+}
+
+#[test]
 fn rejects_invalid_input_without_returning_partial_output() {
     for source in [
         "function f(){let x=;}",
