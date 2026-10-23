@@ -90,7 +90,9 @@ contract ClosureParameters {
     // #[(40) -> 42]
     // #[(3) -> 5]
     function inferredGenericResult(x: uint256) public returns (uint256) {
-        let f = lam (y: uint256) -> uint256 { return y + x; };
+        let f = lam (y: uint256) -> uint256 {
+            return y + x;
+        };
         let callback: function (uint256) returns (uint256) = forwardValue(f);
         return callback(uint256(2));
     }
@@ -98,8 +100,12 @@ contract ClosureParameters {
     // #[(40) -> 42]
     // #[(3) -> 5]
     function inferredIndirectResult(x: uint256) public returns (uint256) {
-        let f = lam (y: uint256) -> uint256 { return y + x; };
-        let factory = lam () { return f; };
+        let f = lam (y: uint256) -> uint256 {
+            return y + x;
+        };
+        let factory = lam () {
+            return f;
+        };
         let callback: function (uint256) returns (uint256) = factory();
         return callback(uint256(2));
     }
