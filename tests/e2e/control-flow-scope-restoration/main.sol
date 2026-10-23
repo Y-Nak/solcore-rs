@@ -92,11 +92,11 @@ contract ControlFlowScopeRestoration {
         return uint256(seed);
     }
 
-    // Both source arms share declarations, so these writes target the new seed.
-    // #[(false) -> 7]
+    // Each branch owns its declarations; the else assignment writes the outer seed.
+    // #[(false) -> 3]
     // #[(true) -> 7]
     function writesAfterShadow(flag: bool) public returns (uint256) {
-        let seed: comptime<word> = 7;
+        let seed: word = 7;
         {
             if (flag) {
                 let seed: word = 1;
@@ -105,7 +105,7 @@ contract ControlFlowScopeRestoration {
                 seed = 3;
             }
         }
-        return uint256(requireStatic(seed));
+        return uint256(seed);
     }
 
     // The post clause is resolved before the body declaration, and writes outer seed.

@@ -3,7 +3,7 @@
   "checks": [
     {
       "check": "main_return_number",
-      "value": "7"
+      "value": "1"
     }
   ],
   "source": "005.sol"

@@ -694,6 +694,15 @@ pub(crate) struct ParsedStmt<'src> {
     pub(crate) kind: ParsedStmtKind<'src>,
 }
 
+/// A statement sequence with its own lexical extent.
+#[derive(Debug, Clone)]
+pub(crate) struct ParsedStmtScope<'src> {
+    /// Absolute span including braces, or the loop post clause.
+    pub(crate) span: LexSpan,
+    /// Statements inside the scope.
+    pub(crate) stmts: Vec<ParsedStmt<'src>>,
+}
+
 /// Parsed assignment operator.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ParsedAssignOp {
@@ -763,18 +772,18 @@ pub(crate) enum ParsedStmtKind<'src> {
         /// Condition expression.
         cond: ParsedExpr<'src>,
         /// Post-iteration statements.
-        post: Vec<ParsedStmt<'src>>,
+        post: ParsedStmtScope<'src>,
         /// Body statements.
-        body: Vec<ParsedStmt<'src>>,
+        body: ParsedStmtScope<'src>,
     },
     /// Conditional statement.
     If {
         /// Condition expression.
         cond: ParsedExpr<'src>,
         /// Then-body statements.
-        then_body: Vec<ParsedStmt<'src>>,
+        then_body: ParsedStmtScope<'src>,
         /// Optional else-body statements.
-        else_body: Option<Vec<ParsedStmt<'src>>>,
+        else_body: Option<ParsedStmtScope<'src>>,
     },
     /// Lexical block statement.
     Block {

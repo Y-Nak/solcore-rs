@@ -340,9 +340,9 @@ impl<'db> Emitter<'db> {
                 post,
                 body,
             } => {
-                // Source `for` has no lexical scope. Its initializer executes
-                // once, while post/body declarations have enclosing lifetime
-                // but retain their original conditional initialization sites.
+                // Loop scopes are explicit blocks in Mono. The initializer
+                // executes once in the enclosing scope, while declarations in
+                // transparent regions retain their conditional initialization.
                 let mut out = self.emit_stmts(init);
                 let predeclared = self.predeclared_lets.len();
                 out.extend(self.predeclare_control_flow_locals(&[post, body]));
@@ -431,9 +431,9 @@ impl<'db> Emitter<'db> {
         let mut out =
             self.predeclare_control_flow_locals(&[then_body, else_body.unwrap_or_default()]);
 
-        // `if` is not a lexical scope in the source language. Emitting the
-        // branches in source resolution order keeps then-bindings visible to
-        // the else list and leaves both lists' final bindings visible after it.
+        // Branch scopes are explicit blocks in Mono. Emit the transparent
+        // regions in traversal order; their nested blocks restore bindings
+        // before another branch or a following statement is emitted.
         let then_stmts = self.emit_stmts(then_body);
         let else_stmts = else_body
             .map(|body| self.emit_stmts(body))
@@ -469,8 +469,8 @@ impl<'db> Emitter<'db> {
         out
     }
 
-    /// Give non-scoping control-flow declarations an enclosing runtime local,
-    /// without making their source bindings visible before their declarations.
+    /// Give declarations in transparent control-flow regions an enclosing
+    /// runtime local without crossing explicit lexical block boundaries.
     fn predeclare_control_flow_locals(&mut self, bodies: &[&[MonoStmt<'db>]]) -> Vec<Stmt<'db>> {
         let mut leaking_lets = Vec::new();
         for body in bodies {

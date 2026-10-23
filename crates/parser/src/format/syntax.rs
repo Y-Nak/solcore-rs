@@ -408,8 +408,8 @@ impl<'src> Collector<'src> {
             } => {
                 self.statements(init, false);
                 self.pending.push(Node::Expr(cond));
-                self.statements(post, false);
-                self.statements(body, true);
+                self.statements(post.stmts, false);
+                self.statements(body.stmts, true);
             }
             ParsedStmtKind::If {
                 cond,
@@ -417,9 +417,9 @@ impl<'src> Collector<'src> {
                 else_body,
             } => {
                 self.pending.push(Node::Expr(cond));
-                self.statements(then_body, true);
+                self.statements(then_body.stmts, true);
                 if let Some(body) = else_body {
-                    self.statements(body, true);
+                    self.statements(body.stmts, true);
                 }
             }
             ParsedStmtKind::Block { body } => self.statements(body, true),

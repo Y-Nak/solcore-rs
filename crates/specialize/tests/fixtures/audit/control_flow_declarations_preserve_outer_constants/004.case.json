@@ -1,0 +1,15 @@
+{
+  "loader": "std",
+  "checks": [
+    {
+      "check": "loop_condition_argument",
+      "name": "i"
+    },
+    {
+      "check": "main_return_number",
+      "value": "1"
+    }
+  ],
+  "source": "004.sol",
+  "frontend_clean": true
+}

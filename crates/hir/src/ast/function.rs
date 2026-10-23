@@ -143,7 +143,9 @@ impl AssignOp {
 /// Child expressions, patterns, and statements are referenced by IDs into the
 /// owning [`FuncBody`] arenas. The resolver relies on this shape for lexical
 /// scoping; for example `let` initializers are resolved before their binders
-/// are inserted.
+/// are inserted. Lexical scope boundaries use [`StmtKind::Block`], including
+/// source `if` branches, loop bodies/post clauses, and the scope enclosing a
+/// loop's initializer. Control-flow statement lists do not add implicit scopes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum StmtKind<'db> {
     /// Local binding statement.

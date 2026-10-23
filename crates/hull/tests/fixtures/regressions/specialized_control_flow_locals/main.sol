@@ -1,5 +1,6 @@
 import * from std;
 function value<a>(input: a, flag: bool) returns (word) {
+    let result: word = 1;
     if (flag) {
         let result: word = 7;
     } else {}

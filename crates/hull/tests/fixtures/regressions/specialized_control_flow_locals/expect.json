@@ -1,7 +1,8 @@
 {
   "checks": {
     "min_count": {
-      "let $if_local": 2
-    }
+      "let result": 2
+    },
+    "not_contains": ["$if_local"]
   }
 }

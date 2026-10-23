@@ -402,6 +402,100 @@ contract C {
 }
 
 #[test]
+fn lexical_scopes_restore_outer_sail_types_for_assembly() {
+    for (case, scoped) in [
+        ("block", "{ let value: bool = true; }"),
+        (
+            "if branches",
+            "if (true) { let value: bool = true; } else { assembly { pop(value) } }",
+        ),
+        (
+            "for initializer",
+            "for (let value: bool = true; false; ) {}",
+        ),
+        ("for body", "for (; false; ) { let value: bool = true; }"),
+        // Post-clause declarations are accepted, but the body and following
+        // assembly must still resolve the surrounding Sail variable.
+        (
+            "for post",
+            "for (; false; let value: bool = true) { assembly { pop(value) } }",
+        ),
+        ("while body", "while (false) { let value: bool = true; }"),
+        (
+            "match arms",
+            "match (true) { case true { let value: bool = true; } case false { assembly { pop(value) } } }",
+        ),
+        (
+            "lambda parameter",
+            "let identity = lam (value: bool) { return value; };",
+        ),
+    ] {
+        let source = format!(
+            r#"
+contract C {{
+  function main() returns (word) {{
+    let value: word = 1;
+    {scoped}
+    assembly {{ pop(value) }}
+    return value;
+  }}
+}}
+"#,
+        );
+        let diagnostics = diagnostics(&source);
+        assert!(diagnostics.is_empty(), "{case}: {diagnostics:?}");
+    }
+}
+
+#[test]
+fn yul_assembly_bindings_do_not_escape_into_later_assembly() {
+    let diagnostics = diagnostics(
+        r#"
+contract C {
+  function main() returns (word) {
+    assembly { let temporary := 1 }
+    assembly { pop(temporary) }
+    return 0;
+  }
+}
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_UNKNOWN_YUL_NAME)
+                && diagnostic.message.contains("temporary")
+        }),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn yul_assembly_shadowing_preserves_outer_sail_variable_types() {
+    for operation in ["pop(value)", "value := 1"] {
+        let source = format!(
+            r#"
+contract C {{
+  function main() returns (bool) {{
+    let value: bool = true;
+    assembly {{ let value := 1 }}
+    assembly {{ {operation} }}
+    return value;
+  }}
+}}
+"#,
+        );
+        let diagnostics = diagnostics(&source);
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_NON_WORD_YUL_VAR)
+                    && diagnostic.message.contains("value")
+            }),
+            "{operation}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn yul_for_body_values_do_not_leak_into_the_post_block() {
     let diagnostics = diagnostics(
         r#"

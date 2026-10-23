@@ -81,8 +81,8 @@ contract LoopStaticBindings {
         return uint256(seed);
     }
 
-    // #[(0) -> 10]
-    // #[(3) -> 13]
+    // #[(0) -> 7]
+    // #[(3) -> 7]
     function loopInitializer(count: uint256) public returns (uint256) {
         let value: word = 7;
         for (let value: word = 10; count > uint256(0); count = count - uint256(1)) {

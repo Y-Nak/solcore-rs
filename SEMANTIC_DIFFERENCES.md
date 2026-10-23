@@ -20,6 +20,24 @@ The historical parser corpus is not a verdict ledger for this comparison
 revision; its provenance and compiler options are documented in the
 [corpus README](crates/parser/tests/fixtures/corpus/README.md).
 
+## Lexical control-flow scopes
+
+Rust gives each `if`/`else` branch and `for`/`while` body its own lexical
+scope. A `for` initializer is visible to the condition, post clause, and body,
+but not after the loop; body and post declarations are isolated from each
+other. Initializers read the previously visible binding, and assignments to
+outer bindings still take effect. Explicit blocks, match arms, lambdas, and
+assembly blocks retain their own scopes.
+
+This corrects earlier Rust behavior that deliberately shared `if` and loop
+declarations with their enclosing scope, including declarations in skipped
+branches. Programs depending on those leaks must declare a value in the
+outer scope and assign to it inside the branch or loop. Source scope
+boundaries are represented as HIR `Block` nodes so name resolution, type
+inference, specialization, closure capture, and both backends agree. The
+`lexical-control-flow-scopes` E2E fixture exercises constant and runtime
+conditions, outer writes, loops, and closures.
+
 ## Shared self-recursion behavior
 
 Both compilers allow a contract method to share a name with a top-level or

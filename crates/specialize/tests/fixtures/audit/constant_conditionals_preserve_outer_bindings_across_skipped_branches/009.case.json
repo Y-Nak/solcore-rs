@@ -1,0 +1,11 @@
+{
+  "loader": "fixture",
+  "checks": [
+    {
+      "check": "main_return_number",
+      "value": "1"
+    }
+  ],
+  "source": "009.sol",
+  "frontend_clean": true
+}

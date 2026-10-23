@@ -82,8 +82,8 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 post,
                 body: for_body,
             } => {
-                // `for` does not create a lexical scope; initializer, condition,
-                // post statements, and body share the surrounding scope.
+                // Lexical scopes are explicit Block nodes: one encloses the
+                // loop and its initializer, with nested body/post blocks.
                 for stmt in init {
                     self.stmt(body, *stmt);
                 }

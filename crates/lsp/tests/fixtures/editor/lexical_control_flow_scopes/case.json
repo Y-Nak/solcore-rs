@@ -1,0 +1,88 @@
+{
+  "documents": [
+    "main.sol"
+  ],
+  "checks": [
+    {
+      "kind": "completion",
+      "at": {
+        "needle": "/* then */"
+      },
+      "parse_clean": true,
+      "contains": [
+        {
+          "label": "outer",
+          "kind": 6
+        },
+        {
+          "label": "branch",
+          "kind": 6
+        }
+      ],
+      "excludes": [
+        "index",
+        "inner"
+      ]
+    },
+    {
+      "kind": "completion",
+      "at": {
+        "needle": "/* else */"
+      },
+      "parse_clean": true,
+      "contains": [
+        {
+          "label": "outer",
+          "kind": 6
+        }
+      ],
+      "excludes": [
+        "branch",
+        "index",
+        "inner"
+      ]
+    },
+    {
+      "kind": "completion",
+      "at": {
+        "needle": "/* loop */"
+      },
+      "parse_clean": true,
+      "contains": [
+        {
+          "label": "outer",
+          "kind": 6
+        },
+        {
+          "label": "index",
+          "kind": 6
+        },
+        {
+          "label": "inner",
+          "kind": 6
+        }
+      ],
+      "excludes": [
+        "branch"
+      ]
+    },
+    {
+      "kind": "completion",
+      "at": {
+        "needle": "/* after */"
+      },
+      "parse_clean": true,
+      "contains": [
+        {
+          "label": "outer",
+          "kind": 6
+        }
+      ],
+      "excludes": [
+        "branch",
+        "index",
+        "inner"
+      ]
+    }
+  ]
+}

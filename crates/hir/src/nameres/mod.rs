@@ -14,12 +14,13 @@
 //! accepted unqualified when they would be ambiguous with the type that owns
 //! them; callers must use qualified constructor syntax.
 //!
-//! Body scoping follows the reference semantics:
+//! Body scoping is represented explicitly in HIR:
 //! - A `let` initializer is resolved before the `let` binder is inserted, so
 //!   the initializer cannot refer to the binding being declared.
-//! - `for` statements do not introduce their own lexical scope; their
-//!   initializer, condition, post statements, and body share the surrounding
-//!   scope.
+//! - Source blocks and conditional branches lower to lexical `Block` nodes.
+//!   A loop has an enclosing block for its initializer and nested blocks for
+//!   its body and post clause. `If` and `For` only express control flow; their
+//!   statement sequences retain these explicit scope boundaries.
 //! - Inside a contract, fields beat same-name functions for bare references,
 
 use rustc_hash::{FxHashMap, FxHashSet};

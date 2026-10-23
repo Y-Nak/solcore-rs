@@ -395,7 +395,16 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
     ) -> hir::arena::Id<function::Stmt<'db>> {
         let span = span_from_absolute(anchor, stmt.span, base_start);
         let kind = self.lower_stmt_kind(anchor, base_start, stmt.kind, arenas);
-        arenas.stmts.alloc(function::Stmt { span, kind })
+        let is_loop = matches!(kind, function::StmtKind::For { .. });
+        let stmt = arenas.stmts.alloc(function::Stmt { span, kind });
+        // The initializer's bindings belong to the whole loop, while its
+        // body and post clause have nested scopes. Encode all these boundaries
+        // as ordinary blocks so every HIR consumer uses the same scope rules.
+        if is_loop {
+            self.lower_scope(span, vec![stmt], arenas)
+        } else {
+            stmt
+        }
     }
 
     fn lower_stmt_kind(
@@ -439,8 +448,8 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             } => {
                 let init = self.lower_stmt_block(anchor, base_start, init, arenas);
                 let cond = self.lower_expr(anchor, base_start, cond, arenas);
-                let post = self.lower_stmt_block(anchor, base_start, post, arenas);
-                let body = self.lower_stmt_block(anchor, base_start, body, arenas);
+                let post = self.lower_scoped_stmts(anchor, base_start, post, arenas);
+                let body = self.lower_scoped_stmts(anchor, base_start, body, arenas);
                 function::StmtKind::For {
                     init,
                     cond,
@@ -481,6 +490,30 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             .collect()
     }
 
+    fn lower_scoped_stmts(
+        &mut self,
+        anchor: AnchorId<'db>,
+        base_start: usize,
+        scope: ParsedStmtScope<'_>,
+        arenas: &mut BodyArenas<'db>,
+    ) -> Vec<hir::arena::Id<function::Stmt<'db>>> {
+        let span = span_from_absolute(anchor, scope.span, base_start);
+        let stmts = self.lower_stmt_block(anchor, base_start, scope.stmts, arenas);
+        vec![self.lower_scope(span, stmts, arenas)]
+    }
+
+    fn lower_scope(
+        &self,
+        span: hir::span::Span<'db>,
+        body: Vec<hir::arena::Id<function::Stmt<'db>>>,
+        arenas: &mut BodyArenas<'db>,
+    ) -> hir::arena::Id<function::Stmt<'db>> {
+        arenas.stmts.alloc(function::Stmt {
+            span,
+            kind: function::StmtKind::Block { body },
+        })
+    }
+
     fn lower_match_stmt(
         &mut self,
         anchor: AnchorId<'db>,
@@ -510,14 +543,14 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         anchor: AnchorId<'db>,
         base_start: usize,
         cond: ParsedExpr<'_>,
-        then_body: Vec<ParsedStmt<'_>>,
-        else_body: Option<Vec<ParsedStmt<'_>>>,
+        then_body: ParsedStmtScope<'_>,
+        else_body: Option<ParsedStmtScope<'_>>,
         arenas: &mut BodyArenas<'db>,
     ) -> function::StmtKind<'db> {
         let cond = self.lower_expr(anchor, base_start, cond, arenas);
-        let then_body = self.lower_stmt_block(anchor, base_start, then_body, arenas);
+        let then_body = self.lower_scoped_stmts(anchor, base_start, then_body, arenas);
         let else_body =
-            else_body.map(|body| self.lower_stmt_block(anchor, base_start, body, arenas));
+            else_body.map(|body| self.lower_scoped_stmts(anchor, base_start, body, arenas));
         function::StmtKind::If {
             cond,
             then_body,

@@ -417,11 +417,9 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 then_body,
                 else_body,
             } => self.if_stmt(stmt_id, *cond, then_body, else_body.as_deref())?,
-            StmtKind::Block { body } => MonoStmtKind::Block(
-                body.iter()
-                    .map(|stmt| self.stmt(*stmt))
-                    .collect::<Option<Vec<_>>>()?,
-            ),
+            StmtKind::Block { body } => {
+                MonoStmtKind::Block(self.with_local_scope(|this| this.stmts(body))?)
+            }
             StmtKind::Assembly { body } => MonoStmtKind::Assembly(body.clone()),
             StmtKind::Break => MonoStmtKind::Break,
             StmtKind::Continue => MonoStmtKind::Continue,
@@ -431,18 +429,16 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     }
 
     fn arm(&mut self, arm: &MatchArm<'db>) -> Option<MonoArm<'db>> {
-        Some(MonoArm {
-            span: arm.span,
-            pats: arm
-                .pats
-                .iter()
-                .map(|pat| self.pat(*pat))
-                .collect::<Option<Vec<_>>>()?,
-            body: arm
-                .body
-                .iter()
-                .map(|stmt| self.stmt(*stmt))
-                .collect::<Option<Vec<_>>>()?,
+        self.with_local_scope(|this| {
+            Some(MonoArm {
+                span: arm.span,
+                pats: arm
+                    .pats
+                    .iter()
+                    .map(|pat| this.pat(*pat))
+                    .collect::<Option<Vec<_>>>()?,
+                body: this.stmts(&arm.body)?,
+            })
         })
     }
 
@@ -1101,8 +1097,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             });
         };
 
-        // Source `if` branches share their enclosing declaration scope.
-        // Keep that distinction until Hull lowering; ordinary match arms are lexical.
+        // Lexical scopes are explicit HIR blocks inside these runtime regions.
+        // Preserve them when lowering the source `if` through its desugar view.
         Some(MonoStmtKind::If {
             cond: self.expr(cond)?,
             then_body: self.stmts(&then_body)?,
@@ -1148,6 +1144,15 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
 
     fn stmts(&mut self, stmts: &[Id<Stmt<'db>>]) -> Option<Vec<MonoStmt<'db>>> {
         stmts.iter().map(|stmt| self.stmt(*stmt)).collect()
+    }
+
+    fn with_local_scope<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        // This registry supplies fallback types and the starting environment
+        // for nested lambdas, so shadowed names must follow lexical scopes too.
+        let locals = self.locals.clone();
+        let result = f(self);
+        self.locals = locals;
+        result
     }
 
     fn bool_ctor_pat(&self, value: bool, ty: MonoTy<'db>, span: Span<'db>) -> MonoPat<'db> {

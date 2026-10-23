@@ -2,7 +2,6 @@
 cases/Eq.sol	canonical impl method parameter and result types are explicit, eliminating the reference source's legacy signature-inference failure
 cases/class-return-type-miss.sol	canonical omitted results mean unit consistently in both the trait and impl member, so the legacy inferred-result mismatch no longer applies
 cases/compose_desugared.sol	SC0209 reference rejects the explicitly desugared closure because its inferred invoke implementation is not polymorphic enough; Rust accepts it
-cases/for-let-post.sol	SC0001 reference frontend rejects this for-loop let form while the Rust grammar accepts it
 cases/signature.sol	canonical trait parameters and function constraints make every binder explicit, eliminating the reference source's legacy binder failure
 cases/super-class-recursive-arg.sol	SC0223 reference legacy solver rejects this recursive superclass argument, while the reference tabled mode and Rust both accept it
 cases/tabled-answer-reuse.sol	SC0299 reference legacy solver reports an ambiguous inferred type, while the reference tabled mode and Rust both accept it

@@ -836,7 +836,7 @@ fn let_initializer_resolves_before_binder_and_then_shadows() {
 }
 
 #[test]
-fn explicit_blocks_scope_locals_but_for_body_lets_leak() {
+fn control_flow_scopes_restore_outer_bindings() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
@@ -844,10 +844,21 @@ fn explicit_blocks_scope_locals_but_for_body_lets_leak() {
            {
              let x = x;
            }
-           for (let i = x; i; i = i) {
-             let j = i;
+           if (true) {
+             let x = x;
+             x = x;
+           } else {
+             x = x;
            }
-           return j;
+           for (let x = x; true; x = x) {
+             let x = x;
+             x = x;
+           }
+           while (true) {
+             let x = x;
+             break;
+           }
+           return x;
          }",
     );
     assert!(diagnostic_codes(&db, module).is_empty());
@@ -857,12 +868,88 @@ fn explicit_blocks_scope_locals_but_for_body_lets_leak() {
     let map = body_map(&db, module, body);
     let events = ident_resolutions(&db, body, &map);
 
-    let return_j = events
+    let xs = events
         .iter()
-        .rev()
-        .find(|(name, _)| *name == "j")
-        .expect("return j");
-    assert!(matches!(return_j.1, Resolution::Local(_)));
+        .filter(|(name, _)| *name == "x")
+        .map(|(_, resolution)| resolution)
+        .collect::<Vec<_>>();
+    assert!(matches!(xs[0], Resolution::Param(_)));
+    assert!(matches!(xs[1], Resolution::Param(_)));
+    assert_eq!(xs[2], xs[3]);
+    assert!(matches!(xs[2], Resolution::Local(_)));
+    assert!(matches!(xs[4], Resolution::Param(_)));
+    assert!(matches!(xs[5], Resolution::Param(_)));
+    assert!(matches!(xs[6], Resolution::Param(_)));
+    assert_eq!(xs[7], xs[8]);
+    assert_eq!(xs[7], xs[9]);
+    assert_ne!(xs[9], xs[10]);
+    assert_eq!(xs[10], xs[11]);
+    assert!(matches!(xs[12], Resolution::Param(_)));
+    assert!(matches!(xs[13], Resolution::Param(_)));
+}
+
+#[test]
+fn control_flow_locals_do_not_escape_or_cross_sibling_scopes() {
+    for statements in [
+        "if (true) { let hidden = 1; } return hidden;",
+        "if (true) { let hidden = 1; } else { hidden; } return 0;",
+        "for (let hidden = 1; true;) {} return hidden;",
+        "for (; true;) { let hidden = 1; } return hidden;",
+        "for (; true; let hidden = 1) { hidden; } return 0;",
+        "for (; true; hidden = 1) { let hidden = 1; } return 0;",
+        "while (true) { let hidden = 1; break; } return hidden;",
+    ] {
+        let db = TestDb::default();
+        let source = format!("function f() returns (word) {{ {statements} }}");
+        let (file, module) = parse_and_module(&db, "control_flow_scope", &source);
+        assert!(parse_diagnostics(&db, file).is_empty(), "{source}");
+        let resolution = resolve_module(&db, module);
+        assert!(
+            matches!(resolution.diagnostics.as_slice(),
+                [NameresDiagnostic::UndefinedName { name, .. }] if name == "hidden"),
+            "{source}: {:?}",
+            resolution.diagnostics
+        );
+    }
+}
+
+#[test]
+fn control_flow_binding_visibility_uses_each_lexical_extent() {
+    let source = "function f() returns (word) {
+        if (true) { let in_then = 1; in_then; }
+        else { let in_else = 2; in_else; }
+        for (let counter = 0; true; let in_post = counter) {
+            let in_body = counter;
+        }
+        return 0;
+    }";
+    let db = TestDb::default();
+    let module = parse_module(&db, source);
+    assert!(diagnostic_codes(&db, module).is_empty());
+    let body = top_function(&db, module, "f").body(&db).expect("body");
+    let map = body_map(&db, module, body);
+    for (name, expected) in [
+        ("in_then", "{ let in_then = 1; in_then; }"),
+        ("in_else", "{ let in_else = 2; in_else; }"),
+        ("in_post", "let in_post = counter"),
+        (
+            "in_body",
+            "{\n            let in_body = counter;\n        }",
+        ),
+        (
+            "counter",
+            "for (let counter = 0; true; let in_post = counter) {\n            let in_body = counter;\n        }",
+        ),
+    ] {
+        let binding = map
+            .scoped_bindings
+            .iter()
+            .find(|binding| binding.name == name)
+            .expect("scoped binding");
+        let scope = binding.scope.resolve_to_absolute(&db);
+        let actual = &source[scope.start().as_usize()..scope.end().as_usize()];
+        assert_eq!(actual, expected, "scope for {name}");
+    }
 }
 
 #[test]

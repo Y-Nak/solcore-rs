@@ -574,7 +574,9 @@ impl Check {
                 let condition = all
                     .iter()
                     .find_map(|function| {
-                        function.body.iter().find_map(|stmt| match &stmt.kind {
+                        let mut body = Vec::new();
+                        statements(&function.body, &mut body);
+                        body.into_iter().find_map(|stmt| match &stmt.kind {
                             MonoStmtKind::For { cond, .. } => Some(cond),
                             _ => None,
                         })

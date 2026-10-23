@@ -513,8 +513,9 @@ pub enum MonoPatKind<'db> {
     Error,
 }
 
-/// Collect declarations that share this statement list's source scope.
-/// If and for bodies share it; explicit blocks and match arms do not.
+/// Collect declarations that share this statement list's lexical scope.
+/// Control-flow regions are transparent; explicit blocks and match arms are
+/// lexical boundaries. Source branch and loop scopes are lowered to blocks.
 pub fn collect_leaking_let_stmts<'a, 'db>(
     stmts: &'a [MonoStmt<'db>],
     out: &mut Vec<&'a MonoStmt<'db>>,

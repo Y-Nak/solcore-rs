@@ -25,7 +25,8 @@ contract LoopPostReachability {
     // #[(1) -> 1]
     // #[(5) -> 2]
     function coreMatch(count: uint256) public returns (uint256) {
-        for (let i: uint256 = uint256(0); i < count; i = i + uint256(1)) {
+        let i: uint256 = uint256(0);
+        for (; i < count; i = i + uint256(1)) {
             match (i < uint256(2)) {
                 case true {
                     continue;

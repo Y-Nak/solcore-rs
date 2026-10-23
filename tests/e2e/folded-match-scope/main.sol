@@ -169,8 +169,9 @@ contract FoldedMatchScope {
         return uint256(x);
     }
 
-    // #[(true) -> 7]
-    // #[(false) -> 7]
+    // The branch-local shadow does not capture the later outer assignment.
+    // #[(true) -> 100]
+    // #[(false) -> 100]
     function conditionalDeclaration(flag: bool) public returns (uint256) {
         let x: word = 7;
         {
