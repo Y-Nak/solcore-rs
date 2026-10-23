@@ -1898,35 +1898,37 @@ fn specializes_p7_cited_regression_corpus() {
 
 #[test]
 fn closure_parameter_specialization_erases_indirect_calls_and_function_parameters() {
-    let (db, _, output) = specialize_src_with_std_and_db(include_str!(
-        "../../../tests/e2e/closure-parameters/main.sol"
-    ));
-    assert_eq!(output.diagnostics, Vec::new());
-    for item in &output.module.items {
-        if let MonoItem::Function(function) = item {
-            assert!(
-                function
-                    .params
-                    .iter()
-                    .all(|param| !matches!(param.ty.ty().kind(db), TyKind::Function { .. })),
-                "{} retains a function parameter",
-                function.name
-            );
-            assert!(
-                !function.body.iter().any(stmt_has_closure_dispatch),
-                "{} retains a closure dispatch",
-                function.name,
-            );
+    solcore_test_utils::run_in_large_stack(|| {
+        let (db, _, output) = specialize_src_with_std_and_db(include_str!(
+            "../../../tests/e2e/closure-parameters/main.sol"
+        ));
+        assert_eq!(output.diagnostics, Vec::new());
+        for item in &output.module.items {
+            if let MonoItem::Function(function) = item {
+                assert!(
+                    function
+                        .params
+                        .iter()
+                        .all(|param| !matches!(param.ty.ty().kind(db), TyKind::Function { .. })),
+                    "{} retains a function parameter",
+                    function.name
+                );
+                assert!(
+                    !function.body.iter().any(stmt_has_closure_dispatch),
+                    "{} retains a closure dispatch",
+                    function.name,
+                );
+            }
         }
-    }
-    assert_eq!(
-        function_names(&output)
-            .iter()
-            .filter(|name| name.starts_with("main_repeat_"))
-            .count(),
-        1,
-        "recursive calls must reuse the same closure specialization"
-    );
+        assert_eq!(
+            function_names(&output)
+                .iter()
+                .filter(|name| name.starts_with("main_repeat_"))
+                .count(),
+            1,
+            "recursive calls must reuse the same closure specialization"
+        );
+    });
 }
 
 #[test]

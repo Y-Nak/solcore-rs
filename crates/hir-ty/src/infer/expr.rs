@@ -207,17 +207,53 @@ impl<'db> InferCtx<'db> {
             ExprKind::Array(elems) => self.infer_array_expr(body, expr_id, elems),
             ExprKind::Error => InferTy::Error,
         };
-        if check_expected
-            && let Some(expected) = expected
-            && !self.unify_expr(body, expr_id, expected, ty.clone())
-        {
-            ty = InferTy::Error;
+        if let Some(expected) = expected {
+            ty = if check_expected {
+                self.check_expr_ty(body, expr_id, expected, ty)
+            } else {
+                self.adjust_closure_to_expected(expected, ty)
+            };
         }
         if self.expr_is_poisoned(body, expr_id) {
             ty = InferTy::Error;
         }
         self.expr_tys.push((body, expr_id, ty.clone()));
         ty
+    }
+
+    fn check_expr_ty(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        expected: InferTy<'db>,
+        actual: InferTy<'db>,
+    ) -> InferTy<'db> {
+        let actual = self.adjust_closure_to_expected(expected.clone(), actual);
+        if self.unify_expr(body, expr, expected, actual.clone()) {
+            actual
+        } else {
+            InferTy::Error
+        }
+    }
+
+    fn adjust_closure_to_expected(
+        &mut self,
+        expected: InferTy<'db>,
+        actual: InferTy<'db>,
+    ) -> InferTy<'db> {
+        // A function expectation uses a closure's callable signature at this
+        // expression only. Its binding stays nominal for generic inference and
+        // trait selection; an unconstrained expectation must not erase it.
+        if matches!(self.expected_shape_ty(expected), InferTy::Function { .. }) {
+            let shape = self.expected_shape_ty(actual.clone());
+            if let Some(sig) = self.closure_sig_for_ty(shape) {
+                return InferTy::Function {
+                    params: sig.params,
+                    ret: Box::new(sig.ret),
+                };
+            }
+        }
+        actual
     }
 
     fn infer_struct_field(
@@ -654,9 +690,10 @@ impl<'db> InferCtx<'db> {
                 )
             })
             .collect::<Vec<_>>();
-        let ret = expected.unwrap_or_else(|| self.engine.fresh_var());
-        // Arguments were checked against the parameters above. The surrounding
-        // expression supplies the expected return type for this check.
+        let ret = self.engine.fresh_var();
+        // Infer the actual call result before checking its expected type. A
+        // generic callee can return a nominal closure that needs adjustment at
+        // the call expression, without changing the callee's type arguments.
         self.unify_expr(
             body,
             site.call_expr,
@@ -666,6 +703,10 @@ impl<'db> InferCtx<'db> {
             },
             callee_ty,
         );
+        let ret = match expected {
+            Some(expected) => self.check_expr_ty(body, site.call_expr, expected, ret),
+            None => ret,
+        };
         if let Some(params) = &params {
             for (index, (param, arg)) in params.iter().zip(args).enumerate() {
                 let resolved_param = self.engine.resolve(param.clone());
@@ -754,7 +795,7 @@ impl<'db> InferCtx<'db> {
                 )
             })
             .collect::<Vec<_>>();
-        let ret = expected.unwrap_or_else(|| self.engine.fresh_var());
+        let ret = self.engine.fresh_var();
         if let Some(sig) = callable_sig {
             self.unify_expr(body, call_expr, ret.clone(), sig.ret);
         }
@@ -766,7 +807,12 @@ impl<'db> InferCtx<'db> {
             args: vec![invokable_arg_infer(inferred_args), ret.clone()],
             source,
         });
-        ret
+        // Invokable evidence describes the actual return type. Only the value
+        // exposed by this call is adjusted to a contextual function type.
+        match expected {
+            Some(expected) => self.check_expr_ty(body, call_expr, expected, ret),
+            None => ret,
+        }
     }
 
     fn expr_constructor_name(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> Option<String> {
