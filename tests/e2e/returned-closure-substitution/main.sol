@@ -57,8 +57,9 @@ function captureIf(x: word) returns (function (bool) returns (word)) {
 
 function captureLoop(x: word) returns (function () returns (word)) {
     return lam () -> word {
+        let y: word = 0;
         for (let i: uint256 = uint256(0); i < uint256(1); i = i + uint256(1)) {
-            let y: word = 9;
+            y = 9;
         }
         return primAddWord(x, y);
     };
@@ -125,7 +126,9 @@ contract ReturnedClosureSubstitution {
         return uint256(callback());
     }
 
-    // #[(17, true) -> 26]
+    // #[(17, true) -> 18]
+    // #[(17, false) -> 20]
+    // #[(23, true) -> 24]
     // #[(23, false) -> 26]
     function sharedIf(input: uint256, flag: bool) public returns (uint256) {
         let y: word = Typedef.rep(input);
