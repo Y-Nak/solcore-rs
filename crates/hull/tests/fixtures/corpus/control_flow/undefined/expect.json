@@ -1,0 +1,10 @@
+{
+  "source": "crates/parser/tests/fixtures/corpus/ok/test/examples/cases/undefined.sol",
+  "emit_dispatcher_comments": true,
+  "check_diagnostics": {
+    "not_contains": [
+      "MissingTerminator"
+    ]
+  },
+  "allow_dispatch_diagnostics": true
+}

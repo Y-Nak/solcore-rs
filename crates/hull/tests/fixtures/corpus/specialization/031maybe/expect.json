@@ -1,0 +1,7 @@
+{
+  "source": "crates/parser/tests/fixtures/corpus/ok/test/examples/spec/031maybe.sol",
+  "loader": "memory",
+  "source_name": "spec/031maybe",
+  "allow_dispatch_diagnostics": true,
+  "emit_dispatcher_comments": false
+}

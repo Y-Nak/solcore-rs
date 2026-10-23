@@ -1,0 +1,15 @@
+{
+  "checks": {
+    "contains": [
+      "p := mload(0x40)",
+      "mstore(p, 5)",
+      "0x616c706861000000000000000000000000000000000000000000000000000000",
+      "mstore(0x40, add(p, 64))"
+    ],
+    "count": {
+      "function __strlit_": 2,
+      "function __strlit_0": 1,
+      "__strlit_0()": 2
+    }
+  }
+}

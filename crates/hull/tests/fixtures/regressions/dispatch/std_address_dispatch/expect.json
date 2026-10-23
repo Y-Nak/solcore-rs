@@ -1,0 +1,11 @@
+{
+  "checks": {
+    "contains": [
+      "ABIDecode_decode_d",
+      "$ABIDecoder_",
+      "address_",
+      "(160, raw)",
+      "0x7cc04fa7"
+    ]
+  }
+}

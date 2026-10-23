@@ -1,0 +1,4 @@
+{
+  "source": "crates/parser/tests/fixtures/corpus/ok/test/examples/cases/polymatch-error.sol",
+  "std_root": "crates/parser/tests/fixtures/corpus/ok/std"
+}

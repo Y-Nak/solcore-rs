@@ -1,0 +1,9 @@
+{
+  "allow_dispatch_diagnostics": true,
+  "emit_dispatcher_comments": false,
+  "checks": {
+    "contains": [
+      "3"
+    ]
+  }
+}

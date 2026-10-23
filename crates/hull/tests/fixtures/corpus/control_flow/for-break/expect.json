@@ -1,0 +1,22 @@
+{
+  "source": "crates/parser/tests/fixtures/corpus/ok/test/examples/cases/for-break.sol",
+  "allow_dispatch_diagnostics": false,
+  "emit_dispatcher_comments": true,
+  "emission_diagnostics": {
+    "not_contains": [
+      "UnsupportedMonoConstruct { construct: \"for loop\" }",
+      "UnsupportedMonoConstruct { construct: \"loop control\" }"
+    ]
+  },
+  "check_diagnostics": {
+    "not_contains": [
+      "ExpectedBool"
+    ]
+  },
+  "checks": {
+    "contains": [
+      "for (",
+      "break"
+    ]
+  }
+}

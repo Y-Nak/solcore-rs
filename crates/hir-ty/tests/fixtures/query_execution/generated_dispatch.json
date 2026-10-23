@@ -1,0 +1,14 @@
+{
+  "source": "crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/empty_no_constructor.sol",
+  "std_root": "std",
+  "queries": {
+    "module_instance_facts": {
+      "min": 1,
+      "max": 31
+    },
+    "instance_origin_clause_set": {
+      "min": 0,
+      "max": 0
+    }
+  }
+}

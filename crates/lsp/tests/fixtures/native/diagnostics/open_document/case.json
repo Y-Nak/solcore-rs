@@ -1,0 +1,24 @@
+{
+  "documents": [
+    "primary/main.sol",
+    "primary/math.sol"
+  ],
+  "workspace_folders": [
+    "primary"
+  ],
+  "steps": [
+    {
+      "kind": "open",
+      "document": "primary/main.sol"
+    },
+    {
+      "kind": "diagnostics",
+      "document": "primary/main.sol",
+      "contains": [
+        {
+          "severity": 1
+        }
+      ]
+    }
+  ]
+}

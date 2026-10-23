@@ -10,6 +10,50 @@ use solcore_test_utils::{
 
 define_frontend_test_db!(TestDb, solcore_hir_ty);
 
+#[path = "support/frontend.rs"]
+mod frontend;
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/../../std", glob: "*.sol")]
+fn standard_library_sources_pass_normal_frontend_checks(fixture: Fixture<&str>) {
+    let path = PathBuf::from(fixture.path())
+        .canonicalize()
+        .expect("standard source path");
+    run_in_large_stack(move || {
+        let std_root = frontend::repo_root()
+            .join("std")
+            .canonicalize()
+            .expect("std root");
+        // Each source must be a user entry: imported Std modules are trusted
+        // by type checking, which would hide invalid instance declarations.
+        let outcome =
+            frontend::run_frontend_with_roots(&path, &std_root, &std_root, BTreeMap::new());
+        assert!(
+            !outcome.frontend_has_errors && !outcome.typeck_has_errors,
+            "{} failed normal frontend checks\n  frontend errors: {:#?}\n  typeck errors: {:#?}",
+            path.display(),
+            outcome.frontend_error_diagnostics,
+            outcome.typeck_error_diagnostics,
+        );
+    });
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/../parser/tests/fixtures/corpus/ok/std", glob: "std.sol")]
+fn reference_standard_library_has_no_diagnostics(fixture: Fixture<&str>) {
+    let path = PathBuf::from(fixture.path())
+        .canonicalize()
+        .expect("reference standard source path");
+    run_in_large_stack(move || {
+        let outcome = frontend::run_frontend(&path, path.parent().unwrap());
+        assert!(
+            outcome.frontend_diagnostics.is_empty() && outcome.typeck_diagnostics.is_empty(),
+            "{} failed frontend checks\n  frontend diagnostics: {:#?}\n  typeck diagnostics: {:#?}",
+            path.display(),
+            outcome.frontend_diagnostics,
+            outcome.typeck_diagnostics,
+        );
+    });
+}
+
 #[dir_test(
     dir: "$CARGO_MANIFEST_DIR/tests/fixtures/ok",
     glob: "**/main.sol"

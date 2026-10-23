@@ -1,0 +1,13 @@
+{
+  "checks": {
+    "contains": [
+      "revertLit \"nested\"",
+      "then (__revertlit_0()) else (())"
+    ],
+    "not_contains": [
+      "0x6e128399"
+    ]
+  },
+  "allow_dispatch_diagnostics": true,
+  "emit_dispatcher_comments": false
+}

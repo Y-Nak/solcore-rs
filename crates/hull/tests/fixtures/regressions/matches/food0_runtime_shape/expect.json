@@ -1,0 +1,16 @@
+{
+  "checks": {
+    "in_order": [
+      "/* Red */",
+      "/* Curry */",
+      "return 1",
+      "/* Green */",
+      "/* Beans */",
+      "return 42"
+    ]
+  },
+  "loader": "memory",
+  "source_name": "food0_runtime_shape",
+  "allow_dispatch_diagnostics": true,
+  "emit_dispatcher_comments": false
+}

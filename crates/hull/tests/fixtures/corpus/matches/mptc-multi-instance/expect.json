@@ -1,0 +1,10 @@
+{
+  "source": "crates/parser/tests/fixtures/corpus/ok/test/examples/cases/mptc-multi-instance.sol",
+  "check_diagnostics": {
+    "not_contains": [
+      "UndefinedVariable { name: \"$alt"
+    ]
+  },
+  "allow_dispatch_diagnostics": true,
+  "emit_dispatcher_comments": false
+}

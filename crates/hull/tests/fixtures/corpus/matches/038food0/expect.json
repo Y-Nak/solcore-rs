@@ -1,0 +1,11 @@
+{
+  "source": "crates/parser/tests/fixtures/corpus/ok/test/examples/spec/038food0.sol",
+  "checks": {
+    "contains": [
+      "function 038food0_FoodContract_main",
+      "return 42"
+    ]
+  },
+  "allow_dispatch_diagnostics": true,
+  "emit_dispatcher_comments": false
+}

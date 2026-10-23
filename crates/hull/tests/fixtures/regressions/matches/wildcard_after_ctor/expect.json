@@ -1,0 +1,13 @@
+{
+  "checks": {
+    "in_order": [
+      "/* B */",
+      "return 2",
+      "return 9"
+    ]
+  },
+  "loader": "memory",
+  "source_name": "wildcard_after_ctor",
+  "allow_dispatch_diagnostics": true,
+  "emit_dispatcher_comments": false
+}

@@ -1,0 +1,17 @@
+{
+  "functions": {
+    "_main_": {
+      "in_order": [
+        "$let_init",
+        "sload(0)",
+        "let balance",
+        "balance := $let_init",
+        "return balance"
+      ]
+    }
+  },
+  "loader": "memory",
+  "source_name": "shadowing_let_initializer",
+  "allow_dispatch_diagnostics": true,
+  "emit_dispatcher_comments": false
+}

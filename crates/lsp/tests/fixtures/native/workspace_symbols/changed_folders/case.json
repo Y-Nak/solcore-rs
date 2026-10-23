@@ -1,0 +1,121 @@
+{
+  "documents": [
+    "primary/main.sol",
+    "secondary/secondary.sol"
+  ],
+  "workspace_folders": [
+    "primary",
+    "secondary"
+  ],
+  "steps": [
+    {
+      "kind": "open",
+      "document": "primary/main.sol"
+    },
+    {
+      "kind": "diagnostics",
+      "document": "primary/main.sol",
+      "count": 0
+    },
+    {
+      "kind": "request",
+      "method": "workspace/symbol",
+      "params": {
+        "query": "secondaryValue"
+      },
+      "expected": [
+        {
+          "name": "secondaryValue",
+          "kind": 12,
+          "location": {
+            "uri": "$uri:secondary/secondary.sol",
+            "range": {
+              "start": {
+                "line": 0,
+                "character": 9
+              },
+              "end": {
+                "line": 0,
+                "character": 23
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "notify",
+      "method": "workspace/didChangeWorkspaceFolders",
+      "params": {
+        "event": {
+          "added": [],
+          "removed": [
+            {
+              "uri": "$uri:secondary",
+              "name": "secondary"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "diagnostics",
+      "document": "primary/main.sol",
+      "count": 0
+    },
+    {
+      "kind": "request",
+      "method": "workspace/symbol",
+      "params": {
+        "query": "secondaryValue"
+      },
+      "expected": []
+    },
+    {
+      "kind": "notify",
+      "method": "workspace/didChangeWorkspaceFolders",
+      "params": {
+        "event": {
+          "added": [
+            {
+              "uri": "$uri:secondary",
+              "name": "secondary"
+            }
+          ],
+          "removed": []
+        }
+      }
+    },
+    {
+      "kind": "diagnostics",
+      "document": "primary/main.sol",
+      "count": 0
+    },
+    {
+      "kind": "request",
+      "method": "workspace/symbol",
+      "params": {
+        "query": "secondaryValue"
+      },
+      "expected": [
+        {
+          "name": "secondaryValue",
+          "kind": 12,
+          "location": {
+            "uri": "$uri:secondary/secondary.sol",
+            "range": {
+              "start": {
+                "line": 0,
+                "character": 9
+              },
+              "end": {
+                "line": 0,
+                "character": 23
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

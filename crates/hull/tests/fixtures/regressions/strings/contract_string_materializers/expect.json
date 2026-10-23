@@ -1,0 +1,29 @@
+{
+  "checks": {
+    "count": {
+      "function __strlit_0": 2
+    },
+    "regions": [
+      {
+        "after": "object \"A\"",
+        "before": "object \"BDeploy\"",
+        "checks": {
+          "contains": [
+            "function __strlit_0"
+          ]
+        }
+      },
+      {
+        "after": "object \"B\"",
+        "checks": {
+          "contains": [
+            "function __strlit_0"
+          ]
+        }
+      }
+    ],
+    "contains": [
+      "object \"ADeploy\""
+    ]
+  }
+}

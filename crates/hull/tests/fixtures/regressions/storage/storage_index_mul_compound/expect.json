@@ -1,0 +1,11 @@
+{
+  "allow_dispatch_diagnostics": true,
+  "emit_dispatcher_comments": false,
+  "functions": {
+    "_main_": {
+      "count": {
+        "main_StorageIndexBinaryCompound_next_": 2
+      }
+    }
+  }
+}

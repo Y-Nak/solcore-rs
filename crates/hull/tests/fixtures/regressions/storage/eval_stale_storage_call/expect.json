@@ -1,0 +1,18 @@
+{
+  "functions": {
+    "_main_": {
+      "not_contains": [
+        "return 7"
+      ],
+      "in_order": [
+        "sstore(0,",
+        "_setx_",
+        "return sload(0)"
+      ]
+    }
+  },
+  "loader": "memory",
+  "source_name": "eval_stale_storage_call",
+  "allow_dispatch_diagnostics": true,
+  "emit_dispatcher_comments": false
+}

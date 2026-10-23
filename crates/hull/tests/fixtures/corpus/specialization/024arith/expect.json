@@ -1,0 +1,7 @@
+{
+  "source": "crates/parser/tests/fixtures/corpus/ok/test/examples/spec/024arith.sol",
+  "loader": "memory",
+  "source_name": "spec/024arith",
+  "allow_dispatch_diagnostics": true,
+  "emit_dispatcher_comments": false
+}

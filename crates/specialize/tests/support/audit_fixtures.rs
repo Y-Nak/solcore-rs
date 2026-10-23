@@ -477,3 +477,17 @@ impl Check {
         }
     }
 }
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/audit/runtime_string_match_is_rejected_before_emission", glob: "*.sol")]
+fn runtime_string_match_is_rejected_before_emission(fixture: Fixture<&str>) {
+    let (_, output) = specialize_src(fixture.content());
+    assert!(
+        output.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.kind,
+            SpecializeDiagnosticKind::IntegerErasure { context, ty }
+                if context == "pattern" && ty == "string"
+        )),
+        "{:?}",
+        output.diagnostics
+    );
+}

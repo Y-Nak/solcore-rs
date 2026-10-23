@@ -1,0 +1,18 @@
+{
+  "checks": {
+    "contains": [
+      "sstore("
+    ]
+  },
+  "functions": {
+    "_main_": {
+      "contains": [
+        "_set_",
+        "CanStore_load_",
+        "(__solcore_storage_hash2(0, 1))"
+      ]
+    }
+  },
+  "allow_dispatch_diagnostics": true,
+  "emit_dispatcher_comments": false
+}

@@ -1,0 +1,16 @@
+{
+  "source": "crates/parser/tests/fixtures/corpus/ok/test/examples/spec/120basicCounter.sol",
+  "allow_dispatch_diagnostics": false,
+  "emit_dispatcher_comments": true,
+  "emission_diagnostics": {
+    "not_contains": [
+      "UnsupportedMonoConstruct { construct: \"field access\" }",
+      "UnsupportedMonoConstruct { construct: \"index access\" }"
+    ]
+  },
+  "check_diagnostics": {},
+  "contains_any": [
+    "sload",
+    "sstore"
+  ]
+}

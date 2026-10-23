@@ -1,0 +1,18 @@
+{
+  "functions": {
+    "_main_": {
+      "count": {
+        "main_StorageIndexOrder_next_": 2
+      },
+      "in_order": [
+        "$storage_index_slot_",
+        ":= __solcore_storage_hash2(1, main_StorageIndexOrder_next_",
+        "CanStore_store_",
+        "($storage_index_slot_",
+        ", main_StorageIndexOrder_next_"
+      ]
+    }
+  },
+  "allow_dispatch_diagnostics": true,
+  "emit_dispatcher_comments": false
+}

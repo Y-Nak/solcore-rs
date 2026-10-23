@@ -1,0 +1,50 @@
+{
+  "documents": [
+    "primary/main.sol",
+    "primary/math.sol"
+  ],
+  "workspace_folders": [
+    "primary"
+  ],
+  "steps": [
+    {
+      "kind": "open",
+      "document": "primary/main.sol"
+    },
+    {
+      "kind": "diagnostics",
+      "document": "primary/main.sol",
+      "contains": [
+        {
+          "severity": 1
+        }
+      ]
+    },
+    {
+      "kind": "request",
+      "method": "textDocument/definition",
+      "params": {
+        "textDocument": {
+          "uri": "$uri:primary/main.sol"
+        },
+        "position": {
+          "line": 3,
+          "character": 10
+        }
+      },
+      "expected": {
+        "uri": "$uri:primary/math.sol",
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 9
+          },
+          "end": {
+            "line": 0,
+            "character": 15
+          }
+        }
+      }
+    }
+  ]
+}

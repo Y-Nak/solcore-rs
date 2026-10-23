@@ -1,0 +1,16 @@
+{
+  "loader": "memory",
+  "source_name": "match_call_wildcard",
+  "allow_dispatch_diagnostics": true,
+  "emit_dispatcher_comments": false,
+  "functions": {
+    "_main_": {
+      "contains": [
+        "$match_scrutinee"
+      ],
+      "count": {
+        "_read_": 1
+      }
+    }
+  }
+}
