@@ -157,6 +157,48 @@ location.href = location.pathname;
 
 Unknown or malformed routes leave the workspace and URL unchanged.
 
+## Loading a project
+
+A site can supply any project without adding it to the built-in example registry.
+Put a JSON manifest on the same origin as the Playground and open:
+
+```text
+playground/index.html?project=../projects/hello.json#/project?tab=run&view=tests
+```
+
+The `project` URL is resolved relative to the Playground page, so this works under
+a deployment subpath. Add `&embed=1` before the hash for a compact iframe view.
+The full-tab view uses the same project URL without `embed=1`. The generic
+`#/project` route accepts the same view parameters as built-in example routes.
+
+The version 1 manifest contains its complete source tree:
+
+```json
+{
+  "version": 1,
+  "id": "hello",
+  "name": "Hello",
+  "description": "A small project",
+  "entry": "Hello.sol",
+  "files": [
+    { "path": "Hello.sol", "content": "function main() returns (word) { return 42; }" }
+  ]
+}
+```
+
+`description` is optional. File paths must be unique relative paths with no empty,
+`.` or `..` segments; the entry must be present. Only same-origin HTTP(S) manifests
+are accepted, and redirects are rejected. Loading and validation complete before
+the workspace or editor initializes. A missing or invalid manifest shows an error
+and **Retry**, without changing a saved workspace.
+
+Each canonical manifest URL has a separate saved workspace, even if two manifests
+share an `id`. This also isolates imported projects from the ordinary Playground.
+**Reset project** restores the loaded manifest's source. Editing the manifest at
+the same URL does not overwrite existing saved edits; reset to load the new source.
+Saved code is local to the browser and is not embedded in links. Avoid editing the
+same project in multiple tabs simultaneously.
+
 ## Build
 
 ```sh
