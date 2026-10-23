@@ -38,9 +38,95 @@ function applyWord(f: function (word) returns (word), x: word) returns (word) {
     return f(x);
 }
 
+function applyGeneric<a>(f: function (a) returns (a), x: a) returns (a) {
+    return f(x);
+}
+
+function forwardValue<a>(value: a) returns (a) {
+    return value;
+}
+
 contract ClosureParameters {
     count: uint256;
     locked: bool;
+
+    // #[() -> 42]
+    function inferred() public returns (uint256) {
+        let f = lam (x: word) -> word {
+            return x;
+        };
+        return uint256(applyWord(f, 42));
+    }
+
+    // #[(10, 22) -> 42]
+    // #[(7, 3) -> 17]
+    function inferredCaptured(amount: uint256, x: uint256) public returns (uint256) {
+        let f = lam (v: uint256) -> uint256 {
+            return v + amount;
+        };
+        amount = uint256(99);
+        return forward(f, x);
+    }
+
+    // #[(10, 22) -> 42]
+    // #[(7, 3) -> 17]
+    function inferredAlias(amount: uint256, x: uint256) public returns (uint256) {
+        let f = lam (v: uint256) -> uint256 {
+            return v + amount;
+        };
+        let g = f;
+        return twice(g, x);
+    }
+
+    // #[(10, 32) -> 42]
+    // #[(7, 3) -> 10]
+    function inferredGeneric(amount: uint256, x: uint256) public returns (uint256) {
+        let f = lam (v: uint256) -> uint256 {
+            return v + amount;
+        };
+        return applyGeneric(f, x);
+    }
+
+    // #[(40) -> 42]
+    // #[(3) -> 5]
+    function inferredGenericResult(x: uint256) public returns (uint256) {
+        let f = lam (y: uint256) -> uint256 {
+            return y + x;
+        };
+        let callback: function (uint256) returns (uint256) = forwardValue(f);
+        return callback(uint256(2));
+    }
+
+    // #[(40) -> 42]
+    // #[(3) -> 5]
+    function inferredIndirectResult(x: uint256) public returns (uint256) {
+        let f = lam (y: uint256) -> uint256 {
+            return y + x;
+        };
+        let factory = lam () {
+            return f;
+        };
+        let callback: function (uint256) returns (uint256) = factory();
+        return callback(uint256(2));
+    }
+
+    // #[(40) -> 42]
+    // #[(3) -> 5]
+    function inferredNullary(x: uint256) public returns (uint256) {
+        let f = lam () -> uint256 {
+            return x + uint256(2);
+        };
+        return run(f);
+    }
+
+    // #[(10, 20, 12) -> 42]
+    // #[(3, 4, 5) -> 12]
+    function inferredMultipleArgs(amount: uint256, x: uint256, y: uint256) public returns (uint256) {
+        let f = lam (a: uint256, b: uint256) -> uint256 {
+            return a + b + amount;
+        };
+        return apply2(f, x, y);
+    }
 
     // #[(0) -> 42]
     // #[(8) -> 50]

@@ -2517,6 +2517,196 @@ function call_tuple(f : function((word, bool)) returns (word), x : (word, bool))
 }
 
 #[test]
+fn inferred_closures_satisfy_function_type_contexts() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+function apply(f: function(word) returns (word), x: word) returns (word) {
+  return f(x);
+}
+
+function direct(x: word) returns (word) {
+  let f = lam (y: word) -> word { return y; };
+  return apply(f, x);
+}
+
+function indirect(
+  callback: function(function(word) returns (word), word) returns (word),
+  x: word
+) returns (word) {
+  let f = lam (y: word) -> word { return y; };
+  return callback(f, x);
+}
+
+function assigned(x: word) returns (word) {
+  let f = lam (y: word) -> word { return y; };
+  let g = lam (y: word) -> word { return x; };
+  let callback: function(word) returns (word) = f;
+  callback = g;
+  return callback(x);
+}
+
+function returned(x: word) returns (function(word) returns (word)) {
+  let f = lam (y: word) -> word { return x; };
+  return f;
+}
+
+function conditional(choose: bool, x: word) returns (function(word) returns (word)) {
+  let f = lam (y: word) -> word { return y; };
+  let g = lam (y: word) -> word { return x; };
+  return choose ? f : g;
+}
+"#,
+    );
+
+    for (name, result) in infer_all_functions_with_solver(&db, module) {
+        assert!(
+            result.diagnostics.is_empty(),
+            "{name}: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn inferred_closures_satisfy_aliased_and_comptime_function_expectations() {
+    let (db, key) = db_with_main_typeck(
+        r#"
+type Callback = function(word) returns (word);
+
+function staged(comptime callback: Callback, x: word) returns (word) {
+  return callback(x);
+}
+
+function main(x: word) returns (word) {
+  let f = lam (y: word) -> word { return y; };
+  let callback: comptime<Callback> = f;
+  return staged(callback, x);
+}
+"#,
+    );
+    let module = module_id_from_key(&db, &key);
+    let diagnostics = crate::collect_frontend_diagnostics(&db, module);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn inferred_closure_results_satisfy_function_type_contexts() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+function identity<a>(value: a) returns (a) { return value; }
+
+function main(x: word) returns (function(word) returns (word)) {
+  let f = lam (y: word) -> word { return x; };
+  return identity(f);
+}
+
+function indirect(x: word) returns (function(word) returns (word)) {
+  let f = lam (y: word) -> word { return x; };
+  let get = lam () { return f; };
+  return get();
+}
+"#,
+    );
+    for (name, result) in infer_all_functions_with_solver(&db, module) {
+        assert!(
+            result.diagnostics.is_empty(),
+            "{name}: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn function_type_contexts_preserve_nominal_closure_bindings() {
+    let (db, key) = db_with_main_typeck(
+        r#"
+function identity<a>(value: a) returns (a) { return value; }
+
+function invoke<f>(callback: f, x: word) returns (word)
+where f: invokable<word, word> {
+  return invokable.invoke(callback, x);
+}
+
+function main(x: word) returns (word) {
+  let f = lam (y: word) -> word { return y; };
+  let callback: function(word) returns (word) = f;
+  let g = identity(f);
+  invoke(g, x);
+  return invoke(f, callback(x));
+}
+"#,
+    );
+    let module = module_id_from_key(&db, &key);
+    let diagnostics = crate::collect_frontend_diagnostics(&db, module);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let (body, result) = infer_module_function_with_solver(&db, module, "main");
+    assert_no_typeck(&result);
+
+    let stmts = body.top_level_stmts(&db);
+    let closure = result
+        .let_ty(body, stmts[0])
+        .expect("inferred closure type");
+    let callback = result.let_ty(body, stmts[1]).expect("function type");
+    let alias = result
+        .let_ty(body, stmts[2])
+        .expect("generic identity result");
+    let [(closure_def, signature)] = result.closure_tys.as_slice() else {
+        panic!("expected one nominal closure: {:?}", result.closure_tys);
+    };
+    assert!(matches!(
+        closure.kind(&db),
+        TyKind::Named {
+            ctor: TyCtor::User(UserTyCtor { def, kind: UserTyCtorKind::Adt }),
+            args,
+        } if def == closure_def && args.is_empty()
+    ));
+    assert_eq!(alias, closure);
+    assert_eq!(callback, *signature);
+    assert_eq!(
+        *signature,
+        Ty::function(&db, vec![Ty::word(&db)], Ty::word(&db))
+    );
+}
+
+#[test]
+fn inferred_closure_function_arguments_reject_incompatible_signatures() {
+    for (case, lambda) in [
+        ("parameter", "lam (x: bool) -> word { return 1; }"),
+        ("result", "lam (x: word) -> bool { return true; }"),
+        ("arity", "lam () -> word { return 1; }"),
+    ] {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            &format!(
+                r#"
+function apply(f: function(word) returns (word), x: word) returns (word) {{
+  return f(x);
+}}
+function main() returns (word) {{
+  let f = {lambda};
+  return apply(f, 42);
+}}
+"#,
+            ),
+        );
+        let (_, result) = infer_function(&db, module, "main");
+        assert!(
+            matches!(
+                result.diagnostics.as_slice(),
+                [TypeckDiagnostic::ArgMismatch { .. }]
+            ),
+            "{case}: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
 fn class_method_local_forall_is_lowered_as_a_method_binder() {
     let db = TestDb::default();
     let module = parse_module(
