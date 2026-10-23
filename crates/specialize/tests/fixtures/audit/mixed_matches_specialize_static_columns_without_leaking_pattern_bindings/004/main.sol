@@ -1,3 +1,5 @@
+//~ specialize: loader bare
+
 enum Choice {
     Good(word),
     Bad(word)

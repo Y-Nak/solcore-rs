@@ -1,3 +1,6 @@
+//~ specialize: loader std-current
+//~ specialize: frontend clean
+
 import * from std;
 function opaqueAdd(left: word, right: word) returns (word) {
     assembly {

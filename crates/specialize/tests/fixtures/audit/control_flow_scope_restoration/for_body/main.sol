@@ -1,3 +1,7 @@
+//~ specialize: loader fixture
+//~ specialize: frontend clean
+//~ specialize: return 7
+
 function requireStatic(comptime x: word) returns (word) {
     return x;
 }

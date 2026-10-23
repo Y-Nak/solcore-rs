@@ -1,3 +1,8 @@
+//~ specialize: loader fixture
+//~ specialize: frontend clean
+//~ specialize: no-closure-dispatch
+//~ specialize: return 9
+
 function pick() returns (word) {
     let x: word = 7;
     {

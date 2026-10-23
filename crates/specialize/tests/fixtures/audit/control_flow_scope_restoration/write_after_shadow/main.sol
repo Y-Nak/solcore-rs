@@ -1,3 +1,7 @@
+//~ specialize: loader fixture
+//~ specialize: frontend clean
+//~ specialize: return-variable seed
+
 function main(flag: bool) returns (word) {
     let seed: word = 7;
     {

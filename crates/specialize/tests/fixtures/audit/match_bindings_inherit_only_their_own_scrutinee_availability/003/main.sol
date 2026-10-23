@@ -1,3 +1,6 @@
+//~ specialize: loader bare
+//~ specialize: diagnostic comptime-evaluation-failed contains runtime value passed to comptime parameter
+
 enum Box {
     Box(word)
 }

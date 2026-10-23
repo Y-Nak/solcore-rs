@@ -1,3 +1,6 @@
+//~ specialize: loader bare
+//~ specialize: return 1
+
 trait Parent<t> where t: Child {
     function f(x: t) returns (word);
 }

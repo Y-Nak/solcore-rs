@@ -1,3 +1,8 @@
+//~ specialize: loader fixture
+//~ specialize: frontend clean
+//~ specialize: no-closure-dispatch
+//~ specialize: return 7
+
 function c() returns (function () returns (word)) {
     if (true) {
         return lam () -> word {

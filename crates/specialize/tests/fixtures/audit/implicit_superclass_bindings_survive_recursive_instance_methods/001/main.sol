@@ -1,3 +1,6 @@
+//~ specialize: loader bare
+//~ specialize: max-depth 16
+
 trait Parent<t> {
     function f(x: t) returns (word);
 }

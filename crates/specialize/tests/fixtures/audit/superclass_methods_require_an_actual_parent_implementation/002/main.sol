@@ -1,3 +1,6 @@
+//~ specialize: loader bare
+//~ specialize: diagnostic missing-evidence
+
 trait Parent<t> {
     function f(x: t) returns (word);
 }

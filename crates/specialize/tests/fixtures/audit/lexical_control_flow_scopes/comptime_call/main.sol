@@ -1,3 +1,7 @@
+//~ specialize: loader std
+//~ specialize: frontend clean
+//~ specialize: return 1
+
 function pick() returns (word) {
     let x: word = 1;
     if (true) {

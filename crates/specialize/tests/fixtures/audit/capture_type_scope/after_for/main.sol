@@ -1,3 +1,7 @@
+//~ specialize: loader fixture
+//~ specialize: frontend clean
+//~ specialize: no-closure-dispatch
+
 function main(flag: bool, n: word) returns (word) {
     let value: word = n;
     for (; flag;) {

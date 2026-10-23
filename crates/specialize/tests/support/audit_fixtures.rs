@@ -3,7 +3,7 @@ use dir_test::{Fixture, dir_test};
 use super::*;
 
 #[derive(Default)]
-struct Case {
+struct Expectations {
     loader: Loader,
     frontend_clean: Option<bool>,
     max_depth: Option<usize>,
@@ -59,257 +59,155 @@ impl DiagnosticKind {
     }
 }
 
-#[derive(Default)]
-struct Selector {
-    prefix: Option<String>,
-    contains: Vec<String>,
-    instance_method: bool,
-    method: Option<String>,
-    entry: bool,
+enum Check {
+    MainReturnNumber { value: Option<String> },
+    MainReturnVariable { name: String },
+    EntryLastReturnNumber { value: String },
+    EntryLastReturnVariable { name: String },
+    EntryExists,
+    NoClosureDispatch,
 }
 
-impl Selector {
-    fn matches(
-        &self,
-        function: &solcore_specialize::MonoFunction<'_>,
-        output: &SpecializeOutput<'_>,
-    ) -> bool {
-        self.prefix
-            .as_ref()
-            .is_none_or(|prefix| function.name.starts_with(prefix))
-            && self
-                .contains
-                .iter()
-                .all(|part| function.name.contains(part))
-            && (!self.entry || output.module.entry_points.contains(&function.name))
-            && (!self.instance_method
-                || matches!(function.origin, MonoFunctionOrigin::InstanceMethod { .. }))
-            && self.method.as_ref().is_none_or(|expected| {
-                matches!(
-                    &function.origin,
-                    MonoFunctionOrigin::InstanceMethod { method, .. } if method == expected
-                )
-            })
+impl DiagnosticKind {
+    fn parse(name: &str) -> Self {
+        match name {
+            "free-type-variable" => Self::FreeTypeVariable,
+            "comptime-evaluation-failed" => Self::ComptimeEvaluationFailed,
+            "integer-erasure" => Self::IntegerErasure,
+            "missing-evidence" => Self::MissingEvidence,
+            "instantiation-depth-exceeded" => Self::InstantiationDepthExceeded,
+            _ => panic!("unknown specialization diagnostic {name}"),
+        }
     }
 }
 
-enum Check {
-    MainReturnNumber {
-        value: Option<String>,
-    },
-    MainReturnVariable {
-        name: String,
-    },
-    EntryLastReturnNumber {
-        value: String,
-    },
-    EntryLastReturnVariable {
-        name: String,
-    },
-    EntryExists,
-    NoClosureDispatch,
-    UniqueFunctionNames,
-    FunctionCount {
-        selector: Selector,
-        count: Option<usize>,
-        min: Option<usize>,
-        max: Option<usize>,
-    },
-    FunctionReturns {
-        selector: Selector,
-        value: String,
-        follow_calls: bool,
-        all_paths: bool,
-    },
-    FunctionParameters {
-        selector: Selector,
-        names: Vec<String>,
-    },
-    EqualParameterTypes {
-        selector: Selector,
-    },
-    DistinctReturnTypes {
-        selector: Selector,
-    },
-    Binding {
-        name: String,
-        count: Option<usize>,
-        min: Option<usize>,
-        builtin: Option<String>,
-    },
-    NoTupleBinding {
-        name: String,
-    },
-    ResidualMatch {
-        scrutinees: usize,
-        arms: usize,
-        patterns: usize,
-    },
-    LoopConditionArgument {
-        name: String,
-    },
-    MaterializedReturnCall {
-        literal_argument: String,
-    },
-}
-
-#[path = "audit_cases.rs"]
-mod audit_cases;
-
-macro_rules! source_cases {
-    ($name:ident, $directory:literal, $glob:literal) => {
-        #[dir_test(dir: $directory, glob: $glob)]
-        fn $name(fixture: Fixture<&str>) {
-            specialization_fixture(fixture);
+impl Expectations {
+    fn from_source(source: &str) -> Option<Self> {
+        let mut expectations = Self::default();
+        let mut loader = None;
+        let mut found = false;
+        for (line, directive) in solcore_test_utils::source_directives(source, "specialize") {
+            found = true;
+            let (key, value) = directive.split_once(' ').unwrap_or((directive, ""));
+            let value = value.trim();
+            match (key, value) {
+                ("loader", value) => {
+                    assert!(loader.is_none(), "line {line}: duplicate loader");
+                    loader = Some(match value {
+                        "bare" => Loader::Bare,
+                        "std" => Loader::Std,
+                        "std-current" => Loader::StdCurrent,
+                        "fixture" => Loader::Fixture,
+                        _ => panic!("line {line}: unknown loader {value}"),
+                    });
+                }
+                ("frontend", "clean" | "errors") => {
+                    assert!(
+                        expectations.frontend_clean.is_none(),
+                        "line {line}: duplicate frontend expectation"
+                    );
+                    expectations.frontend_clean = Some(value == "clean");
+                }
+                ("max-depth", value) => {
+                    assert!(
+                        expectations.max_depth.is_none(),
+                        "line {line}: duplicate max-depth"
+                    );
+                    expectations.max_depth = Some(value.parse().expect("specialization max-depth"));
+                }
+                ("diagnostic", value) => {
+                    let (kind, context) = value.split_once(' ').unwrap_or((value, ""));
+                    let mut check = DiagnosticCheck {
+                        kind: DiagnosticKind::parse(kind),
+                        context: None,
+                        context_contains: None,
+                    };
+                    if let Some(context) = context.strip_prefix("= ") {
+                        check.context = Some(context.to_owned());
+                    } else if let Some(context) = context.strip_prefix("contains ") {
+                        check.context_contains = Some(context.to_owned());
+                    } else {
+                        assert!(
+                            context.is_empty(),
+                            "line {line}: invalid diagnostic context {context}"
+                        );
+                    }
+                    expectations.diagnostics.push(check);
+                }
+                ("forbid", value) => expectations
+                    .forbidden_diagnostics
+                    .push(DiagnosticKind::parse(value)),
+                ("return", value) if !value.is_empty() => {
+                    expectations.checks.push(Check::MainReturnNumber {
+                        value: (value != "none").then(|| value.to_owned()),
+                    })
+                }
+                ("return-variable", name) if !name.is_empty() => {
+                    expectations.checks.push(Check::MainReturnVariable {
+                        name: name.to_owned(),
+                    })
+                }
+                ("entry-return", value) if !value.is_empty() => {
+                    expectations.checks.push(Check::EntryLastReturnNumber {
+                        value: value.to_owned(),
+                    })
+                }
+                ("entry-return-variable", name) if !name.is_empty() => {
+                    expectations.checks.push(Check::EntryLastReturnVariable {
+                        name: name.to_owned(),
+                    })
+                }
+                ("entry", "") => expectations.checks.push(Check::EntryExists),
+                ("no-closure-dispatch", "") => expectations.checks.push(Check::NoClosureDispatch),
+                _ => panic!("line {line}: unknown specialization expectation {directive}"),
+            }
         }
-    };
-}
+        if !found {
+            return None;
+        }
+        expectations.loader = loader.expect("specialization source must declare its loader");
+        Some(expectations)
+    }
 
-source_cases!(
-    audit,
-    "$CARGO_MANIFEST_DIR/tests/fixtures/audit",
-    "**/main.sol"
-);
-source_cases!(
-    invalid_audit,
-    "$CARGO_MANIFEST_DIR/tests/fixtures/audit",
-    "**/main.invalid.sol.txt"
-);
-source_cases!(
-    shared_aggregate_closure_captures,
-    "$CARGO_MANIFEST_DIR/../..",
-    "tests/e2e/aggregate-closure-captures/main.sol"
-);
-source_cases!(
-    shared_comptime_pattern_scopes,
-    "$CARGO_MANIFEST_DIR/../..",
-    "tests/e2e/comptime-pattern-scopes/main.sol"
-);
-source_cases!(
-    shared_abi_word_memory,
-    "$CARGO_MANIFEST_DIR/../..",
-    "tests/e2e/abi-word-memory/main.sol"
-);
-source_cases!(
-    shared_abi_word_custom_codec,
-    "$CARGO_MANIFEST_DIR/../..",
-    "tests/e2e/abi-word-custom-codec/main.sol"
-);
-source_cases!(
-    shared_abi_byte_memory,
-    "$CARGO_MANIFEST_DIR/../..",
-    "tests/e2e/abi-byte-memory/main.sol"
-);
-source_cases!(
-    shared_abi_raw_default_codec,
-    "$CARGO_MANIFEST_DIR/../..",
-    "tests/e2e/abi-raw-default-codec/main.sol"
-);
-source_cases!(
-    function_value_evidence_main,
-    "$CARGO_MANIFEST_DIR/../..",
-    "crates/specialize/tests/fixtures/function_value_evidence/main.sol"
-);
-source_cases!(
-    module_local_function_evidence_main,
-    "$CARGO_MANIFEST_DIR/../..",
-    "crates/specialize/tests/fixtures/module_local_function_evidence/main.sol"
-);
-source_cases!(
-    module_local_function_evidence_multiple,
-    "$CARGO_MANIFEST_DIR/../..",
-    "crates/specialize/tests/fixtures/module_local_function_evidence/multiple.sol"
-);
-source_cases!(
-    module_local_function_evidence_ordered_a,
-    "$CARGO_MANIFEST_DIR/../..",
-    "crates/specialize/tests/fixtures/module_local_function_evidence/ordered_a.sol"
-);
-source_cases!(
-    module_local_function_evidence_ordered_b,
-    "$CARGO_MANIFEST_DIR/../..",
-    "crates/specialize/tests/fixtures/module_local_function_evidence/ordered_b.sol"
-);
-source_cases!(
-    module_local_function_evidence_phantom,
-    "$CARGO_MANIFEST_DIR/../..",
-    "crates/specialize/tests/fixtures/module_local_function_evidence/phantom.sol"
-);
-source_cases!(
-    module_local_function_evidence_values,
-    "$CARGO_MANIFEST_DIR/../..",
-    "crates/specialize/tests/fixtures/module_local_function_evidence/values.sol"
-);
-source_cases!(
-    operator_evidence_main,
-    "$CARGO_MANIFEST_DIR/../..",
-    "crates/specialize/tests/fixtures/operator_evidence/main.sol"
-);
-source_cases!(
-    operator_evidence_reversed,
-    "$CARGO_MANIFEST_DIR/../..",
-    "crates/specialize/tests/fixtures/operator_evidence/reversed.sol"
-);
-source_cases!(
-    superclass_dictionaries_main,
-    "$CARGO_MANIFEST_DIR/../..",
-    "crates/specialize/tests/fixtures/superclass_dictionaries/main.sol"
-);
-source_cases!(
-    superclass_dictionaries_reversed,
-    "$CARGO_MANIFEST_DIR/../..",
-    "crates/specialize/tests/fixtures/superclass_dictionaries/reversed.sol"
-);
-source_cases!(
-    trait_method_instantiations_main,
-    "$CARGO_MANIFEST_DIR/../..",
-    "crates/specialize/tests/fixtures/trait_method_instantiations/main.sol"
-);
-source_cases!(
-    trait_method_instantiations_reversed,
-    "$CARGO_MANIFEST_DIR/../..",
-    "crates/specialize/tests/fixtures/trait_method_instantiations/reversed.sol"
-);
-
-fn specialization_fixture(fixture: Fixture<&str>) {
-    let path = PathBuf::from(fixture.path())
-        .canonicalize()
-        .expect("source fixture path");
-    solcore_test_utils::run_in_large_stack(move || {
-        let key = solcore_test_utils::fixture_path_key(env!("CARGO_MANIFEST_DIR"), &path);
-        let case = audit_cases::expectations(&key);
-        let source_path = path.clone();
+    fn specialize(
+        &self,
+        source_path: &Path,
+        source: &str,
+    ) -> (&'static TestDb, SourceFile, SpecializeOutput<'static>) {
         let options = SpecializeOptions {
-            max_depth: case
+            max_depth: self
                 .max_depth
                 .unwrap_or(SpecializeOptions::default().max_depth),
             ..SpecializeOptions::default()
         };
-        let (db, file, output) = match case.loader {
+        match self.loader {
             Loader::Fixture => {
                 assert!(
-                    case.max_depth.is_none(),
+                    self.max_depth.is_none(),
                     "fixture loading uses default options"
                 );
-                specialize_fixture_with_db(&source_path)
+                specialize_fixture_with_db(source_path)
             }
             Loader::Bare => {
-                let source = fs::read_to_string(&source_path).unwrap();
                 let db = Box::leak(Box::new(TestDb::default()));
-                let file = source_file(db, "test", &source);
+                let file = source_file(db, "test", source);
                 let module = parse_file_to_hir(db, file).module(db);
                 let output = specialize_module(db, module, options);
                 (&*db, file, output)
             }
-            Loader::Std => specialize_src_with_std_and_db_options(
-                &fs::read_to_string(&source_path).unwrap(),
-                options,
-            ),
-            Loader::StdCurrent => {
-                specialize_with_current_std(&fs::read_to_string(&source_path).unwrap(), options)
-            }
-        };
-        if let Some(clean) = case.frontend_clean {
+            Loader::Std => specialize_src_with_std_and_db_options(source, options),
+            Loader::StdCurrent => specialize_with_current_std(source, options),
+        }
+    }
+
+    fn assert_matches(
+        &self,
+        path: &Path,
+        db: &TestDb,
+        file: SourceFile,
+        output: &SpecializeOutput<'_>,
+    ) {
+        if let Some(clean) = self.frontend_clean {
             let module =
                 nameres::module_id_for_source_file(db, file).expect("registered source module");
             let diagnostics = hir_ty::collect_frontend_diagnostics(db, module);
@@ -320,7 +218,7 @@ fn specialization_fixture(fixture: Fixture<&str>) {
                 path.display()
             );
         }
-        if case.diagnostics.is_empty() {
+        if self.diagnostics.is_empty() {
             assert!(
                 output.diagnostics.is_empty(),
                 "{}: {:?}",
@@ -328,7 +226,7 @@ fn specialization_fixture(fixture: Fixture<&str>) {
                 output.diagnostics
             );
         } else {
-            for expected in &case.diagnostics {
+            for expected in &self.diagnostics {
                 assert!(
                     output.diagnostics.iter().any(|diagnostic| {
                         if !expected.kind.matches(&diagnostic.kind) {
@@ -355,7 +253,7 @@ fn specialization_fixture(fixture: Fixture<&str>) {
                 );
             }
         }
-        for forbidden in &case.forbidden_diagnostics {
+        for forbidden in &self.forbidden_diagnostics {
             assert!(
                 !output
                     .diagnostics
@@ -366,11 +264,90 @@ fn specialization_fixture(fixture: Fixture<&str>) {
                 output.diagnostics
             );
         }
-        for check in &case.checks {
-            check.assert_matches(db, &output);
+        for check in &self.checks {
+            check.assert_matches(output);
         }
+    }
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/audit", glob: "**/main.sol")]
+fn audit(fixture: Fixture<&str>) {
+    specialization_fixture(fixture);
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/audit", glob: "**/main.invalid.sol.txt")]
+fn invalid_audit(fixture: Fixture<&str>) {
+    specialization_fixture(fixture);
+}
+
+fn specialization_fixture(fixture: Fixture<&str>) {
+    let path = PathBuf::from(fixture.path())
+        .canonicalize()
+        .expect("source fixture path");
+    check_source(path, |_, _| {});
+}
+
+fn annotated_sources(directory: &Path) -> Vec<PathBuf> {
+    let mut sources = Vec::new();
+    for entry in fs::read_dir(directory).expect("fixture directory") {
+        let path = entry.expect("fixture entry").path();
+        if path.is_dir() {
+            sources.extend(annotated_sources(&path));
+        } else if path.extension().is_some_and(|extension| extension == "sol") {
+            let source = fs::read_to_string(&path).expect("source fixture");
+            if solcore_test_utils::source_directives(&source, "specialize")
+                .next()
+                .is_some()
+            {
+                sources.push(path);
+            }
+        }
+    }
+    sources.sort();
+    sources
+}
+
+#[test]
+fn multi_module_entries() {
+    let fixtures = repo_root().join("crates/specialize/tests/fixtures");
+    let audit = fixtures.join("audit");
+    let sources = annotated_sources(&fixtures)
+        .into_iter()
+        .filter(|path| !path.starts_with(&audit))
+        .collect::<Vec<_>>();
+    assert!(
+        !sources.is_empty(),
+        "missing multi-module specialization entries"
+    );
+    for path in sources {
+        check_source(path, |_, _| {});
+    }
+}
+
+#[test]
+fn shared_e2e_entries() {
+    let sources = annotated_sources(&repo_root().join("tests/e2e"));
+    assert!(!sources.is_empty(), "missing shared specialization entries");
+    for path in sources {
+        check_source(path, |_, _| {});
+    }
+}
+
+fn check_source(
+    path: PathBuf,
+    assertion: impl FnOnce(&TestDb, &SpecializeOutput<'_>) + Send + 'static,
+) {
+    solcore_test_utils::run_in_large_stack(move || {
+        let source = fs::read_to_string(&path).expect("source fixture");
+        let expectations = Expectations::from_source(&source).expect("specialization expectations");
+        let (db, file, output) = expectations.specialize(&path, &source);
+        expectations.assert_matches(&path, db, file, &output);
+        assertion(db, &output);
     });
 }
+
+#[path = "audit_ir.rs"]
+mod audit_ir;
 
 fn specialize_with_current_std(
     source: &str,
@@ -406,16 +383,6 @@ fn functions<'a, 'db>(
             MonoItem::Function(function) => Some(function),
             _ => None,
         })
-        .collect()
-}
-
-fn selected<'a, 'db>(
-    output: &'a SpecializeOutput<'db>,
-    selector: &Selector,
-) -> Vec<&'a solcore_specialize::MonoFunction<'db>> {
-    functions(output)
-        .into_iter()
-        .filter(|function| selector.matches(function, output))
         .collect()
 }
 
@@ -485,7 +452,7 @@ fn statements<'a, 'db>(body: &'a [MonoStmt<'db>], result: &mut Vec<&'a MonoStmt<
 }
 
 impl Check {
-    fn assert_matches(&self, db: &TestDb, output: &SpecializeOutput<'_>) {
+    fn assert_matches(&self, output: &SpecializeOutput<'_>) {
         let all = functions(output);
         match self {
             Self::MainReturnNumber { value } => {
@@ -507,203 +474,6 @@ impl Check {
                 "{:#?}",
                 output.module
             ),
-            Self::UniqueFunctionNames => assert_eq!(
-                all.iter()
-                    .map(|function| &function.name)
-                    .collect::<BTreeSet<_>>()
-                    .len(),
-                all.len()
-            ),
-            Self::FunctionCount {
-                selector,
-                count,
-                min,
-                max,
-            } => {
-                let actual = selected(output, selector).len();
-                if let Some(count) = count {
-                    assert_eq!(actual, *count);
-                }
-                if let Some(min) = min {
-                    assert!(actual >= *min, "{actual} < {min}");
-                }
-                if let Some(max) = max {
-                    assert!(actual <= *max, "{actual} > {max}");
-                }
-            }
-            Self::FunctionReturns {
-                selector,
-                value,
-                follow_calls,
-                all_paths,
-            } => {
-                let matches = selected(output, selector);
-                assert!(!matches.is_empty(), "no matching function");
-                for mut function in matches {
-                    let mut visited = BTreeSet::new();
-                    loop {
-                        assert!(
-                            visited.insert(&function.name),
-                            "cyclic return in {}",
-                            function.name
-                        );
-                        let numbers = if *all_paths {
-                            function_return_numbers(output, &function.name)
-                        } else {
-                            match &last_return(function).kind {
-                                MonoExprKind::Lit(hir::ast::function::LitKind::Number(number)) => {
-                                    vec![number.clone()]
-                                }
-                                _ => vec![],
-                            }
-                        };
-                        if !numbers.is_empty() {
-                            assert!(
-                                numbers.iter().all(|number| number == value),
-                                "{}: {numbers:?}",
-                                function.name
-                            );
-                            break;
-                        }
-                        assert!(
-                            *follow_calls,
-                            "expected literal return in {}",
-                            function.name
-                        );
-                        let MonoExprKind::Call { callee, .. } = &last_return(function).kind else {
-                            panic!("unexpected return in {function:#?}");
-                        };
-                        function = all
-                            .iter()
-                            .copied()
-                            .find(|function| function.name == callee.name)
-                            .expect("called function");
-                    }
-                }
-            }
-            Self::FunctionParameters { selector, names } => {
-                let matches = selected(output, selector);
-                assert!(!matches.is_empty());
-                for function in matches {
-                    assert_eq!(
-                        &function
-                            .params
-                            .iter()
-                            .map(|param| param.name.clone())
-                            .collect::<Vec<_>>(),
-                        names
-                    );
-                }
-            }
-            Self::EqualParameterTypes { selector } => {
-                let matches = selected(output, selector);
-                assert!(matches.len() >= 2);
-                for pair in matches.windows(2) {
-                    assert_eq!(
-                        pair[0].params.iter().map(|p| p.ty).collect::<Vec<_>>(),
-                        pair[1].params.iter().map(|p| p.ty).collect::<Vec<_>>()
-                    );
-                }
-            }
-            Self::DistinctReturnTypes { selector } => {
-                let matches = selected(output, selector);
-                assert!(matches.len() >= 2);
-                for (index, function) in matches.iter().enumerate() {
-                    assert!(
-                        matches[index + 1..]
-                            .iter()
-                            .all(|other| function.ret != other.ret)
-                    );
-                }
-            }
-            Self::Binding {
-                name,
-                count,
-                min,
-                builtin,
-            } => {
-                let mut stmts = vec![];
-                for function in &all {
-                    statements(&function.body, &mut stmts);
-                }
-                let ids = stmts
-                    .iter()
-                    .filter_map(|stmt| match &stmt.kind {
-                        MonoStmtKind::Let { id, .. } if &id.name == name => Some(id),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>();
-                if let Some(count) = count {
-                    assert_eq!(ids.len(), *count);
-                }
-                if let Some(min) = min {
-                    assert!(ids.len() >= *min);
-                }
-                if let Some(builtin) = builtin {
-                    let ty = match builtin.as_str() {
-                        "bool" => BuiltinTyCtor::Bool,
-                        "word" => BuiltinTyCtor::Word,
-                        _ => panic!("unsupported expected builtin {builtin}"),
-                    };
-                    assert!(ids.iter().all(|id| id.ty.ty() == Ty::builtin(db, ty)));
-                }
-            }
-            Self::NoTupleBinding { name } => {
-                let mut stmts = vec![];
-                for function in &all {
-                    statements(&function.body, &mut stmts);
-                }
-                assert!(!stmts.iter().any(|stmt| matches!(&stmt.kind, MonoStmtKind::Let { id, init: Some(init), .. } if &id.name == name && matches!(init.kind, MonoExprKind::Tuple(_)))));
-            }
-            Self::ResidualMatch {
-                scrutinees,
-                arms,
-                patterns,
-            } => {
-                let function = entry_function(output);
-                let (actual_inputs, actual_arms) = function
-                    .body
-                    .iter()
-                    .find_map(|stmt| match &stmt.kind {
-                        MonoStmtKind::Match { scrutinees, arms } => Some((scrutinees, arms)),
-                        _ => None,
-                    })
-                    .expect("residual match");
-                assert_eq!(actual_inputs.len(), *scrutinees);
-                assert_eq!(actual_arms.len(), *arms);
-                assert!(actual_arms.iter().all(|arm| arm.pats.len() == *patterns));
-            }
-            Self::LoopConditionArgument { name } => {
-                let condition = all
-                    .iter()
-                    .find_map(|function| {
-                        let mut body = Vec::new();
-                        statements(&function.body, &mut body);
-                        body.into_iter().find_map(|stmt| match &stmt.kind {
-                            MonoStmtKind::For { cond, .. } => Some(cond),
-                            _ => None,
-                        })
-                    })
-                    .expect("residual loop");
-                assert!(
-                    matches!(&condition.kind, MonoExprKind::Call { args, .. } if args.iter().any(|arg| matches!(&arg.kind, MonoExprKind::Var(id) if &id.name == name)))
-                );
-            }
-            Self::MaterializedReturnCall { literal_argument } => {
-                let expr = last_return(entry_function(output));
-                let MonoExprKind::Call { callee, args, .. } = &expr.kind else {
-                    panic!("expected residual call: {expr:?}");
-                };
-                let TyKind::Function { params, ret } = callee.ty.ty().kind(db) else {
-                    panic!("expected function signature");
-                };
-                assert_eq!(params.len(), args.len());
-                for (param, arg) in params.iter().zip(args) {
-                    assert_eq!(*param, arg.ty.ty());
-                }
-                assert_eq!(*ret, expr.ty.ty());
-                assert!(args.iter().any(|arg| matches!(&arg.kind, MonoExprKind::Lit(hir::ast::function::LitKind::Number(number)) if number == literal_argument)));
-            }
         }
     }
 }

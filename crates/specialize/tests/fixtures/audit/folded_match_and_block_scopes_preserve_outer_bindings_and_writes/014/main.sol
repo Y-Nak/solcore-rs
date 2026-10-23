@@ -1,3 +1,6 @@
+//~ specialize: loader bare
+//~ specialize: return 5
+
 function compute() returns (word) {
     let x: word = 1;
     {

@@ -1,3 +1,6 @@
+//~ specialize: loader bare
+//~ specialize: return 7
+
 enum Box<a> {
     Box(a)
 }

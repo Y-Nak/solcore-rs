@@ -1,3 +1,6 @@
+//~ specialize: loader std
+//~ specialize: return 3
+
 import * from std;
 enum Box<a> {
     Box(a)

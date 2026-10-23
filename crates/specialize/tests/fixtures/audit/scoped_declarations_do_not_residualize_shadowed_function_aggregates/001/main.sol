@@ -1,3 +1,5 @@
+//~ specialize: loader bare
+
 function identity(value: word) returns (word) {
     return value;
 }

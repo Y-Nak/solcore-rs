@@ -1,3 +1,8 @@
+//~ specialize: loader fixture
+//~ specialize: frontend clean
+//~ specialize: no-closure-dispatch
+//~ specialize: return 7
+
 function consume(comptime x: word) returns (word) {
     return x;
 }

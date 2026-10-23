@@ -1,3 +1,5 @@
+//~ specialize: loader bare
+
 trait C<t> {
     function f<unused, u>(x: t, y: u) returns (u);
 }

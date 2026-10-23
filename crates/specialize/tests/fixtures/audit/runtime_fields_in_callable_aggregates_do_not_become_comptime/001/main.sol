@@ -1,3 +1,6 @@
+//~ specialize: loader bare
+//~ specialize: diagnostic comptime-evaluation-failed
+
 enum Box<a> {
     Box(a)
 }

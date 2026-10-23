@@ -1,3 +1,5 @@
+//~ specialize: loader std
+
 import * from std;
 import * from std.Generic;
 import * from std.ABIGeneric;

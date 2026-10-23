@@ -1,3 +1,7 @@
+//~ specialize: loader bare
+//~ specialize: max-depth 16
+//~ specialize: forbid instantiation-depth-exceeded
+
 trait Parent<t> where t: Child {
     function f(x: t) returns (word);
 }

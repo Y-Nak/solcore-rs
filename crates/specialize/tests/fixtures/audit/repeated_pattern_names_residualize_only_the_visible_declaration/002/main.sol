@@ -1,3 +1,5 @@
+//~ specialize: loader bare
+
 enum Box<a> {
     Box(a)
 }

@@ -1,3 +1,7 @@
+//~ specialize: loader std-current
+//~ specialize: frontend clean
+//~ specialize: entry-return 7
+
 import * from std;
 enum Box {
     Box(bool)

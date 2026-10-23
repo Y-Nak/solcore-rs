@@ -1,3 +1,7 @@
+//~ specialize: loader std
+//~ specialize: frontend clean
+//~ specialize: entry
+
 import * from std;
 import * from std.dispatch;
 contract Nine {

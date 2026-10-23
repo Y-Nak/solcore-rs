@@ -1,3 +1,6 @@
+//~ specialize: loader bare
+//~ specialize: diagnostic integer-erasure
+
 enum Box<a> {
     Box(a)
 }

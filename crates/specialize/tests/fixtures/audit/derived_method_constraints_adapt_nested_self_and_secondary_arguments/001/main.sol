@@ -1,3 +1,7 @@
+//~ specialize: loader std
+//~ specialize: frontend clean
+//~ specialize: return 7
+
 import { Generic } from std.Generic;
 trait P<t, r> {
     function p(x: t) returns (word);

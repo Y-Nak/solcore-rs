@@ -1,3 +1,5 @@
+//~ specialize: loader fixture
+
 import * from std;
 import * from std.dispatch;
 

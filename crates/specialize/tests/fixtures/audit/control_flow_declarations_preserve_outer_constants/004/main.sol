@@ -1,3 +1,7 @@
+//~ specialize: loader std
+//~ specialize: frontend clean
+//~ specialize: return 1
+
 import * from std;
 function main() returns (word) {
     let i: word = 1;

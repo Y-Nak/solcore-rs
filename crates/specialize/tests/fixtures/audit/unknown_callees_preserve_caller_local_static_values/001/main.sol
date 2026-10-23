@@ -1,3 +1,7 @@
+//~ specialize: loader std-current
+//~ specialize: frontend clean
+//~ specialize: entry-return 7
+
 function touch() {
     assembly {
         mstore(0, calldatasize())

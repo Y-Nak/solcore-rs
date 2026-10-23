@@ -1,3 +1,6 @@
+//~ specialize: loader bare
+//~ specialize: return 1
+
 function main() returns (word) {
     let x: word = 1;
     let y: word = 2;
