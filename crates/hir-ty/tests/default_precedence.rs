@@ -4,7 +4,6 @@ use dir_test::{Fixture, dir_test};
 use hir::ast::item::Item;
 use nameres::{Db as _, LibraryId, ModuleKey, module_id_from_key, module_key_for_path};
 use parser::parse_file_to_hir;
-use serde::Deserialize;
 use solcore_hir_ty::{
     ClassId, Evidence, Pred, Solution, Ty, canonical_goal, solve, trait_env_for_module,
 };
@@ -15,18 +14,29 @@ use solcore_test_utils::{
 
 define_frontend_test_db!(TestDb, solcore_hir_ty);
 
-#[derive(Deserialize)]
-#[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
-enum Expected {
-    Unique { goal: String, owners: Vec<String> },
-    Ambiguous { goal: String, count: usize },
-    NoSolution { goal: String },
-}
-
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/default_precedence", glob: "**/expected.json")]
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/default_precedence", glob: "**/main/main.sol")]
 fn default_precedence(fixture: Fixture<&str>) {
-    let case = Path::new(fixture.path()).parent().unwrap();
-    let expected: Expected = serde_json::from_str(fixture.content()).unwrap();
+    let case = Path::new(fixture.path())
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let directives = fixture
+        .content()
+        .lines()
+        .filter_map(|line| line.strip_prefix("//~ "))
+        .collect::<Vec<_>>();
+    assert_eq!(directives.len(), 2, "expected a goal and solution");
+    let goal_name = directives
+        .iter()
+        .find_map(|line| line.strip_prefix("goal: "))
+        .expect("class goal");
+    let expected = directives
+        .iter()
+        .find_map(|line| line.strip_prefix("solution: "))
+        .expect("solver solution")
+        .split_whitespace()
+        .collect::<Vec<_>>();
     // Virtual libraries and overlapping physical roots must assign the same
     // priority to the same standard source, regardless of its logical alias.
     for (file_urls, overlapping) in [(false, false), (true, false), (true, true)] {
@@ -59,15 +69,12 @@ fn default_precedence(fixture: Fixture<&str>) {
             },
         );
         let module = parse_file_to_hir(&db, db.module_file(std_module).unwrap()).module(&db);
-        let (Expected::Unique { goal, .. }
-        | Expected::Ambiguous { goal, .. }
-        | Expected::NoSolution { goal }) = &expected;
         let class = module
             .items(&db)
             .iter()
             .find_map(|item| match item {
                 Item::ClassDef(class)
-                    if class.def_id_value(&db).name(&db).as_ref() == Some(goal) =>
+                    if class.def_id_value(&db).name(&db).as_deref() == Some(goal_name) =>
                 {
                     Some(ClassId::User(class.def_id_value(&db)))
                 }
@@ -76,20 +83,20 @@ fn default_precedence(fixture: Fixture<&str>) {
             .unwrap();
         let goal = canonical_goal(&db, Pred::in_class(&db, class, Ty::word(&db), vec![]));
         let actual = solve(&db, trait_env_for_module(&db, entry), goal);
-        match (&expected, &actual) {
-            (Expected::Unique { owners, .. }, Solution::Unique { evidence, .. }) => {
+        match (expected.as_slice(), &actual) {
+            (["unique", owners @ ..], Solution::Unique { evidence, .. }) => {
                 let mut actual_owners = Vec::new();
                 evidence_owners(&db, evidence, &mut actual_owners);
                 assert_eq!(
-                    &actual_owners, owners,
+                    actual_owners, owners,
                     "{file_urls}/{overlapping}: {actual:?}"
                 );
             }
-            (Expected::Ambiguous { count, .. }, Solution::Ambiguous { candidates }) => {
-                assert_eq!(candidates.len(), *count)
+            (["ambiguous", count], Solution::Ambiguous { candidates }) => {
+                assert_eq!(candidates.len(), count.parse::<usize>().unwrap())
             }
-            (Expected::NoSolution { .. }, Solution::NoSolution) => {}
-            _ => panic!("{file_urls}/{overlapping}: {actual:?}"),
+            (["no-solution"], Solution::NoSolution) => {}
+            _ => panic!("{file_urls}/{overlapping}: expected {expected:?}, got {actual:?}"),
         }
     }
 }

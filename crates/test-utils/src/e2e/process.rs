@@ -252,16 +252,22 @@ fn parse_anvil_port(line: &str) -> Option<u16> {
 mod tests {
     use super::*;
 
-    #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/anvil_address", glob: "*.json")]
-    fn parses_anvil_listening_address(fixture: dir_test::Fixture<&str>) {
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Case {
-            line: String,
-            port: Option<u16>,
-        }
-        let case: Case = serde_json::from_str(fixture.content()).expect("address fixture");
-        assert_eq!(parse_anvil_port(&case.line), case.port);
+    #[test]
+    fn parses_http_listening_address() {
+        let source = include_str!("../../tests/fixtures/anvil_address/http.txt");
+        assert_eq!(parse_anvil_port(source.trim_end()), Some(49152));
+    }
+
+    #[test]
+    fn parses_ipv4_listening_address() {
+        let source = include_str!("../../tests/fixtures/anvil_address/ipv4.txt");
+        assert_eq!(parse_anvil_port(source.trim_end()), Some(8545));
+    }
+
+    #[test]
+    fn ignores_unrelated_output() {
+        let source = include_str!("../../tests/fixtures/anvil_address/unrelated.txt");
+        assert_eq!(parse_anvil_port(source.trim_end()), None);
     }
 
     #[cfg(unix)]

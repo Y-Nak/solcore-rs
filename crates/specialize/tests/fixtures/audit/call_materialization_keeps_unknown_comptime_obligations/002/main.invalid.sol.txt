@@ -1,0 +1,9 @@
+//~ specialize: loader std-current
+//~ specialize: frontend errors
+//~ specialize: diagnostic comptime-evaluation-failed
+
+function restricted(value: comptime<word>) returns(word) {
+             assembly { mstore(0, calldatasize()) }
+             return value;
+         }
+         function main(input: word) returns(word) { return restricted(input); }

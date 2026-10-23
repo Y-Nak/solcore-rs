@@ -8,3 +8,11 @@ contract MemoryContract {
         return result;
     }
 }
+
+//~ sonatina: contains "object @MemoryContractDeploy"
+//~ sonatina: contains "embed .runtime as &MemoryContract"
+//~ sonatina: contains "sym_addr &MemoryContract"
+//~ sonatina: contains "sym_size &MemoryContract"
+//~ sonatina: contains "evm_mstore "
+//~ sonatina: contains "evm_mload "
+//~ sonatina: compile O0

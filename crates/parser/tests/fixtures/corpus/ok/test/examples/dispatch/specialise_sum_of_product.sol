@@ -11,7 +11,7 @@
 //     expected: sum(word, word)
 //     actual:   sum(pair(word, word), word)
 //
-// Root cause: in Specialise.hs, `specMatch` did not scope `spSubst` (a global
+// Root cause: match specialization did not scope its substitution (a global
 // accumulator) across match alternatives. While specializing the `inl` branch,
 // a binding leaked into the `inr` branch's nested `match`, collapsing
 // sum(f, g) to sum(g, g). The fix resets spSubst around each alternative.

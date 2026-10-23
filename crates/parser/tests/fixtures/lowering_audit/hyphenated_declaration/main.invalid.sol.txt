@@ -1,0 +1,4 @@
+function foo-bar() {}
+
+//~ has-errors: true
+//~ identifier: foo-bar false

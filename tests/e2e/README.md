@@ -18,8 +18,8 @@ typed contextually from the target function's canonical ABI signature. Decimal
 and hexadecimal `uint256` values, booleans, and static tuples are supported. An
 argument or result with the wrong type or arity is rejected while resolving the
 fixture, before any EVM call is made. The execution fixtures deliberately use
-only selector ABI types supported by the shared reference std. In particular,
-they do not expose primitive `word`. Direct ADTs and the
+only selector ABI types supported by the workspace standard library. In
+particular, they do not expose primitive `word`. Direct ADTs and the
 `calldata<array<T>>` ADT surface use raw scenario comments instead: their selectors
 are derived from `T`'s structural Generic representation, and
 algebraic/dynamic-array values are outside the inline directive value grammar.
@@ -101,18 +101,11 @@ method expectations keep their existing behavior: ordinary expectations use
 `eth_call`, while `#[send(...)]` persists state but has no output expectation.
 Raw scenarios are supported by the native backend E2E runners.
 
-The upstream raw vectors have been migrated into these source comments. Their
-calldata, value transfers, expected status/output, call order, labels, and EVM
-metadata are retained; there are no companion JSON files. The historical
-2f372bde snapshot supplied 51 executable source/vector pairs; later upstream and
-local regressions extend that corpus. Core sources are syntax-migrated semantic
-ports, not byte-exact copies of that snapshot.
-
-The active std/semantic target is now `a7b7afb0`. Variant-related raw vectors
-have been updated to its constructor-keccak tags, and latest struct,
-message-context, and assembly regressions are included. Local additions reject
-unknown constructor tags and verify the corrected single-tag static size for
-three or more variants. See `SEMANTIC_DIFFERENCES.md` for upstream defects.
+Raw vectors live in these source comments, including calldata, value transfers,
+expected status/output, call order, labels, and EVM metadata; there are no
+companion JSON files. The corpus covers constructor-keccak tags, structs,
+message contexts, and assembly behavior. Regressions reject unknown constructor
+tags and verify the single-tag static size for three or more variants.
 
 For a finite derived ADT `T`, ABI JSON retains the source spelling (`T` or
 `T[]`), while selectors still use its structural Generic signature (for
@@ -120,10 +113,9 @@ example, `rt(sum(uint256,bytes))`). On the wire, compiler-derived
 multi-constructor ADTs use one full `keccak256("Constructor(field signatures)")`
 tag, followed by that constructor's payload. Explicit structural `sum`
 encoders and `std.ABIGeneric.encode`/`decode` retain 0/1 Generic tags.
-Upstream still cannot emit parameterized ADT metadata; Rust deliberately
-supports source spellings such as `Point<uint256>`.
-This extension is supported only when every type argument, including an unused
-phantom argument, has the required ABI evidence. Finite nested instantiations
+Parameterized ADT metadata supports source spellings such as `Point<uint256>`
+only when every type argument, including an unused phantom argument, has the
+required ABI evidence. Finite nested instantiations
 are distinguished from definition-recursive representations. Recursive,
 manually represented, and same-named non-std array/location types are rejected
 before backend execution, as is a `calldata<array<t>>` handle nested anywhere

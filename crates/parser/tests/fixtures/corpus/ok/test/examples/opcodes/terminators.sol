@@ -2,7 +2,7 @@
 // a bare 'assembly' block ending in one is allowed as the last statement of a
 // value-returning function — its polymorphic result unifies with any return
 // type. Regression test for stop/invalid/selfdestruct being made polymorphic
-// like revert/return (see Primitives.hs 'yulPrimOps').
+// like revert/return.
 
 function viaStop<a>() returns (a) {
     assembly {

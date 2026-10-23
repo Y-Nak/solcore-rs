@@ -1,3 +1,6 @@
+//~ hull: min-count 2 "let result"
+//~ hull: not-contains "$if_local"
+
 import * from std;
 function value<a>(input: a, flag: bool) returns (word) {
     let result: word = 1;

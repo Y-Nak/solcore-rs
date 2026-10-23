@@ -1,3 +1,4 @@
+//~ layout: finite-nonempty
 enum Box<a> {
     Box(a)
 }

@@ -7,3 +7,7 @@ function main() returns (word) {
     }
     return result;
 }
+
+//~ sonatina: compile O0
+//~ sonatina: compile O2
+//~ sonatina: compile-error "dynamic length"

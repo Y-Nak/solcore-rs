@@ -5,3 +5,6 @@ function get(comptime value: (word, word)) returns (word) {
         }
     }
 }
+
+//~ loader: bare
+//~ infer: get diagnostics-empty patterns-known

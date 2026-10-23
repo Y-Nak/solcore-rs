@@ -1,3 +1,5 @@
+//~ hull: loader memory
+
 function main() returns (word) {
     let x: word;
     assembly {

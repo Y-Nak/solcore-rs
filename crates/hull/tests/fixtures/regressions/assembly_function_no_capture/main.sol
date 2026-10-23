@@ -1,3 +1,6 @@
+//~ hull: loader memory
+//~ hull: undefined-variable x
+
 function main(flag: bool) returns (word) {
     if (flag) {
         let x: word = 7;

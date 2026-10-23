@@ -593,8 +593,7 @@ fn contract_runtime_main_diagnostics<'db>(
 
 /// Returns whether the compiler must synthesize this contract's runtime entry.
 ///
-/// This deliberately follows the language's existing/Haskell-compatible
-/// convention: any contract-local ordinary function named `main` is a
+/// Any contract-local ordinary function named `main` is a
 /// user-supplied runtime entry, irrespective of visibility.
 pub fn contract_needs_generated_dispatch<'db>(db: &'db dyn Db, contract: ContractDef<'db>) -> bool {
     !contract.has_runtime_main(db)

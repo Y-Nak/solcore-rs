@@ -1,3 +1,9 @@
+//~ hull: contains "LValueIdxAccess_lookup"
+//~ hull: contains "storeBytesFromMemory"
+//~ hull: contains "loadBytesFromStorage"
+//~ hull: contains "frombool"
+//~ hull: contains "tobool"
+
 import * from std;
 
 contract CollectionArray {

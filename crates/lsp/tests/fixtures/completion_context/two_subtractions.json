@@ -1,7 +1,0 @@
-{
-  "source": "foo-bar.member-Other.next",
-  "expected": [
-    "Other",
-    "next"
-  ]
-}

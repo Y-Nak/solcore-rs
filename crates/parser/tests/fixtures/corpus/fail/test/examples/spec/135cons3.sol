@@ -78,7 +78,7 @@ contract Counter {
       codecopy(0, dataoffset("Counter"), datasize("Counter"))
       return(0, size)
     }
-    /* Haskell with Yul QQ (#231)
+    /* Runtime object copy sketch
     let cname = "Counter" in Asm [yulBlock|
       let size := datasize(`cname`)
       codecopy(0, dataoffset(`cname`), datasize(`cname`))

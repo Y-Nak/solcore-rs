@@ -1,8 +1,0 @@
-{
-  "checks": {
-    "min_count": {
-      "let result": 2
-    },
-    "not_contains": ["$if_local"]
-  }
-}

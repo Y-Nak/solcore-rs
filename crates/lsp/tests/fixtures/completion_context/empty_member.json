@@ -1,7 +1,0 @@
-{
-  "source": "foo-bar.",
-  "expected": [
-    "bar",
-    ""
-  ]
-}

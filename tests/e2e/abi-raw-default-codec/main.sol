@@ -1,3 +1,7 @@
+//~ specialize: loader std-current
+//~ specialize: frontend clean
+//~ specialize: entry
+
 pragma no-patterson-condition ABIEncode;
 
 import * from std;

@@ -1,24 +1,32 @@
 use dir_test::{Fixture, dir_test};
-use serde::Deserialize;
 use solcore_parser::{IdentifierContext, is_valid_identifier_in};
+use std::path::Path;
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Case {
-    name: String,
-    ordinary: bool,
-    runtime_parameter: bool,
-}
-
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/identifier_roles", glob: "*.json")]
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/identifier_roles", glob: "*.txt")]
 fn identifier_role(fixture: Fixture<&str>) {
-    let case: Case = serde_json::from_str(fixture.content()).expect("identifier expectations");
+    let case = Path::new(fixture.path())
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let (name, ordinary, runtime_parameter) = match case {
+        "comptime" => ("comptime", true, false),
+        "derive" => ("derive", true, true),
+        "mapping" => ("mapping", true, true),
+        "return" => ("return", false, false),
+        "value-name" => ("value-name", false, false),
+        "value" => ("value", true, true),
+        "where" => ("where", true, true),
+        "while" => ("while", true, true),
+        other => panic!("missing identifier expectation: {other}"),
+    };
+    assert_eq!(*fixture.content(), name);
     assert_eq!(
-        is_valid_identifier_in(&case.name, IdentifierContext::Ordinary),
-        case.ordinary
+        is_valid_identifier_in(fixture.content(), IdentifierContext::Ordinary),
+        ordinary
     );
     assert_eq!(
-        is_valid_identifier_in(&case.name, IdentifierContext::RuntimeParameter),
-        case.runtime_parameter
+        is_valid_identifier_in(fixture.content(), IdentifierContext::RuntimeParameter),
+        runtime_parameter
     );
 }

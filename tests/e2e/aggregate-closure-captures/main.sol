@@ -1,3 +1,7 @@
+//~ specialize: loader fixture
+//~ specialize: frontend clean
+//~ specialize: no-closure-dispatch
+
 import * from std;
 import * from std.dispatch;
 

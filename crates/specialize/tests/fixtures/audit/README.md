@@ -1,30 +1,60 @@
 # Specialization regression fixtures
 
-`tests/support/audit_fixtures.rs` discovers every `*.case.json` under
-`tests/fixtures` with `dir-test`. Each JSON file selects a source relative to its
-own directory and declares semantic expectations. Multi-module cases keep their
-existing sources and attach one expectation file to each entry module. Shared
-E2E sources are referenced directly rather than copied.
+`tests/support/audit_fixtures.rs` discovers audit cases with `dir-test`. Each
+audit case has a `main.sol` entry (`main.invalid.sol.txt` for deliberately
+malformed source). Entry modules declare their specialization expectations in
+comments; supporting imports do not. Separate Rust tests scan the local fixture
+and shared E2E directories for annotated entries, so adding an entry requires no
+Rust registry. Unannotated files do not produce specialization test cases.
 
-The loader is `bare` for isolated source, `std` for the reference standard
-library, `std_current` for the workspace standard library, or `fixture` for an
-existing file and its sibling modules. `max_depth` preserves explicit recursion
-limits. `frontend_clean`, `diagnostics`, and `forbidden_diagnostics` independently
-describe frontend and specialization verdicts. An empty diagnostic list requires
-successful specialization; a nonempty list requires each named diagnostic,
-optionally matching its context.
+For example:
 
-Checks inspect Mono IR directly: constant and variable returns, call signature
-materialization, residual matches and declarations, closure erasure, function
-counts, selected dictionary results, and function parameter/return identities.
-Function selectors describe names or method origins; no fixture name selects a
-bespoke assertion routine. Unknown JSON properties are rejected.
+```solidity
+//~ specialize: loader fixture
+//~ specialize: frontend clean
+//~ specialize: return 7
+//~ specialize: no-closure-dispatch
+```
 
-Numbered source cases retain the individual variants previously combined in a
-single Rust test. Each variant is now separately discovered and reported.
-Ordinary `.sol` files use `solcore-fmt` formatting. The `.invalid.sol.txt` input
-deliberately retains an invalid parameter annotation and is loaded verbatim;
-formatting it would reject the input before its diagnostic checks could run.
+The following expectations are supported:
+
+- `loader bare`: specialize isolated source without a standard library.
+- `loader std`: use the parser-corpus standard library.
+- `loader std-current`: use the workspace standard library.
+- `loader fixture`: load the source file, sibling modules, and parser-corpus standard
+  library. Every annotated entry must specify a loader.
+- `frontend clean` or `frontend errors`: check the frontend independently of
+  specialization. Omitting this leaves frontend diagnostics unchecked.
+- `max-depth 16`: override the specialization recursion limit for a source loader.
+- `diagnostic missing-evidence`: require a specialization diagnostic. Diagnostic
+  names also include `free-type-variable`, `comptime-evaluation-failed`,
+  `integer-erasure`, and `instantiation-depth-exceeded`. Append `= exact context`
+  or `contains context fragment` to constrain its context. Multiple diagnostic
+  comments require each diagnostic; no diagnostic comments require successful
+  specialization.
+- `forbid instantiation-depth-exceeded`: reject a particular diagnostic.
+- `return 7` or `return none`: check the result of the main-return evaluator.
+- `return-variable seed`: require the evaluated main return to reference a name.
+- `entry-return 7` or `entry-return-variable seed`: check the runtime entry's last
+  return directly.
+- `entry`: require an entry point.
+- `no-closure-dispatch`: require closure dispatch to have been eliminated.
+
+Unknown expectations and duplicate loader, frontend, or depth settings fail the
+test. Unannotated sources outside this audit directory are supporting modules or
+belong to other suites. Every source in this audit directory requires annotations.
+
+Tests in `tests/support/audit_ir.rs` inspect more complex Mono IR relationships
+with ordinary Rust assertions: materialized call signatures, residual matches
+and declarations, closure capture parameters, function counts, dictionary
+results, and parameter/return type identities. These tests load the same source
+fixtures and check their comment expectations before inspecting the IR.
+
+Numbered audit source cases retain the individual variants previously combined
+in a single Rust test. Each audit variant is separately discovered and reported.
+Ordinary `.sol` files use `solcore-fmt` formatting. A deliberately invalid
+parameter annotation is loaded verbatim; formatting that input would reject it
+before its diagnostic checks could run.
 
 Direct evaluator tests in `src/evaluate/pattern_tests.rs` remain unit tests:
 they construct intermediate expression matches and partially known values to

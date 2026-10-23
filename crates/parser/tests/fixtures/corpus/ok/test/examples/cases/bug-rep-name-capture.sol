@@ -1,7 +1,7 @@
 // Bug: local variable named `rep` causes name capture with the type variable `rep`
-// from `class abs : Typedef(rep)`.  In NameResolution.hs, the S.ExpVar and
-// S.ExpName cases used a wildcard `_` for the qualifier in patterns like
-// `(_, Just TLocalVar)`, so a qualified call `Typedef.rep(a)` resolved to the
+// from `class abs : Typedef(rep)`. Resolution must retain the qualifier
+// when distinguishing local variables from class methods. Ignoring it caused
+// a qualified call `Typedef.rep(a)` to resolve to the
 // local variable `rep` instead of the class method.
 //
 // Expected: compiles successfully; `Typedef.rep` resolves to the class method.

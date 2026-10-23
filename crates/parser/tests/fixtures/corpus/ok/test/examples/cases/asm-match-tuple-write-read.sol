@@ -1,7 +1,7 @@
 // After an assembly block writes to a pattern variable, subsequent code in the
 // same match arm should read the written value (not the original tuple component).
 // Runtime correctness of the write->read depends on ecSubst being updated after
-// the assembly block (EmitHull.hs: emitStmt MastAsm, modify ecSubst).
+// the assembly block during lowering.
 contract C {
     function main() returns (word) {
         let res: word;

@@ -627,9 +627,8 @@ fn generated_deployment_main<'db>(
     }
     let copy_args = builder.call_ident(CONSTRUCTOR_COPY_NAME, Vec::new());
     top_level_stmts.push(builder.let_stmt("conargs", Some(args_ty), Some(copy_args)));
-    // Haskell invokes its constructor init helper indirectly with the product. Rust's frontend can
-    // express the same operation without dictionary evidence: destructure a
-    // multi-argument product, then make an ordinary direct call.
+    // Destructure multi-argument constructor products and call the init helper
+    // directly, without dictionary evidence.
     match constructor.params.len() {
         0 => {
             let invoke = builder.call_ident(CONSTRUCTOR_INIT_NAME, Vec::new());

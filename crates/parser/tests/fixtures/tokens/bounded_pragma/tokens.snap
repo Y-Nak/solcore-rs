@@ -1,0 +1,11 @@
+---
+source: crates/parser/tests/tokens.rs
+expression: tokens
+---
+Ident("no")
+Minus
+Ident("bounded")
+Minus
+Ident("variable")
+Minus
+Ident("condition")

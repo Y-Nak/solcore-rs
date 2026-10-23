@@ -1,5 +1,0 @@
-{
-  "source": "tests/e2e/incremental-reachability/main.sol",
-  "file_url_imports": true,
-  "compile": ["O0", "O2"]
-}

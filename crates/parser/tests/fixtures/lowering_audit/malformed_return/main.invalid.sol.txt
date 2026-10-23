@@ -1,0 +1,5 @@
+enum D { C }
+function f(x: D) returns (word) { return g(1,); }
+
+//~ diagnostics: 1
+//~ diagnostic: parse error: unexpected `)`

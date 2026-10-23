@@ -1,2 +1,0 @@
-enum D { C }
-function f(x: D) returns (word) { for (let i = 0; true; i = 1) { return g(1,); } }

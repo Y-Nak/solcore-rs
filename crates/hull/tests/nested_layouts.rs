@@ -6,20 +6,23 @@ use specialize::{SpecializeOptions, specialize_module};
 
 define_frontend_test_db!(TestDb, hir_ty);
 
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Expected {
-    finite: bool,
-    nonempty: bool,
-}
-
-#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/layouts", glob: "**/expect.json")]
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/layouts", glob: "**/main.sol")]
 fn layout_finiteness(fixture: dir_test::Fixture<&str>) {
-    let expected: Expected = serde_json::from_str(fixture.content()).expect("layout expectations");
-    let source =
-        std::fs::read_to_string(std::path::Path::new(fixture.path()).with_file_name("main.sol"))
-            .expect("layout source");
-    assert_layout_finiteness(&source, expected.finite, expected.nonempty);
+    let mut expectations = solcore_test_utils::source_directives(fixture.content(), "layout");
+    let (line, expectation) = expectations
+        .next()
+        .expect("layout fixture needs an expectation");
+    assert!(
+        expectations.next().is_none(),
+        "duplicate layout expectation"
+    );
+    let (finite, nonempty) = match expectation {
+        "finite" => (true, false),
+        "finite-nonempty" => (true, true),
+        "non-regular" => (false, false),
+        other => panic!("line {line}: unknown layout expectation: {other}"),
+    };
+    assert_layout_finiteness(fixture.content(), finite, nonempty);
 }
 
 fn assert_layout_finiteness(source: &str, finite: bool, nonempty: bool) {

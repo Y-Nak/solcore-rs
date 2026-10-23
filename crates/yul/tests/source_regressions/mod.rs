@@ -1,19 +1,15 @@
 use super::*;
 use dir_test::{Fixture, dir_test};
-use serde::Deserialize;
-use solcore_test_utils::text_checks::TextChecks;
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Case {
-    checks: TextChecks,
-}
-
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions", glob: "**/expect.json")]
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions", glob: "**/main.sol")]
 fn source_rendering(fixture: Fixture<&str>) {
-    let case: Case = serde_json::from_str(fixture.content()).expect("rendering expectations");
-    let path = Path::new(fixture.path()).with_file_name("main.sol");
-    let source = fs::read_to_string(path).expect("rendering source");
-    let yul = render_source("source_fixture", &source);
-    case.checks.assert_matches(&yul);
+    let path = std::path::Path::new(fixture.path());
+    let yul = render_source("source_fixture", fixture.content());
+    insta::with_settings!({
+        snapshot_path => path.parent().expect("fixture directory"),
+        prepend_module_to_snapshot => false,
+        omit_expression => true,
+    }, {
+        insta::assert_snapshot!("expected", yul);
+    });
 }

@@ -1,3 +1,4 @@
+// return-word: 42
 import * from std;
 import * from std.dispatch;
 contract Answer {

@@ -1,7 +1,0 @@
-{
-  "compile": [
-    "O0",
-    "O2"
-  ],
-  "compile_error": "dynamic length"
-}

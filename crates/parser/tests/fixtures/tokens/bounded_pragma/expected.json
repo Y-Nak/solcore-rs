@@ -1,9 +1,0 @@
-[
-  "Ident(\"no\")",
-  "Minus",
-  "Ident(\"bounded\")",
-  "Minus",
-  "Ident(\"variable\")",
-  "Minus",
-  "Ident(\"condition\")"
-]

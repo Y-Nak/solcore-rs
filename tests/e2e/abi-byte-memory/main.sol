@@ -1,3 +1,7 @@
+//~ specialize: loader std-current
+//~ specialize: frontend clean
+//~ specialize: entry
+
 import * from std;
 import * from std.dispatch;
 import { mload, mstore } from std.opcodes;

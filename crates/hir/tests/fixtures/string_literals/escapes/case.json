@@ -1,6 +1,0 @@
-{
-  "value": "a\n\t\"\\b",
-  "encoded": "\"a\\n\\t\\\"\\\\b\"",
-  "decode": "\"a\\n\\t\\\"\\\\b\"",
-  "decoded": "a\n\t\"\\b"
-}

@@ -1,0 +1,3 @@
+//~ named-type: false
+//~ contextual-type-name: true
+type Check = mapping<word>;

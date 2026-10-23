@@ -1,3 +1,6 @@
+//~ specialize: loader fixture
+//~ specialize: frontend clean
+
 import * from a;
 import * from b;
 function main() returns (word) {

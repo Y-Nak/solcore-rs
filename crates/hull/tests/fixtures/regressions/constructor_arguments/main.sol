@@ -1,3 +1,5 @@
+//~ hull: valid
+
 import * from std;
 import * from std.dispatch;
 

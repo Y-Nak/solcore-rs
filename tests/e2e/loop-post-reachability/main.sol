@@ -247,3 +247,6 @@ contract LoopPostReachability {
         return uint256(99);
     }
 }
+
+//~ sonatina: file-url-imports
+//~ sonatina: compile O0

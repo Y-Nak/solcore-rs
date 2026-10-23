@@ -6,7 +6,7 @@ cases/signature.sol	canonical trait parameters and function constraints make eve
 cases/super-class-recursive-arg.sol	SC0223 reference legacy solver rejects this recursive superclass argument, while the reference tabled mode and Rust both accept it
 cases/tabled-answer-reuse.sol	SC0299 reference legacy solver reports an ambiguous inferred type, while the reference tabled mode and Rust both accept it
 cases/tabled-mutual-chain.sol	SC0299 reference legacy solver reports an ambiguous inferred type, while the reference tabled mode and Rust both accept it
-comptime/ct_param_poly_runtime.sol	SC0299 reference legacy frontend reports ambiguity; both tabled Haskell and Rust reject the runtime argument during their full specialization pipelines, while this frontend-only parity gate intentionally defers that check
+comptime/ct_param_poly_runtime.sol	SC0299 historical frontend ambiguity; specialization rejects the runtime argument, while this frontend-only regression gate intentionally defers that check
 comptime/OneOne.sol	canonical function result annotations make the formerly inferred word-valued helpers explicit
 spec/051negBool.sol	canonical named-parameter and result annotations make the formerly inferred signatures explicit
 spec/052negPair.sol	canonical generics, named-parameter types, and result annotations make the formerly inferred signatures explicit

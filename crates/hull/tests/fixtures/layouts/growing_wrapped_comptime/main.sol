@@ -1,3 +1,4 @@
+//~ layout: non-regular
 enum Box<a> {
     Box(a)
 }
