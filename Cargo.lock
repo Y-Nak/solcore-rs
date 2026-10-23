@@ -3553,7 +3553,6 @@ name = "solcore-hir"
 version = "0.1.0"
 dependencies = [
  "annotate-snippets",
- "dir-test",
  "percent-encoding",
  "rustc-hash",
  "salsa",

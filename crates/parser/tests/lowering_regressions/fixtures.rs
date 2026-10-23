@@ -107,15 +107,8 @@ fn named_type_identifier_context(fixture: Fixture<&str>) {
         other => panic!("unknown type reference context: {other}"),
     };
     let type_arguments = arguments.parse::<usize>().unwrap();
-    // `mapping` reserves every unqualified form, while `comptime<T>` is
-    // contextual only when it has exactly one unqualified type argument.
-    let expected = qualified
-        || match name {
-            "mapping" => false,
-            "comptime" => type_arguments != 1,
-            "Value" | "derive" | "while" => true,
-            other => panic!("missing type identifier expectation: {other}"),
-        };
+    let expected = type_identifier_expectation(fixture.content(), "named-type");
+    let contextual = type_identifier_expectation(fixture.content(), "contextual-type-name");
     let db = TestDb::default();
     let source = fixture.content();
     let (file, module) = parse_module(&db, "type_name_context", source);
@@ -139,6 +132,20 @@ fn named_type_identifier_context(fixture: Fixture<&str>) {
     );
     assert_eq!(
         solcore_parser::requires_type_identifier_context(name),
-        matches!(name, "mapping" | "comptime")
+        contextual
     );
+}
+
+fn type_identifier_expectation(source: &str, key: &str) -> bool {
+    let mut expectations = source.lines().enumerate().filter_map(|(line, text)| {
+        let (name, value) = text.strip_prefix("//~ ")?.split_once(": ")?;
+        (name == key).then_some((line + 1, value))
+    });
+    let (line, value) = expectations
+        .next()
+        .unwrap_or_else(|| panic!("missing {key} expectation"));
+    assert!(expectations.next().is_none(), "duplicate {key} expectation");
+    value
+        .parse()
+        .unwrap_or_else(|_| panic!("line {line}: invalid {key} expectation: {value}"))
 }

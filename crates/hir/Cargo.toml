@@ -12,6 +12,3 @@ percent-encoding = { workspace = true }
 rustc-hash = { workspace = true }
 url = { workspace = true }
 tracing = { workspace = true }
-
-[dev-dependencies]
-dir-test = "0.4.1"

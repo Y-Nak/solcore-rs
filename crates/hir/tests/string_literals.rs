@@ -1,35 +1,92 @@
-use dir_test::{Fixture, dir_test};
 use solcore_hir::string_literal::{decode_string_literal, encode_string_literal};
-use std::path::Path;
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/string_literals", glob: "*.txt")]
-fn source_string_literal(fixture: Fixture<&str>) {
-    let name = Path::new(fixture.path())
-        .file_stem()
-        .unwrap()
-        .to_str()
-        .unwrap();
-    let expected = match name {
-        "plain" => Some("plain"),
-        "empty" => Some(""),
-        "unicode_nul" => Some("\0é雪"),
-        "crlf" => Some("line one\r\nline two"),
-        "carriage_return" => Some("\r"),
-        "escapes" => Some("a\n\t\"\\b"),
-        "trailing_slash"
-        | "unescaped_quote"
-        | "unquoted"
-        | "unsupported_cr_escape"
-        | "unsupported_escape" => None,
-        other => panic!("missing string literal expectation: {other}"),
-    };
-    assert_eq!(
-        decode_string_literal(fixture.content()).as_deref(),
-        expected
-    );
+fn assert_string_literal(source: &str, expected: Option<&str>) {
+    assert_eq!(decode_string_literal(source).as_deref(), expected);
     if let Some(value) = expected {
         let encoded = encode_string_literal(value);
-        assert_eq!(encoded, *fixture.content());
+        assert_eq!(encoded, source);
         assert_eq!(decode_string_literal(&encoded).as_deref(), Some(value));
     }
+}
+
+#[test]
+fn carriage_return() {
+    assert_string_literal(
+        include_str!("fixtures/string_literals/carriage_return.txt"),
+        Some("\r"),
+    );
+}
+
+#[test]
+fn crlf() {
+    assert_string_literal(
+        include_str!("fixtures/string_literals/crlf.txt"),
+        Some("line one\r\nline two"),
+    );
+}
+
+#[test]
+fn empty() {
+    assert_string_literal(include_str!("fixtures/string_literals/empty.txt"), Some(""));
+}
+
+#[test]
+fn escapes() {
+    assert_string_literal(
+        include_str!("fixtures/string_literals/escapes.txt"),
+        Some("a\n\t\"\\b"),
+    );
+}
+
+#[test]
+fn plain() {
+    assert_string_literal(
+        include_str!("fixtures/string_literals/plain.txt"),
+        Some("plain"),
+    );
+}
+
+#[test]
+fn trailing_slash() {
+    assert_string_literal(
+        include_str!("fixtures/string_literals/trailing_slash.txt"),
+        None,
+    );
+}
+
+#[test]
+fn unescaped_quote() {
+    assert_string_literal(
+        include_str!("fixtures/string_literals/unescaped_quote.txt"),
+        None,
+    );
+}
+
+#[test]
+fn unicode_nul() {
+    assert_string_literal(
+        include_str!("fixtures/string_literals/unicode_nul.txt"),
+        Some("\0é雪"),
+    );
+}
+
+#[test]
+fn unquoted() {
+    assert_string_literal(include_str!("fixtures/string_literals/unquoted.txt"), None);
+}
+
+#[test]
+fn unsupported_cr_escape() {
+    assert_string_literal(
+        include_str!("fixtures/string_literals/unsupported_cr_escape.txt"),
+        None,
+    );
+}
+
+#[test]
+fn unsupported_escape() {
+    assert_string_literal(
+        include_str!("fixtures/string_literals/unsupported_escape.txt"),
+        None,
+    );
 }
