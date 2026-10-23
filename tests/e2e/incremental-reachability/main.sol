@@ -96,3 +96,7 @@ contract IncrementalReachability {
         return uint256(result);
     }
 }
+
+//~ sonatina: file-url-imports
+//~ sonatina: compile O0
+//~ sonatina: compile O2

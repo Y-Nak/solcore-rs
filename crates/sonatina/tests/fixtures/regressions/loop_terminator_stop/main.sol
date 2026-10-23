@@ -10,3 +10,5 @@ function main() returns (word) {
     }
     return 0;
 }
+
+//~ sonatina: valid

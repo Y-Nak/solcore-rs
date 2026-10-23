@@ -8,3 +8,5 @@ function main_a() returns (word) {
 function main() returns (word) {
     return primAddWord(main_a(), 42);
 }
+
+//~ sonatina: valid
