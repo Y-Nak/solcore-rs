@@ -9,11 +9,14 @@ use solcore_test_utils::{
 
 define_frontend_test_db!(TestDb, solcore_hir_ty);
 
-fn assert_storage_frontend_case(case: &'static str, should_pass: bool, require_clean: bool) {
+fn assert_storage_frontend_case(
+    fixture: dir_test::Fixture<&str>,
+    should_pass: bool,
+    require_clean: bool,
+) {
+    let fixture = PathBuf::from(fixture.path()).parent().unwrap().to_owned();
     run_in_large_stack(move || {
-        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/derived_storage_frontend")
-            .join(case);
+        let case = fixture.display();
         let repo_root = repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
         let mut db = TestDb::default();
         let entry = load_fixture_case(&mut db, &fixture, &repo_root, BTreeMap::new());
@@ -38,59 +41,19 @@ fn assert_storage_frontend_case(case: &'static str, should_pass: bool, require_c
     });
 }
 
-#[test]
-fn exact_mapping_valued_adt_field_is_rejected_even_when_unused() {
-    assert_storage_frontend_case("storage-adt-mapping-field-fail", false, false);
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/derived_storage_frontend/rejected", glob: "*/main.sol")]
+fn storage_frontend_rejected(fixture: dir_test::Fixture<&str>) {
+    assert_storage_frontend_case(fixture, false, false);
 }
 
-#[test]
-fn exact_recursive_adt_field_is_rejected() {
-    assert_storage_frontend_case("storage-adt-recursive-fail", false, false);
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/derived_storage_frontend/accepted", glob: "*/main.sol")]
+fn storage_frontend_accepted(fixture: dir_test::Fixture<&str>) {
+    assert_storage_frontend_case(fixture, true, false);
 }
 
-#[test]
-fn exact_recursive_adt_remains_usable_outside_storage() {
-    assert_storage_frontend_case("storage-adt-recursive-ok", true, false);
-}
-
-#[test]
-fn unused_builtin_storage_fields_keep_their_loaded_types() {
-    assert_storage_frontend_case("storage-builtins-unused-ok", true, true);
-}
-
-#[test]
-fn imported_storage_adt_needs_no_consumer_deriving_imports() {
-    assert_storage_frontend_case("storage-imported-active-no-marker-ok", true, true);
-}
-
-#[test]
-fn body_only_imported_storage_adt_uses_definition_side_evidence() {
-    assert_storage_frontend_case("storage-body-only-active-ok", true, true);
-}
-
-#[test]
-fn qualified_body_only_import_uses_definition_side_evidence() {
-    assert_storage_frontend_case("storage-body-only-qualified-ok", true, true);
-}
-
-#[test]
-fn body_only_import_does_not_retroactively_enable_storage_derivation() {
-    assert_storage_frontend_case("storage-body-only-inactive-fail", false, false);
-}
-
-#[test]
-fn nested_reexport_does_not_leak_definition_side_storage_evidence() {
-    assert_storage_frontend_case("storage-nested-reexport-invalid-fail", false, false);
-}
-
-#[test]
-fn imported_mapping_valued_adt_is_rejected_without_consumer_marker() {
-    assert_storage_frontend_case("storage-imported-invalid-no-marker-fail", false, false);
-}
-
-#[test]
-fn consumer_does_not_retroactively_enable_imported_storage_adt() {
-    assert_storage_frontend_case("storage-imported-inactive-no-marker-fail", false, false);
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/derived_storage_frontend/clean", glob: "*/main.sol")]
+fn storage_frontend_clean(fixture: dir_test::Fixture<&str>) {
+    assert_storage_frontend_case(fixture, true, true);
 }
 
 fn full_frontend_diagnostics(db: &TestDb, entry: ModuleKey) -> Vec<Diagnostic> {

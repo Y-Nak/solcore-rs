@@ -1,5 +1,0 @@
-{
-  "source": "crates/parser/tests/fixtures/corpus/ok/test/examples/spec/034cojoin.sol",
-  "allow_dispatch_diagnostics": true,
-  "emit_dispatcher_comments": false
-}

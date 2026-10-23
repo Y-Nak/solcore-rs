@@ -1,6 +1,0 @@
-{
-  "source": "crates/parser/tests/fixtures/corpus/ok/test/examples/cases/dot-pattern-nested-constructor.sol",
-  "allow_type_mismatches": true,
-  "allow_dispatch_diagnostics": true,
-  "emit_dispatcher_comments": false
-}

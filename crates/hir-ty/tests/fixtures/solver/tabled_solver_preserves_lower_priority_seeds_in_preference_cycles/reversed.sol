@@ -1,0 +1,8 @@
+trait C<a> {}
+trait D<a> {}
+trait Sub<a> where a: C {}
+trait Top<a> {}
+impl<a> Sub<a> {}
+impl<a> D<a> where a: C {}
+impl<a> C<a> where a: D {}
+impl<a> Top<a> where a: C {}

@@ -1,0 +1,4 @@
+
+import {f} from util;
+function f() returns (word) { return 1; }
+function main() returns (word) { return f(); }

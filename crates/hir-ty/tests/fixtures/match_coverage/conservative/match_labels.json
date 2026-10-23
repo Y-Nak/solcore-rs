@@ -1,4 +1,0 @@
-{
-  "source": "crates/parser/tests/fixtures/corpus/ok/test/examples/comptime/match_labels.sol",
-  "std_root": "crates/parser/tests/fixtures/corpus/ok/std"
-}

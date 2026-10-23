@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::collections::BTreeMap;
 
 use hir::{
     anchor::DefId,
@@ -16,22 +16,6 @@ use solcore_test_utils::{
 };
 
 define_frontend_test_db!(TestDb, solcore_hir_ty);
-
-const STORAGE_SOURCE: &str = r#"
-pragma no-patterson-condition;
-pragma no-bounded-variable-condition;
-pragma no-coverage-condition;
-
-trait Generic<a,rep> {}
-trait StorageDeriving<self> {}
-trait StorageSize<self> {}
-trait CanStore<slot,value> {}
-
-enum storage<ty> {storage(word)}
-
-impl StorageSize<word> {}
-impl CanStore<storage<word>,word> {}
-"#;
 
 fn class_def<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> DefId<'db> {
     module
@@ -74,13 +58,10 @@ fn storage_ty<'db>(db: &'db TestDb, storage_module: Module<'db>, stored: Ty<'db>
     adt_ty(db, storage_module, "storage", vec![stored])
 }
 
-#[test]
-fn derives_parameterized_storage_evidence_once() {
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/derived_storage_solver/derives_parameterized_storage_evidence_once", glob: "*.sol")]
+fn derives_parameterized_storage_evidence_once(fixture: dir_test::Fixture<&str>) {
     let mut db = TestDb::default();
-    let key = load_main_source(
-        &mut db,
-        &format!("{STORAGE_SOURCE}\nenum Box<a> {{Box(a)}}\n"),
-    );
+    let key = load_main_source(&mut db, fixture.content());
     let module_id = module_id_from_key(&db, &key);
     let file = db.module_file(module_id).expect("main source file");
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -151,15 +132,10 @@ fn derives_parameterized_storage_evidence_once() {
     ));
 }
 
-#[test]
-fn recursive_storage_derivation_is_a_per_type_skip() {
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/derived_storage_solver/recursive_storage_derivation_is_a_per_type_skip", glob: "*.sol")]
+fn recursive_storage_derivation_is_a_per_type_skip(fixture: dir_test::Fixture<&str>) {
     let mut db = TestDb::default();
-    let key = load_main_source(
-        &mut db,
-        &format!(
-            "{STORAGE_SOURCE}\nenum Point {{Point(word, word)}}\nenum Recursive {{Recursive(Recursive)}}\n"
-        ),
-    );
+    let key = load_main_source(&mut db, fixture.content());
     let module_id = module_id_from_key(&db, &key);
     let file = db.module_file(module_id).expect("main source file");
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -186,13 +162,12 @@ fn recursive_storage_derivation_is_a_per_type_skip() {
     }
 }
 
-#[test]
-fn derives_storage_evidence_for_a_qualified_imported_adt() {
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/solver/derived_storage_imported");
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/derived_storage_imported", glob: "main.sol")]
+fn derives_storage_evidence_for_a_qualified_imported_adt(fixture: dir_test::Fixture<&str>) {
+    let fixture = std::path::Path::new(fixture.path()).parent().unwrap();
     let repo_root = repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
     let mut db = TestDb::default();
-    let entry = load_fixture_case(&mut db, &fixture, &repo_root, BTreeMap::new());
+    let entry = load_fixture_case(&mut db, fixture, &repo_root, BTreeMap::new());
     load_reachable_modules(&mut db, entry.clone());
 
     let main_id = module_id_from_key(&db, &entry);
@@ -236,13 +211,12 @@ fn derives_storage_evidence_for_a_qualified_imported_adt() {
     ));
 }
 
-#[test]
-fn reexport_edges_do_not_leak_derived_storage_instances() {
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/solver/derived_storage_reexport_visibility");
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/derived_storage_reexport_visibility", glob: "main.sol")]
+fn reexport_edges_do_not_leak_derived_storage_instances(fixture: dir_test::Fixture<&str>) {
+    let fixture = std::path::Path::new(fixture.path()).parent().unwrap();
     let repo_root = repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
     let mut db = TestDb::default();
-    let entry = load_fixture_case(&mut db, &fixture, &repo_root, BTreeMap::new());
+    let entry = load_fixture_case(&mut db, fixture, &repo_root, BTreeMap::new());
     load_reachable_modules(&mut db, entry.clone());
 
     let main_id = module_id_from_key(&db, &entry);
@@ -280,13 +254,14 @@ fn reexport_edges_do_not_leak_derived_storage_instances() {
     ));
 }
 
-#[test]
-fn importing_storage_marker_does_not_retroactively_activate_an_adt() {
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/solver/derived_storage_imported_inactive");
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/derived_storage_imported_inactive", glob: "main.sol")]
+fn importing_storage_marker_does_not_retroactively_activate_an_adt(
+    fixture: dir_test::Fixture<&str>,
+) {
+    let fixture = std::path::Path::new(fixture.path()).parent().unwrap();
     let repo_root = repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
     let mut db = TestDb::default();
-    let entry = load_fixture_case(&mut db, &fixture, &repo_root, BTreeMap::new());
+    let entry = load_fixture_case(&mut db, fixture, &repo_root, BTreeMap::new());
     load_reachable_modules(&mut db, entry.clone());
 
     let main_id = module_id_from_key(&db, &entry);

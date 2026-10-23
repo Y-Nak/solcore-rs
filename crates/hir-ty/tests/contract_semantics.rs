@@ -3,6 +3,8 @@ use std::{
     path::PathBuf,
 };
 
+use dir_test::{Fixture, dir_test};
+
 use hir::{
     anchor::DefLocationTable,
     ast::item::{AdtDef, ContractDef, FunctionDef, Item, Module},
@@ -108,6 +110,11 @@ impl nameres::Db for TestDb {
 
 #[salsa::db]
 impl solcore_hir_ty::Db for TestDb {}
+
+fn fixture_source(fixture: &Fixture<&str>, name: &str) -> String {
+    let root = std::path::Path::new(fixture.path()).parent().unwrap();
+    std::fs::read_to_string(root.join(name)).expect("fixture dependency")
+}
 
 fn source_file(db: &TestDb, name: &str, src: &str) -> SourceFile {
     let url = format!("memory:///{name}.sol").parse().expect("valid url");
@@ -320,146 +327,33 @@ fn db_with_overlapping_std(src: &str, shared_sources: bool) -> (TestDb, ModuleKe
     (db, entry)
 }
 
-#[test]
-fn yul_function_values_are_local_and_cannot_capture_sail_values() {
-    for (case, source) in [
-        (
-            "dynamic read",
-            r#"
-contract C {
-  function main() returns (word) {
-    let outer : word;
-    assembly {
-      outer := callvalue()
-      function readOuter() -> value { value := outer }
-      outer := readOuter()
-    }
-    return outer;
-  }
-}
-"#,
-        ),
-        (
-            "known write",
-            r#"
-contract C {
-  function main() returns (word) {
-    let outer : word = 7;
-    assembly {
-      function writeOuter() { outer := 9 }
-      writeOuter()
-    }
-    return outer;
-  }
-}
-"#,
-        ),
-        (
-            "outer Yul read",
-            r#"
-contract C {
-  function main() returns (word) {
-    let result : word;
-    assembly {
-      let outerYul := callvalue()
-      function readOuter() -> value { value := outerYul }
-      result := readOuter()
-    }
-    return result;
-  }
-}
-"#,
-        ),
-    ] {
-        let diagnostics = diagnostics(source);
-        assert!(
-            diagnostics.iter().any(|diagnostic| {
-                diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_UNKNOWN_YUL_NAME)
-                    && diagnostic.message.contains("outer")
-            }),
-            "{case}: {diagnostics:?}"
-        );
-    }
-
-    let local = diagnostics(
-        r#"
-contract C {
-  function main() returns (word) {
-    let result : word;
-    assembly {
-      function localValue(input) -> output {
-        let temporary := input
-        output := temporary
-      }
-      result := localValue(7)
-    }
-    return result;
-  }
-}
-"#,
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/yul_function_values_are_local_and_cannot_capture_sail_values", glob: "*.sol")]
+fn yul_function_values_are_local_and_cannot_capture_sail_values(fixture: Fixture<&str>) {
+    let diagnostics = diagnostics(fixture.content());
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_UNKNOWN_YUL_NAME)
+                && diagnostic.message.contains("outer")
+        }),
+        "{diagnostics:?}"
     );
-    assert!(local.is_empty(), "{local:?}");
 }
 
-#[test]
-fn lexical_scopes_restore_outer_sail_types_for_assembly() {
-    for (case, scoped) in [
-        ("block", "{ let value: bool = true; }"),
-        (
-            "if branches",
-            "if (true) { let value: bool = true; } else { assembly { pop(value) } }",
-        ),
-        (
-            "for initializer",
-            "for (let value: bool = true; false; ) {}",
-        ),
-        ("for body", "for (; false; ) { let value: bool = true; }"),
-        // Post-clause declarations are accepted, but the body and following
-        // assembly must still resolve the surrounding Sail variable.
-        (
-            "for post",
-            "for (; false; let value: bool = true) { assembly { pop(value) } }",
-        ),
-        ("while body", "while (false) { let value: bool = true; }"),
-        (
-            "match arms",
-            "match (true) { case true { let value: bool = true; } case false { assembly { pop(value) } } }",
-        ),
-        (
-            "lambda parameter",
-            "let identity = lam (value: bool) { return value; };",
-        ),
-    ] {
-        let source = format!(
-            r#"
-contract C {{
-  function main() returns (word) {{
-    let value: word = 1;
-    {scoped}
-    assembly {{ pop(value) }}
-    return value;
-  }}
-}}
-"#,
-        );
-        let diagnostics = diagnostics(&source);
-        assert!(diagnostics.is_empty(), "{case}: {diagnostics:?}");
-    }
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/yul_function_local_values_remain_in_scope", glob: "*.sol")]
+fn yul_function_local_values_remain_in_scope(fixture: Fixture<&str>) {
+    let diagnostics = diagnostics(fixture.content());
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
-#[test]
-fn yul_assembly_bindings_do_not_escape_into_later_assembly() {
-    let diagnostics = diagnostics(
-        r#"
-contract C {
-  function main() returns (word) {
-    assembly { let temporary := 1 }
-    assembly { pop(temporary) }
-    return 0;
-  }
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/lexical_scopes_restore_outer_sail_types_for_assembly", glob: "*.sol")]
+fn lexical_scopes_restore_outer_sail_types_for_assembly(fixture: Fixture<&str>) {
+    let diagnostics = diagnostics(fixture.content());
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
-"#,
-    );
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/yul_assembly_bindings_do_not_escape_into_later_assembly", glob: "main.sol")]
+fn yul_assembly_bindings_do_not_escape_into_later_assembly(fixture: Fixture<&str>) {
+    let diagnostics = diagnostics(fixture.content());
     assert!(
         diagnostics.iter().any(|diagnostic| {
             diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_UNKNOWN_YUL_NAME)
@@ -469,52 +363,21 @@ contract C {
     );
 }
 
-#[test]
-fn yul_assembly_shadowing_preserves_outer_sail_variable_types() {
-    for operation in ["pop(value)", "value := 1"] {
-        let source = format!(
-            r#"
-contract C {{
-  function main() returns (bool) {{
-    let value: bool = true;
-    assembly {{ let value := 1 }}
-    assembly {{ {operation} }}
-    return value;
-  }}
-}}
-"#,
-        );
-        let diagnostics = diagnostics(&source);
-        assert!(
-            diagnostics.iter().any(|diagnostic| {
-                diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_NON_WORD_YUL_VAR)
-                    && diagnostic.message.contains("value")
-            }),
-            "{operation}: {diagnostics:?}"
-        );
-    }
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/yul_assembly_shadowing_preserves_outer_sail_variable_types", glob: "*.sol")]
+fn yul_assembly_shadowing_preserves_outer_sail_variable_types(fixture: Fixture<&str>) {
+    let diagnostics = diagnostics(fixture.content());
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_NON_WORD_YUL_VAR)
+                && diagnostic.message.contains("value")
+        }),
+        "{diagnostics:?}"
+    );
 }
 
-#[test]
-fn yul_for_body_values_do_not_leak_into_the_post_block() {
-    let diagnostics = diagnostics(
-        r#"
-contract C {
-  function main() returns (word) {
-    let result : word;
-    assembly {
-      let i := 0
-      for {} lt(i, 1) { i := leaked } {
-        let leaked := 1
-        i := add(i, 1)
-      }
-      result := i
-    }
-    return result;
-  }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/yul_for_body_values_do_not_leak_into_the_post_block", glob: "main.sol")]
+fn yul_for_body_values_do_not_leak_into_the_post_block(fixture: Fixture<&str>) {
+    let diagnostics = diagnostics(fixture.content());
     assert!(
         diagnostics.iter().any(|diagnostic| {
             diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_UNKNOWN_YUL_NAME)
@@ -524,17 +387,10 @@ contract C {
     );
 }
 
-#[test]
-fn generated_dispatch_is_synthesized_before_import_resolution() {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/generated_dispatch_is_synthesized_before_import_resolution", glob: "main.sol")]
+fn generated_dispatch_is_synthesized_before_import_resolution(fixture: Fixture<&str>) {
     let db = TestDb::default();
-    let source = parse_module(
-        &db,
-        r#"
-contract Answer {
-  function add(x: word) public returns (word) { return x; }
-}
-"#,
-    );
+    let source = parse_module(&db, fixture.content());
     let contract = contract_named(&db, source, "Answer");
     let prepared = prepare_module(&db, source);
     assert!(
@@ -546,14 +402,7 @@ contract Answer {
     assert_eq!(prepared.source(&db), source);
 
     let manual_db = TestDb::default();
-    let manual_source = parse_module(
-        &manual_db,
-        r#"
-contract Answer {
-  function main() returns () { return (); }
-}
-"#,
-    );
+    let manual_source = parse_module(&manual_db, &fixture_source(&fixture, "manual.sol"));
     let manual_contract = contract_named(&manual_db, manual_source, "Answer");
     assert!(
         prepare_module(&manual_db, manual_source)
@@ -561,13 +410,7 @@ contract Answer {
             .is_none()
     );
 
-    let parameterized_main = diagnostics(
-        r#"
-contract Answer {
-  function main(x: word) public returns (word) { return x; }
-}
-"#,
-    );
+    let parameterized_main = diagnostics(&fixture_source(&fixture, "parameterized.sol"));
     assert!(
         parameterized_main.iter().any(|diagnostic| {
             diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_CONTRACT_RUNTIME_MAIN_ARITY)
@@ -576,18 +419,9 @@ contract Answer {
     );
 }
 
-#[test]
-fn prepared_dispatch_uses_its_synthetic_sigstring_instance_during_typeck() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-import * from std.dispatch;
-
-contract Answer {
-  function ping(x: word) public returns (word) { return x; }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/prepared_dispatch_uses_its_synthetic_sigstring_instance_during_typeck", glob: "main.sol")]
+fn prepared_dispatch_uses_its_synthetic_sigstring_instance_during_typeck(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_module_source(
         &mut db,
         ModuleKey {
@@ -595,11 +429,7 @@ contract Answer {
             logical_path: vec!["std".to_owned()],
         },
         "/std/std.sol",
-        r#"
-export { Proxy(*), string };
-enum Proxy<t> {Proxy}
-enum string {}
-"#,
+        &fixture_source(&fixture, "std/std.sol"),
     );
     insert_module_source(
         &mut db,
@@ -608,44 +438,7 @@ enum string {}
             logical_path: vec!["dispatch".to_owned()],
         },
         "/std/dispatch.sol",
-        r#"
-import * from std;
-
-export {
-  Contract(*),
-  Fallback(*),
-  Method(*),
-  NonPayable,
-  Payable,
-  RunContract,
-  SigString,
-  fallback_default_implementation
-};
-
-enum Contract<methods, fb> {Contract(methods, fb)}
-enum Method<name, payability, args, rets, fn> {Method(Proxy<name>, Proxy<payability>, Proxy<args>, Proxy<rets>, fn)}
-enum Fallback<payability, args, rets, fn> {Fallback(Proxy<payability>, Proxy<args>, Proxy<rets>, fn)}
-enum Payable {}
-enum NonPayable {}
-
-trait SigString<t> {
-  function sigStr(value: Proxy<t>) returns (string) ;
-}
-
-trait RunContract<c> {
-  function exec(value: c) returns () ;
-}
-
-impl<name, payability, args, rets, fn, fb>
-  RunContract<Contract<Method<name, payability, args, rets, fn>, fb>>
-  where name: SigString {
-  function exec(value: Contract<Method<name, payability, args, rets, fn>, fb>) returns () {
-    return ();
-  }
-}
-
-function fallback_default_implementation() returns () { return (); }
-"#,
+        &fixture_source(&fixture, "std/dispatch.sol"),
     );
 
     let module_id = module_id_from_key(&db, &key);
@@ -673,22 +466,9 @@ function fallback_default_implementation() returns () { return (); }
     );
 }
 
-#[test]
-fn dispatch_names_and_selectors_distinguish_contract_method_boundaries() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-import * from std.dispatch;
-
-contract A {
-  function B_C(x:uint256) public returns (uint256) { return x; }
-}
-
-contract A_B {
-  function C(x:uint256) public returns (uint256) { return x; }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/dispatch_names_and_selectors_distinguish_contract_method_boundaries", glob: "main.sol")]
+fn dispatch_names_and_selectors_distinguish_contract_method_boundaries(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
 
     let diagnostics = diagnostics_for_module(&db, &key);
@@ -708,25 +488,10 @@ contract A_B {
     );
 }
 
-#[test]
-fn dispatch_surface_tracks_public_private_constructor_and_fallback() {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/dispatch_surface_tracks_public_private_constructor_and_fallback", glob: "main.sol")]
+fn dispatch_surface_tracks_public_private_constructor_and_fallback(fixture: Fixture<&str>) {
     let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-contract Token {
-  constructor(amount: word) payable {}
-
-  function hidden(x: word) returns (word) { return x; }
-
-  function pay(to: word) public payable returns ((word, bool)) {
-    return (to, true);
-  }
-
-  fallback() payable {}
-}
-"#,
-    );
+    let module = parse_module(&db, fixture.content());
     let contract = contract_named(&db, module, "Token");
     let surface = contract_dispatch_surface(&db, module, contract);
 
@@ -753,18 +518,10 @@ contract Token {
     assert_eq!(surface.methods[0].outputs[1].ty.to_string(), "bool");
 }
 
-#[test]
-fn abi_json_matches_reference_public_function_shape() {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/abi_json_matches_reference_public_function_shape", glob: "main.sol")]
+fn abi_json_matches_reference_public_function_shape(fixture: Fixture<&str>) {
     let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-contract Sample {
-  function get() public returns (word) { return 1; }
-  function secret() returns (word) { return 0; }
-}
-"#,
-    );
+    let module = parse_module(&db, fixture.content());
     let contract = contract_named(&db, module, "Sample");
 
     let abi = contract_abi_json(&db, module, contract).expect("ABI JSON");
@@ -788,21 +545,10 @@ contract Sample {
     assert_eq!(abi, expected);
 }
 
-#[test]
-fn abi_json_matches_reference_constructor_payable_and_tuple_outputs() {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/abi_json_matches_reference_constructor_payable_and_tuple_outputs", glob: "main.sol")]
+fn abi_json_matches_reference_constructor_payable_and_tuple_outputs(fixture: Fixture<&str>) {
     let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-contract Token {
-  constructor(amount: word) {}
-
-  function pay(to: word) public payable returns ((word, bool)) {
-    return (to, true);
-  }
-}
-"#,
-    );
+    let module = parse_module(&db, fixture.content());
     let contract = contract_named(&db, module, "Token");
 
     let abi = contract_abi_json(&db, module, contract).expect("ABI JSON");
@@ -812,20 +558,10 @@ contract Token {
     assert!(abi.contains("\"type\": \"bool\""));
 }
 
-#[test]
-fn abi_json_preserves_source_declaration_order() {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/abi_json_preserves_source_declaration_order", glob: "main.sol")]
+fn abi_json_preserves_source_declaration_order(fixture: Fixture<&str>) {
     let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-contract Order {
-  function a() public returns (word) { return 1; }
-  constructor(seed: word) {}
-  fallback() payable {}
-  function b(x: word) public returns (word) { return x; }
-}
-"#,
-    );
+    let module = parse_module(&db, fixture.content());
     let contract = contract_named(&db, module, "Order");
 
     let abi = contract_abi_json(&db, module, contract).expect("ABI JSON");
@@ -841,21 +577,10 @@ contract Order {
     );
 }
 
-#[test]
-fn constructor_and_fallback_abi_lowering_normalizes_aliases() {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/constructor_and_fallback_abi_lowering_normalizes_aliases", glob: "main.sol")]
+fn constructor_and_fallback_abi_lowering_normalizes_aliases(fixture: Fixture<&str>) {
     let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-type U = word;
-type UnitAlias = ();
-
-contract AliasDispatch {
-  constructor(seed: U) {}
-  fallback() {}
-}
-"#,
-    );
+    let module = parse_module(&db, fixture.content());
     let contract = contract_named(&db, module, "AliasDispatch");
     let surface = contract_dispatch_surface(&db, module, contract);
 
@@ -877,21 +602,9 @@ contract AliasDispatch {
     );
 }
 
-#[test]
-fn dispatch_signature_spelling_matches_reference_sigstring_shape() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-
-type U = word;
-
-contract Signatures {
-  function spell(a: word, b: (word, bool), c: memory<string>, d: memory<bytes>, e: bytes32, f: address, g: U) public returns (word) {
-    return a;
-  }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/dispatch_signature_spelling_matches_reference_sigstring_shape", glob: "main.sol")]
+fn dispatch_signature_spelling_matches_reference_sigstring_shape(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_module_source(
         &mut db,
         ModuleKey {
@@ -899,14 +612,7 @@ contract Signatures {
             logical_path: vec!["std".to_owned()],
         },
         "/std/std.sol",
-        r#"
-export { string, address(*), bytes, bytes32(*), memory(*) };
-enum string {}
-enum address {address(word)}
-enum bytes {}
-enum bytes32 {bytes32(word)}
-enum memory<t> {memory(word)}
-"#,
+        &fixture_source(&fixture, "std/std.sol"),
     );
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -919,17 +625,9 @@ enum memory<t> {memory(word)}
     );
 }
 
-#[test]
-fn bytes4_is_supported_by_the_e136_public_abi_surface() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-
-contract Bytes4Echo {
-  function echo(value: bytes4) public returns (bytes4) { return value; }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/bytes4_is_supported_by_the_e136_public_abi_surface", glob: "main.sol")]
+fn bytes4_is_supported_by_the_e136_public_abi_surface(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -954,23 +652,9 @@ contract Bytes4Echo {
     assert!(abi.contains("\"type\": \"bytes4\""), "{abi}");
 }
 
-#[test]
-fn calldata_array_abi_uses_generic_signature_and_source_adt_json_name() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-import * from std.Generic;
-import * from std.ABIGeneric;
-
-enum Operation {Approve(uint256) , Reject(uint256)}
-
-contract Batch {
-  function count(ops: calldata<array<Operation>>) public returns (uint256) {
-    return uint256(0);
-  }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/calldata_array_abi_uses_generic_signature_and_source_adt_json_name", glob: "main.sol")]
+fn calldata_array_abi_uses_generic_signature_and_source_adt_json_name(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -996,19 +680,9 @@ contract Batch {
     assert!(abi.contains("\"type\": \"Operation[]\""), "{abi}");
 }
 
-#[test]
-fn nested_calldata_arrays_recurse_in_signatures_and_abi_json() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-
-contract NestedArrays {
-  function first(values: calldata<array<calldata<array<uint256>>>>) public returns (uint256) {
-    return uint256(0);
-  }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/nested_calldata_arrays_recurse_in_signatures_and_abi_json", glob: "main.sol")]
+fn nested_calldata_arrays_recurse_in_signatures_and_abi_json(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -1032,19 +706,9 @@ contract NestedArrays {
     assert!(abi.contains("\"type\": \"uint256[][]\""), "{abi}");
 }
 
-#[test]
-fn calldata_arrays_are_rejected_from_nested_output_positions() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-
-contract InputOnly {
-  function keep(values: calldata<array<uint256>>) public returns (uint256, calldata<array<uint256>>) {
-    return (uint256(0), values);
-  }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/calldata_arrays_are_rejected_from_nested_output_positions", glob: "main.sol")]
+fn calldata_arrays_are_rejected_from_nested_output_positions(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -1066,24 +730,9 @@ contract InputOnly {
     assert!(contract_abi_json(&db, module, contract).is_err());
 }
 
-#[test]
-fn calldata_array_signature_recurses_through_nested_derived_generic_reps() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-import * from std.Generic;
-import * from std.ABIGeneric;
-
-enum Inner {Number(uint256) , Account(address)}
-enum Outer {Outer(Inner, bytes32)}
-
-contract Nested {
-  function inspect(values: calldata<array<Outer>>) public returns (uint256) {
-    return uint256(0);
-  }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/calldata_array_signature_recurses_through_nested_derived_generic_reps", glob: "main.sol")]
+fn calldata_array_signature_recurses_through_nested_derived_generic_reps(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -1098,34 +747,11 @@ contract Nested {
     assert!(contract_abi_json(&db, module, contract).is_ok());
 }
 
-#[test]
-fn calldata_array_supports_parameterized_and_rejects_recursive_and_manual_generic_adts() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-import * from std.Generic;
-import * from std.ABIGeneric;
-
-enum Box<a> {Box(a)}
-enum Node {Node(uint256, Node)}
-
-pragma no-generic-instance-for Manual;
-enum Manual {Left(uint256) , Right(uint256)}
-impl Generic<Manual,sum<uint256, uint256>> {}
-
-contract Rejected {
-  function boxed(values: calldata<array<Box<uint256>>>) public returns (uint256) {
-    return uint256(0);
-  }
-  function recursive(values: calldata<array<Node>>) public returns (uint256) {
-    return uint256(0);
-  }
-  function manual(values: calldata<array<Manual>>) public returns (uint256) {
-    return uint256(0);
-  }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/calldata_array_supports_parameterized_and_rejects_recursive_and_manual_generic_adts", glob: "main.sol")]
+fn calldata_array_supports_parameterized_and_rejects_recursive_and_manual_generic_adts(
+    fixture: Fixture<&str>,
+) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -1156,25 +782,9 @@ contract Rejected {
     assert!(contract_abi_json(&db, module, contract).is_err());
 }
 
-#[test]
-fn visible_orphan_generic_instance_rejects_calldata_adt_array_surface() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-import * from std.dispatch;
-import * from std.Generic;
-import * from std.ABIGeneric;
-import * from model;
-
-impl Generic<Payload,word> {}
-
-contract C {
-  function inspect(values:calldata<array<Payload>>) public returns (uint256) {
-    return uint256(0);
-  }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/visible_orphan_generic_instance_rejects_calldata_adt_array_surface", glob: "main.sol")]
+fn visible_orphan_generic_instance_rejects_calldata_adt_array_surface(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     insert_module_source(
         &mut db,
@@ -1183,13 +793,7 @@ contract C {
             logical_path: vec!["model".to_owned()],
         },
         "/main/model.sol",
-        r#"
-import * from std;
-import * from std.Generic;
-export { Payload(*) };
-
-enum Payload {Left(uint256) , Right(uint256)}
-"#,
+        &fixture_source(&fixture, "model.sol"),
     );
 
     let file = db.module_files[&key];
@@ -1206,22 +810,10 @@ enum Payload {Left(uint256) , Right(uint256)}
     assert!(contract_abi_json(&db, module, contract).is_err());
 }
 
-#[test]
-fn same_named_user_calldata_and_array_types_do_not_gain_abi_meaning() {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/same_named_user_calldata_and_array_types_do_not_gain_abi_meaning", glob: "main.sol")]
+fn same_named_user_calldata_and_array_types_do_not_gain_abi_meaning(fixture: Fixture<&str>) {
     let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-enum array<a> {array(word)}
-enum calldata<a> {calldata(word)}
-
-contract Fake {
-  function inspect(values: calldata<array<word>>) public returns (word) {
-    return 0;
-  }
-}
-"#,
-    );
+    let module = parse_module(&db, fixture.content());
     let contract = contract_named(&db, module, "Fake");
     let surface = contract_dispatch_surface(&db, module, contract);
 
@@ -1230,21 +822,11 @@ contract Fake {
     assert!(contract_abi_json(&db, module, contract).is_err());
 }
 
-#[test]
-fn parameterized_single_constructor_adt_uses_its_generic_rep_in_the_public_abi() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-import * from std.Generic;
-import * from std.ABIGeneric;
-
-enum Point<a> {Point(a, bool)}
-
-contract Shapes {
-  function roundtrip(p: Point<uint256>) public returns (Point<uint256>) { return p; }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/parameterized_single_constructor_adt_uses_its_generic_rep_in_the_public_abi", glob: "main.sol")]
+fn parameterized_single_constructor_adt_uses_its_generic_rep_in_the_public_abi(
+    fixture: Fixture<&str>,
+) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -1271,25 +853,11 @@ contract Shapes {
     assert!(abi.contains("\"type\": \"Point<uint256>\""), "{abi}");
 }
 
-#[test]
-fn nested_parameterized_adt_instantiations_are_finite_but_recursive_plans_are_rejected() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-import * from std.Generic;
-import * from std.ABIGeneric;
-
-enum Box<a> {Box(a)}
-enum Node {Node(Node)}
-
-contract Finite {
-  function roundtrip(value:Box<Box<uint256>>) public returns (Box<Box<uint256>>) { return value; }
-}
-contract Recursive {
-  function recursive(value:Node) public returns (Node) { return value; }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/nested_parameterized_adt_instantiations_are_finite_but_recursive_plans_are_rejected", glob: "main.sol")]
+fn nested_parameterized_adt_instantiations_are_finite_but_recursive_plans_are_rejected(
+    fixture: Fixture<&str>,
+) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -1321,26 +889,9 @@ contract Recursive {
     }));
 }
 
-#[test]
-fn phantom_adt_type_arguments_must_be_supported_by_the_derived_abi_context() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-import * from std.Generic;
-import * from std.ABIGeneric;
-
-enum Phantom<a> {Phantom(uint256)}
-
-contract PhantomAbi {
-  function take(value:Phantom<mapping(uint256 => uint256)>) public returns (uint256) {
-    return uint256(0);
-  }
-  function make() public returns (Phantom<mapping(uint256 => uint256)>) {
-    return Phantom(uint256(0));
-  }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/phantom_adt_type_arguments_must_be_supported_by_the_derived_abi_context", glob: "main.sol")]
+fn phantom_adt_type_arguments_must_be_supported_by_the_derived_abi_context(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -1372,25 +923,9 @@ contract PhantomAbi {
     assert!(contract_abi_json(&db, module, contract).is_err());
 }
 
-#[test]
-fn calldata_arrays_nested_in_derived_adt_outputs_remain_input_only() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-import * from std.Generic;
-import * from std.ABIGeneric;
-
-enum Bag {Bag(calldata<array<uint256>>)}
-enum Outer {Outer(Bag)}
-
-contract InvalidOutputs {
-  function bag(values:calldata<array<uint256>>) public returns (Bag) { return Bag(values); }
-  function outer(values:calldata<array<uint256>>) public returns (Outer) {
-    return Outer(Bag(values));
-  }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/calldata_arrays_nested_in_derived_adt_outputs_remain_input_only", glob: "main.sol")]
+fn calldata_arrays_nested_in_derived_adt_outputs_remain_input_only(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -1419,21 +954,9 @@ contract InvalidOutputs {
     assert!(contract_abi_json(&db, module, contract).is_err());
 }
 
-#[test]
-fn tuple_typed_constructor_field_uses_the_structural_generic_signature() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-import * from std.Generic;
-import * from std.ABIGeneric;
-
-enum Wrap {Wrap((uint256, bool))}
-
-contract Shapes {
-  function roundtrip(value: Wrap) public returns (Wrap) { return value; }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/tuple_typed_constructor_field_uses_the_structural_generic_signature", glob: "main.sol")]
+fn tuple_typed_constructor_field_uses_the_structural_generic_signature(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -1454,20 +977,10 @@ contract Shapes {
     assert!(contract_abi_json(&db, module, contract).is_ok());
 }
 
-#[test]
-fn user_defined_location_name_does_not_make_an_adt_abi_safe() {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/user_defined_location_name_does_not_make_an_adt_abi_safe", glob: "main.sol")]
+fn user_defined_location_name_does_not_make_an_adt_abi_safe(fixture: Fixture<&str>) {
     let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-enum memory<a> {memory(word)}
-enum Wrap {Wrap(memory<(word, bool)>)}
-
-contract Shapes {
-  function roundtrip(value: Wrap) public returns (Wrap) { return value; }
-}
-"#,
-    );
+    let module = parse_module(&db, fixture.content());
     let contract = contract_named(&db, module, "Shapes");
     let surface = contract_dispatch_surface(&db, module, contract);
 
@@ -1485,21 +998,9 @@ contract Shapes {
     assert!(contract_abi_json(&db, module, contract).is_err());
 }
 
-#[test]
-fn direct_dynamic_sum_adt_supports_input_output_and_roundtrip() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-import * from std.Generic;
-import * from std.ABIGeneric;
-
-enum D2 {L(uint256) , R(memory<bytes>)}
-
-contract SumRoundtrip {
-  function rtD2(x: D2) public returns (D2) { return x; }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/direct_dynamic_sum_adt_supports_input_output_and_roundtrip", glob: "main.sol")]
+fn direct_dynamic_sum_adt_supports_input_output_and_roundtrip(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -1523,19 +1024,9 @@ contract SumRoundtrip {
     assert_eq!(abi.matches("\"type\": \"D2\"").count(), 2, "{abi}");
 }
 
-#[test]
-fn imported_direct_adt_uses_definition_side_abi_derivation() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-import * from std.dispatch;
-import * from model;
-
-contract Imported {
-  function roundtrip(payload:Payload) public returns (Payload) { return payload; }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/imported_direct_adt_uses_definition_side_abi_derivation", glob: "main.sol")]
+fn imported_direct_adt_uses_definition_side_abi_derivation(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     insert_module_source(
         &mut db,
@@ -1544,14 +1035,7 @@ contract Imported {
             logical_path: vec!["model".to_owned()],
         },
         "/main/model.sol",
-        r#"
-import * from std;
-import * from std.Generic;
-import * from std.ABIGeneric;
-export { Payload(*) };
-
-enum Payload {Left(uint256) , Right(uint256)}
-"#,
+        &fixture_source(&fixture, "model.sol"),
     );
 
     let file = db.module_files[&key];
@@ -1575,19 +1059,9 @@ enum Payload {Left(uint256) , Right(uint256)}
     assert_eq!(abi.matches("\"type\": \"Payload\"").count(), 2, "{abi}");
 }
 
-#[test]
-fn imported_output_only_adt_requires_definition_side_abi_derivation() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-import * from std.dispatch;
-import * from model;
-
-contract Imported {
-  function make() public returns (Payload) { return Payload.Left(uint256(1)); }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/imported_output_only_adt_requires_definition_side_abi_derivation", glob: "main.sol")]
+fn imported_output_only_adt_requires_definition_side_abi_derivation(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     insert_module_source(
         &mut db,
@@ -1596,13 +1070,7 @@ contract Imported {
             logical_path: vec!["model".to_owned()],
         },
         "/main/model.sol",
-        r#"
-import * from std;
-import * from std.Generic;
-export { Payload(*) };
-
-enum Payload {Left(uint256) , Right(uint256)}
-"#,
+        &fixture_source(&fixture, "model.sol"),
     );
 
     let file = db.module_files[&key];
@@ -1624,18 +1092,8 @@ enum Payload {Left(uint256) , Right(uint256)}
     assert!(contract_abi_json(&db, module, contract).is_err());
 }
 
-fn db_with_reexported_abi_adt(api_source: &str) -> (TestDb, ModuleKey) {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-import * from std.dispatch;
-import {Payload} from api;
-
-contract Reexported {
-  function roundtrip(payload:Payload) public returns (Payload) { return payload; }
-}
-"#,
-    );
+fn db_with_reexported_abi_adt(fixture: &Fixture<&str>) -> (TestDb, ModuleKey) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     insert_module_source(
         &mut db,
@@ -1644,14 +1102,7 @@ contract Reexported {
             logical_path: vec!["base".to_owned()],
         },
         "/main/base.sol",
-        r#"
-import * from std;
-import * from std.Generic;
-import * from std.ABIGeneric;
-export { Payload(*) };
-
-enum Payload {Left(uint256) , Right(uint256)}
-"#,
+        &fixture_source(fixture, "base.sol"),
     );
     insert_module_source(
         &mut db,
@@ -1660,14 +1111,14 @@ enum Payload {Left(uint256) , Right(uint256)}
             logical_path: vec!["api".to_owned()],
         },
         "/main/api.sol",
-        api_source,
+        &fixture_source(fixture, "api.sol"),
     );
     (db, key)
 }
 
-#[test]
-fn reference_reexport_does_not_expose_definition_side_abi_evidence() {
-    let (db, key) = db_with_reexported_abi_adt("export base.{Payload(*)};");
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/reference_reexport_does_not_expose_definition_side_abi_evidence", glob: "main.sol")]
+fn reference_reexport_does_not_expose_definition_side_abi_evidence(fixture: Fixture<&str>) {
+    let (db, key) = db_with_reexported_abi_adt(&fixture);
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
     let contract = contract_named(&db, module, "Reexported");
@@ -1688,9 +1139,9 @@ fn reference_reexport_does_not_expose_definition_side_abi_evidence() {
     assert!(contract_abi_json(&db, module, contract).is_err());
 }
 
-#[test]
-fn instance_import_in_reexport_module_exposes_definition_side_abi_evidence() {
-    let (db, key) = db_with_reexported_abi_adt("import base;\nexport base.{Payload(*)};");
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/instance_import_in_reexport_module_exposes_definition_side_abi_evidence", glob: "main.sol")]
+fn instance_import_in_reexport_module_exposes_definition_side_abi_evidence(fixture: Fixture<&str>) {
+    let (db, key) = db_with_reexported_abi_adt(&fixture);
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
     let contract = contract_named(&db, module, "Reexported");
@@ -1712,25 +1163,9 @@ fn instance_import_in_reexport_module_exposes_definition_side_abi_evidence() {
     assert_eq!(abi.matches("\"type\": \"Payload\"").count(), 2, "{abi}");
 }
 
-#[test]
-fn visible_orphan_generic_instance_is_rejected_from_constructor_abi() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-import * from std.dispatch;
-import * from std.Generic;
-import * from model;
-
-pragma no-generic-instance-for Payload;
-
-impl Generic<Payload,word> {}
-
-contract C {
-  constructor(payload:Payload) {}
-  function roundtrip(payload:Payload) public returns (Payload) { return payload; }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/visible_orphan_generic_instance_is_rejected_from_constructor_abi", glob: "main.sol")]
+fn visible_orphan_generic_instance_is_rejected_from_constructor_abi(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_module_source(
         &mut db,
         ModuleKey {
@@ -1738,7 +1173,7 @@ contract C {
             logical_path: vec!["std".to_owned()],
         },
         "/std/std.sol",
-        "",
+        &fixture_source(&fixture, "std/std.sol"),
     );
     insert_module_source(
         &mut db,
@@ -1747,15 +1182,7 @@ contract C {
             logical_path: vec!["Generic".to_owned()],
         },
         "/std/Generic.sol",
-        r#"
-pragma no-patterson-condition;
-pragma no-bounded-variable-condition;
-export { Generic };
-trait Generic<a,rep> {
-  function from(x:a) returns (rep) ;
-  function to(x:rep) returns (a) ;
-}
-"#,
+        &fixture_source(&fixture, "std/Generic.sol"),
     );
     insert_module_source(
         &mut db,
@@ -1764,7 +1191,7 @@ trait Generic<a,rep> {
             logical_path: vec!["dispatch".to_owned()],
         },
         "/std/dispatch.sol",
-        "",
+        &fixture_source(&fixture, "std/dispatch.sol"),
     );
     insert_module_source(
         &mut db,
@@ -1773,11 +1200,7 @@ trait Generic<a,rep> {
             logical_path: vec!["model".to_owned()],
         },
         "/main/model.sol",
-        r#"
-import * from std;
-export { Payload(*) };
-        enum Payload {Payload(word, bool)}
-"#,
+        &fixture_source(&fixture, "model.sol"),
     );
 
     let main_file = db.module_files[&key];
@@ -1798,17 +1221,9 @@ export { Payload(*) };
     );
 }
 
-#[test]
-fn unsupported_std_leaf_is_not_reinterpreted_as_a_structural_user_adt() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-
-contract C {
-  function echo(value:byte) public returns (word) { return 0; }
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/unsupported_std_leaf_is_not_reinterpreted_as_a_structural_user_adt", glob: "main.sol")]
+fn unsupported_std_leaf_is_not_reinterpreted_as_a_structural_user_adt(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
     insert_real_std_modules(&mut db);
     let file = db.module_files[&key];
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -1825,19 +1240,10 @@ contract C {
     assert_eq!(surface.methods[0].signature, "echo(<unsupported>)");
 }
 
-#[test]
-fn abi_like_user_type_names_are_not_treated_as_canonical_types() {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/abi_like_user_type_names_are_not_treated_as_canonical_types", glob: "main.sol")]
+fn abi_like_user_type_names_are_not_treated_as_canonical_types(fixture: Fixture<&str>) {
     let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-enum bytes16 {bytes16(word)}
-
-contract C {
-  function echo(value:bytes16) public returns (bytes16) { return value; }
-}
-"#,
-    );
+    let module = parse_module(&db, fixture.content());
     let contract = contract_named(&db, module, "C");
     let surface = contract_dispatch_surface(&db, module, contract);
     assert!(
@@ -1854,19 +1260,12 @@ contract C {
     assert_eq!(surface.methods[0].inputs[0].ty.to_string(), "<unsupported>");
 }
 
-#[test]
-fn parameterized_abi_type_fails_loudly_and_duplicate_signatures_are_diagnosed() {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/parameterized_abi_type_fails_loudly_and_duplicate_signatures_are_diagnosed", glob: "main.sol")]
+fn parameterized_abi_type_fails_loudly_and_duplicate_signatures_are_diagnosed(
+    fixture: Fixture<&str>,
+) {
     let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-enum Mapping<a, b> {Mapping}
-
-contract Store {
-  function put(m: Mapping<word, word>) public returns (word) { return 0; }
-}
-"#,
-    );
+    let module = parse_module(&db, fixture.content());
     let contract = contract_named(&db, module, "Store");
     let surface = contract_dispatch_surface(&db, module, contract);
     assert!(
@@ -1883,28 +1282,12 @@ contract Store {
             .contains("cannot represent type")
     );
     assert!(
-        diagnostics(
-            r#"
-enum Mapping<a, b> {Mapping}
-
-contract Store {
-  function put(m: Mapping<word, word>) public returns (word) { return 0; }
-}
-"#
-        )
-        .iter()
-        .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0231"))
+        diagnostics(fixture.content())
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0231"))
     );
 
-    let module = parse_module(
-        &db,
-        r#"
-contract Dup {
-  function f(x: word) public returns (word) { return x; }
-  function f(x: word) public returns (word) { return x; }
-}
-"#,
-    );
+    let module = parse_module(&db, &fixture_source(&fixture, "duplicate.sol"));
     let contract = contract_named(&db, module, "Dup");
     let surface = contract_dispatch_surface(&db, module, contract);
     let duplicate = surface
@@ -1922,15 +1305,9 @@ contract Dup {
     assert_eq!(duplicate.labels[1].message(), Some("previous declaration"));
 }
 
-#[test]
-fn different_signatures_with_the_same_selector_are_diagnosed() {
-    let src = r#"
-contract Collision {
-  function collision_8764(x: word) public returns () { return (); }
-  function collision_99992(x: word) public returns () { return (); }
-  function main() returns () { return (); }
-}
-"#;
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/different_signatures_with_the_same_selector_are_diagnosed", glob: "main.sol")]
+fn different_signatures_with_the_same_selector_are_diagnosed(fixture: Fixture<&str>) {
+    let src = fixture.content();
     let db = TestDb::default();
     let module = parse_module(&db, src);
     let contract = contract_named(&db, module, "Collision");
@@ -1967,25 +1344,10 @@ contract Collision {
     );
 }
 
-#[test]
-fn frontend_desugar_plan_records_if_bool_and_storage_field_hooks() {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/frontend_desugar_plan_records_if_bool_and_storage_field_hooks", glob: "main.sol")]
+fn frontend_desugar_plan_records_if_bool_and_storage_field_hooks(fixture: Fixture<&str>) {
     let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-contract C {
-  flag: word;
-
-  function f() public returns (word) {
-    if (true) {
-      flag = 1;
-    } else {
-      return flag;
-    }
-  }
-}
-"#,
-    );
+    let module = parse_module(&db, fixture.content());
     let plan = frontend_desugar_plan(&db, module);
     let transforms = plan
         .bodies
@@ -2019,33 +1381,10 @@ contract C {
     );
 }
 
-#[test]
-fn pre_typeck_desugar_plan_records_tuple_product_shapes_and_origins() {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/pre_typeck_desugar_plan_records_tuple_product_shapes_and_origins", glob: "main.sol")]
+fn pre_typeck_desugar_plan_records_tuple_product_shapes_and_origins(fixture: Fixture<&str>) {
     let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-contract C {
-  seed: (word, bool) = ((true) ? (1, true) : (2, false));
-
-  function f(x : word, y : bool, z : word) public returns ((word, bool, word)) {
-    let t : (word, bool, word) = (x, y, z);
-    let b : bool = true;
-    match (b) {
-    case true { return (x, y, z); }
-case false { return (z, y, x); }}
-    let w : word = ((y) ? x : z);
-    if (y) {
-      return (w, y, z);
-    } else {
-      return (z, y, w);
-    }
-    match (t) {
-    case (a, b, c) { return (a, b, c); }}
-  }
-}
-"#,
-    );
+    let module = parse_module(&db, fixture.content());
     let plan = pre_typeck_desugar_plan(&db, module);
 
     assert!(
@@ -2201,15 +1540,9 @@ case false { return (z, y, x); }}
     );
 }
 
-#[test]
-fn typeck_lowers_tuple_return_type_to_right_nested_product() {
-    let (db, key) = db_with_main(
-        r#"
-function triple(x : word, y : bool, z : word) returns ((word, bool, word)) {
-  return (x, y, z);
-}
-"#,
-    );
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/typeck_lowers_tuple_return_type_to_right_nested_product", glob: "main.sol")]
+fn typeck_lowers_tuple_return_type_to_right_nested_product(fixture: Fixture<&str>) {
+    let (db, key) = db_with_main(fixture.content());
     let module_id = module_id_from_key(&db, &key);
     let file = db.module_files.get(&key).copied().expect("main file");
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -2244,17 +1577,10 @@ function triple(x : word, y : bool, z : word) returns ((word, bool, word)) {
     ));
 }
 
-#[test]
-fn frontend_desugar_plan_records_indirect_call_shape_and_evidence() {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/frontend_desugar_plan_records_indirect_call_shape_and_evidence", glob: "main.sol")]
+fn frontend_desugar_plan_records_indirect_call_shape_and_evidence(fixture: Fixture<&str>) {
     let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-function apply2<c>(f : c, a : word, b : word) returns (word) where c : invokable<pair<word, word>, word> {
-  return f(a, b);
-}
-"#,
-    );
+    let module = parse_module(&db, fixture.content());
     let plan = frontend_desugar_plan(&db, module);
     let transforms = plan
         .bodies
@@ -2287,10 +1613,9 @@ function apply2<c>(f : c, a : word, b : word) returns (word) where c : invokable
     );
 }
 
-#[test]
-fn frontend_desugar_plan_records_compose3_indirect_call() {
-    let src =
-        include_str!("../../parser/tests/fixtures/corpus/ok/test/examples/cases/Compose3.sol");
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/../parser/tests/fixtures/corpus/ok/test/examples/cases", glob: "Compose3.sol")]
+fn frontend_desugar_plan_records_compose3_indirect_call(fixture: Fixture<&str>) {
+    let src = fixture.content();
     assert!(diagnostics(src).is_empty());
 
     let db = TestDb::default();
@@ -2316,10 +1641,9 @@ fn frontend_desugar_plan_records_compose3_indirect_call() {
     );
 }
 
-#[test]
-fn frontend_desugar_plan_records_simple_lambda_pair_arg_call() {
-    let src =
-        include_str!("../../parser/tests/fixtures/corpus/ok/test/examples/cases/SimpleLambda.sol");
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/../parser/tests/fixtures/corpus/ok/test/examples/cases", glob: "SimpleLambda.sol")]
+fn frontend_desugar_plan_records_simple_lambda_pair_arg_call(fixture: Fixture<&str>) {
+    let src = fixture.content();
     assert!(diagnostics(src).is_empty());
 
     let db = TestDb::default();
@@ -2345,18 +1669,10 @@ fn frontend_desugar_plan_records_simple_lambda_pair_arg_call() {
     );
 }
 
-#[test]
-fn frontend_desugar_plan_records_captured_zero_arg_closure_call() {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/frontend_desugar_plan_records_captured_zero_arg_closure_call", glob: "main.sol")]
+fn frontend_desugar_plan_records_captured_zero_arg_closure_call(fixture: Fixture<&str>) {
     let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-function inc(x : word) returns (word) {
-  let f = lam () { return x; };
-  return f();
-}
-"#,
-    );
+    let module = parse_module(&db, fixture.content());
     let plan = frontend_desugar_plan(&db, module);
     let transforms = plan
         .bodies
@@ -2378,15 +1694,10 @@ function inc(x : word) returns (word) {
     );
 }
 
-#[test]
-fn derived_generic_plan_uses_right_nested_product_rep_for_tree() {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/derived_generic_plan_uses_right_nested_product_rep_for_tree", glob: "main.sol")]
+fn derived_generic_plan_uses_right_nested_product_rep_for_tree(fixture: Fixture<&str>) {
     let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-enum Tree<a> {Leaf , Node(Tree<a>, a, Tree<a>)}
-"#,
-    );
+    let module = parse_module(&db, fixture.content());
     let tree = adt_named(&db, module, "Tree");
     let plan = derived_generic_plan(&db, module, tree).expect("derived Generic plan");
 
@@ -2409,25 +1720,10 @@ enum Tree<a> {Leaf , Node(Tree<a>, a, Tree<a>)}
     assert_eq!(plan.to_arms.len(), 2);
 }
 
-#[test]
-fn derived_generic_instance_plan_respects_excluded_and_manual_instances() {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/derived_generic_instance_plan_respects_excluded_and_manual_instances", glob: "main.sol")]
+fn derived_generic_instance_plan_respects_excluded_and_manual_instances(fixture: Fixture<&str>) {
     let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-pragma no-patterson-condition;
-pragma no-bounded-variable-condition;
-pragma no-generic-instance-for Excluded;
-
-trait Generic<a,rep> {}
-
-enum Eligible {Eligible(word)}
-enum Excluded {Excluded(word)}
-enum Manual {Manual(word)}
-
-impl Generic<Manual,word> {}
-"#,
-    );
+    let module = parse_module(&db, fixture.content());
     let generic = module
         .items(&db)
         .iter()

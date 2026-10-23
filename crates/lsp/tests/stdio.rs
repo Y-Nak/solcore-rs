@@ -1,11 +1,10 @@
 #![cfg(feature = "native")]
 
-//! Native protocol fixtures exercise the actual server binary, filesystem loading,
-//! and workspace notifications. Sources live beside each case as `.sol.txt` files.
-//! Request parameters and expectations use `$uri:path` for temporary file URIs.
+//! Native protocol fixtures exercise the server binary, filesystem loading, and
+//! workspace notifications. Each fixture directory contains workspace folders
+//! whose `.sol.txt` files are copied into isolated temporary `.sol` documents.
 
 use std::{
-    collections::BTreeMap,
     fs,
     io::{self, BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
@@ -20,107 +19,58 @@ use std::{
 
 use dir_test::{Fixture, dir_test};
 use lsp_types::Url;
-use serde::Deserialize;
 use serde_json::{Value, json};
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Case {
-    documents: Vec<String>,
-    workspace_folders: Vec<String>,
-    steps: Vec<Step>,
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum Step {
-    Open {
-        document: String,
-    },
-    Diagnostics {
-        document: String,
-        count: Option<usize>,
-        #[serde(default)]
-        contains: Vec<ExpectedDiagnostic>,
-    },
-    Request {
-        method: String,
-        params: Value,
-        expected: Value,
-    },
-    /// Use the actual published diagnostic as the editor's code-action context.
-    CodeActions {
-        document: String,
-        expected: Value,
-    },
-    Notify {
-        method: String,
-        params: Value,
-    },
-    RemoveFile {
-        document: String,
-    },
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ExpectedDiagnostic {
-    severity: Option<u64>,
-    message_contains: Option<String>,
-}
 
 struct TestWorkspace {
     root: PathBuf,
+    folders: Vec<String>,
 }
 
 impl TestWorkspace {
-    fn new(fixture_root: &Path, documents: &[String], folders: &[String]) -> Self {
+    fn new(fixture_root: &Path) -> Self {
         static NEXT_WORKSPACE: AtomicUsize = AtomicUsize::new(0);
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock")
             .as_nanos();
-        let workspace = Self {
+        let mut workspace = Self {
             root: std::env::temp_dir().join(format!(
                 "solcore-lsp-stdio-{}-{nonce}-{}",
                 std::process::id(),
                 NEXT_WORKSPACE.fetch_add(1, Ordering::Relaxed)
             )),
+            folders: Vec::new(),
         };
-        for folder in folders {
-            fs::create_dir_all(workspace.root.join(folder)).expect("create workspace folder");
+        for entry in fs::read_dir(fixture_root).expect("fixture directory") {
+            let path = entry.expect("fixture entry").path();
+            if path.is_dir() {
+                let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+                copy_documents(&path, &workspace.root.join(&name));
+                workspace.folders.push(name);
+            }
         }
-        for document in documents {
-            let target = workspace.root.join(document);
-            fs::create_dir_all(target.parent().unwrap()).expect("create document parent");
-            fs::copy(fixture_root.join(format!("{document}.txt")), target)
-                .expect("copy fixture document");
-        }
+        workspace.folders.sort();
+        assert!(
+            !workspace.folders.is_empty(),
+            "fixture has no workspace roots"
+        );
         workspace
     }
 
     fn uri(&self, path: &str) -> Url {
         Url::from_file_path(self.root.join(path)).expect("fixture URI")
     }
+}
 
-    fn expand_uris(&self, value: &mut Value) {
-        match value {
-            Value::String(text) => {
-                if let Some(path) = text.strip_prefix("$uri:") {
-                    *text = self.uri(path).into();
-                }
-            }
-            Value::Array(values) => {
-                for value in values {
-                    self.expand_uris(value);
-                }
-            }
-            Value::Object(values) => {
-                for value in values.values_mut() {
-                    self.expand_uris(value);
-                }
-            }
-            _ => {}
+fn copy_documents(source: &Path, target: &Path) {
+    fs::create_dir_all(target).expect("create workspace folder");
+    for entry in fs::read_dir(source).expect("fixture documents") {
+        let path = entry.expect("fixture document").path();
+        let name = path.file_name().unwrap().to_str().unwrap();
+        if path.is_dir() {
+            copy_documents(&path, &target.join(name));
+        } else if let Some(document) = name.strip_suffix(".txt") {
+            fs::copy(&path, target.join(document)).expect("copy fixture document");
         }
     }
 }
@@ -131,13 +81,88 @@ impl Drop for TestWorkspace {
     }
 }
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/native", glob: "**/case.json")]
-fn native_stdio_fixture(fixture: Fixture<&str>) {
-    let case: Case = serde_json::from_str(fixture.content()).expect("native fixture schema");
-    assert!(!case.workspace_folders.is_empty(), "fixture has no roots");
-    assert!(!case.steps.is_empty(), "fixture has no steps");
-    let fixture_root = Path::new(fixture.path()).parent().unwrap();
-    let workspace = TestWorkspace::new(fixture_root, &case.documents, &case.workspace_folders);
+struct Client<'a> {
+    workspace: &'a TestWorkspace,
+    stdin: ChildStdin,
+    messages: mpsc::Receiver<Value>,
+    next_id: i64,
+}
+
+impl Client<'_> {
+    fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let id = self.next_id;
+        self.next_id += 1;
+        request_result(&mut self.stdin, &self.messages, id, method, params)
+    }
+
+    fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
+        send_message(
+            &mut self.stdin,
+            &json!({ "jsonrpc": "2.0", "method": method, "params": params }),
+        )
+    }
+
+    fn initialize(&mut self) -> Result<(), String> {
+        let folders: Vec<_> = self
+            .workspace
+            .folders
+            .iter()
+            .map(|name| json!({ "uri": self.workspace.uri(name), "name": name }))
+            .collect();
+        let result = self.request(
+            "initialize",
+            json!({
+                "rootUri": folders[0]["uri"],
+                "workspaceFolders": folders,
+                "capabilities": {}
+            }),
+        )?;
+        if result.get("capabilities").is_none() {
+            return Err(format!("initialize omitted capabilities: {result}"));
+        }
+        self.notify("initialized", json!({}))
+    }
+
+    fn open(&mut self, document: &str) -> Result<Value, String> {
+        let text = fs::read_to_string(self.workspace.root.join(document))
+            .map_err(|error| format!("read {document}: {error}"))?;
+        self.notify(
+            "textDocument/didOpen",
+            json!({ "textDocument": {
+                "uri": self.workspace.uri(document),
+                "languageId": "solcore", "version": 1, "text": text
+            }}),
+        )?;
+        self.diagnostics(document)
+    }
+
+    fn open_with_error(&mut self, document: &str) -> Result<Value, String> {
+        let diagnostics = self.open(document)?;
+        expect_error_diagnostic(&diagnostics, "")?;
+        Ok(diagnostics)
+    }
+
+    fn diagnostics(&self, document: &str) -> Result<Value, String> {
+        let uri = self.workspace.uri(document);
+        let message = recv_until(&self.messages, |message| {
+            message["method"] == "textDocument/publishDiagnostics"
+                && message["params"]["uri"] == uri.as_str()
+        })?;
+        if !message["params"]["diagnostics"].is_array() {
+            return Err(format!("missing diagnostics: {message}"));
+        }
+        Ok(message["params"]["diagnostics"].clone())
+    }
+}
+
+fn run_fixture(fixture: Fixture<&str>, check: impl FnOnce(&mut Client<'_>) -> Result<(), String>) {
+    // The entry is <case>/<workspace>/main.sol.txt.
+    let fixture_root = Path::new(fixture.path())
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let workspace = TestWorkspace::new(fixture_root);
     let mut child = Command::new(env!("CARGO_BIN_EXE_solcore-lsp"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -145,10 +170,10 @@ fn native_stdio_fixture(fixture: Fixture<&str>) {
         .spawn()
         .expect("spawn solcore-lsp");
 
-    let mut stdin = child.stdin.take().expect("child stdin");
+    let stdin = child.stdin.take().expect("child stdin");
     let stdout = child.stdout.take().expect("child stdout");
     let stderr = child.stderr.take().expect("child stderr");
-    let (messages_tx, messages_rx) = mpsc::channel();
+    let (messages_tx, messages) = mpsc::channel();
     let reader = thread::spawn(move || {
         let mut stdout = BufReader::new(stdout);
         while let Ok(message) = read_message(&mut stdout) {
@@ -163,8 +188,14 @@ fn native_stdio_fixture(fixture: Fixture<&str>) {
         output
     });
 
-    let result = run_case(&mut stdin, &messages_rx, &workspace, case);
-    let shutdown_result = shutdown_child(&mut child, stdin, &messages_rx);
+    let mut client = Client {
+        workspace: &workspace,
+        stdin,
+        messages,
+        next_id: 0,
+    };
+    let result = client.initialize().and_then(|_| check(&mut client));
+    let shutdown_result = shutdown_child(&mut child, client.stdin, &client.messages);
     if shutdown_result.is_err() {
         let _ = child.kill();
         let _ = child.wait();
@@ -176,120 +207,211 @@ fn native_stdio_fixture(fixture: Fixture<&str>) {
     }
 }
 
-fn run_case(
-    stdin: &mut ChildStdin,
-    messages_rx: &mpsc::Receiver<Value>,
-    workspace: &TestWorkspace,
-    case: Case,
-) -> Result<(), String> {
-    let folders: Vec<_> = case
-        .workspace_folders
-        .iter()
-        .map(|name| json!({ "uri": workspace.uri(name), "name": name }))
-        .collect();
-    let initialize = request_result(
-        stdin,
-        messages_rx,
-        0,
-        "initialize",
-        json!({
-            "rootUri": folders[0]["uri"],
-            "workspaceFolders": folders,
-            "capabilities": {}
-        }),
-    )?;
-    if initialize.get("capabilities").is_none() {
-        return Err(format!("initialize omitted capabilities: {initialize}"));
-    }
-    notify(stdin, "initialized", json!({}))?;
-    let mut published = BTreeMap::<String, Value>::new();
-    for (index, step) in case.steps.into_iter().enumerate() {
-        let id = index as i64 + 1;
-        match step {
-            Step::Open { document } => {
-                let text = fs::read_to_string(workspace.root.join(&document))
-                    .map_err(|error| format!("read {document}: {error}"))?;
-                notify(
-                    stdin,
-                    "textDocument/didOpen",
-                    json!({ "textDocument": {
-                        "uri": workspace.uri(&document),
-                        "languageId": "solcore", "version": 1, "text": text
-                    }}),
-                )?;
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/native/diagnostics/open_document", glob: "primary/main.sol.txt")]
+fn publishes_error_diagnostics(fixture: Fixture<&str>) {
+    run_fixture(fixture, |client| {
+        client.open_with_error("primary/main.sol").map(|_| ())
+    });
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/native/diagnostics/deleted_import", glob: "primary/main.sol.txt")]
+fn deleted_import_republishes_diagnostics(fixture: Fixture<&str>) {
+    run_fixture(fixture, |client| {
+        client.open_with_error("primary/main.sol")?;
+        fs::remove_file(client.workspace.root.join("primary/math.sol"))
+            .map_err(|error| format!("remove watched import: {error}"))?;
+        client.notify(
+            "workspace/didChangeWatchedFiles",
+            json!({ "changes": [{
+                "uri": client.workspace.uri("primary/math.sol"), "type": 3
+            }]}),
+        )?;
+        expect_error_diagnostic(&client.diagnostics("primary/main.sol")?, "file not found")
+    });
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/native/code_actions/published_diagnostic", glob: "primary/main.sol.txt")]
+fn code_actions_accept_published_diagnostics(fixture: Fixture<&str>) {
+    run_fixture(fixture, |client| {
+        let diagnostics = client.open_with_error("primary/main.sol")?;
+        let diagnostic = &diagnostics[0];
+        let result = client.request(
+            "textDocument/codeAction",
+            json!({
+                "textDocument": { "uri": client.workspace.uri("primary/main.sol") },
+                "range": diagnostic["range"],
+                "context": { "diagnostics": [diagnostic] }
+            }),
+        )?;
+        expect_result("code actions", &result, &json!([]))
+    });
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/native/formatting/document", glob: "primary/main.sol.txt")]
+fn document_formatting(fixture: Fixture<&str>) {
+    let expected = fs::read_to_string(
+        Path::new(fixture.path())
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("expected.sol.txt"),
+    )
+    .expect("formatted source");
+    run_fixture(fixture, |client| {
+        client.open_with_error("primary/main.sol")?;
+        let result = client.request(
+            "textDocument/formatting",
+            json!({
+                "textDocument": { "uri": client.workspace.uri("primary/main.sol") },
+                "options": { "tabSize": 2, "insertSpaces": true }
+            }),
+        )?;
+        expect_result(
+            "formatting",
+            &result,
+            &json!([{
+                "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 5, "character": 0 } },
+                "newText": expected
+            }]),
+        )
+    });
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/native/folding/document", glob: "primary/main.sol.txt")]
+fn document_folding(fixture: Fixture<&str>) {
+    run_fixture(fixture, |client| {
+        client.open_with_error("primary/main.sol")?;
+        let result = client.request(
+            "textDocument/foldingRange",
+            json!({
+                "textDocument": { "uri": client.workspace.uri("primary/main.sol") }
+            }),
+        )?;
+        expect_result(
+            "folding",
+            &result,
+            &json!([{
+                "startLine": 2, "startCharacter": 0, "endLine": 4, "endCharacter": 1
+            }]),
+        )
+    });
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/native/selection_range/expression", glob: "primary/main.sol.txt")]
+fn expression_selection_ranges(fixture: Fixture<&str>) {
+    run_fixture(fixture, |client| {
+        client.open_with_error("primary/main.sol")?;
+        let result = client.request(
+            "textDocument/selectionRange",
+            json!({
+                "textDocument": { "uri": client.workspace.uri("primary/main.sol") },
+                "positions": [{ "line": 3, "character": 10 }]
+            }),
+        )?;
+        let mut expected = None;
+        for ((start_line, start_character), (end_line, end_character)) in [
+            ((3, 9), (3, 15)),
+            ((3, 9), (3, 21)),
+            ((3, 2), (3, 22)),
+            ((3, 0), (3, 22)),
+            ((2, 28), (4, 1)),
+            ((2, 0), (4, 1)),
+            ((0, 0), (5, 0)),
+        ]
+        .into_iter()
+        .rev()
+        {
+            let mut range = json!({ "range": {
+                "start": { "line": start_line, "character": start_character },
+                "end": { "line": end_line, "character": end_character }
+            }});
+            if let Some(parent) = expected {
+                range["parent"] = parent;
             }
-            Step::Diagnostics {
-                document,
-                count,
-                contains,
-            } => {
-                let uri = workspace.uri(&document);
-                let message = recv_until(messages_rx, |message| {
-                    message["method"] == "textDocument/publishDiagnostics"
-                        && message["params"]["uri"] == uri.as_str()
-                })?;
-                let diagnostics = message["params"]["diagnostics"]
-                    .as_array()
-                    .ok_or_else(|| format!("missing diagnostics: {message}"))?;
-                if count.is_some_and(|count| diagnostics.len() != count) {
-                    return Err(format!("expected {count:?} diagnostics: {message}"));
-                }
-                for expected in contains {
-                    if !diagnostics.iter().any(|diagnostic| {
-                        expected.severity.is_none_or(|severity| {
-                            diagnostic["severity"].as_u64() == Some(severity)
-                        }) && expected.message_contains.as_ref().is_none_or(|text| {
-                            diagnostic["message"]
-                                .as_str()
-                                .is_some_and(|message| message.contains(text))
-                        })
-                    }) {
-                        return Err(format!("missing expected diagnostic: {message}"));
-                    }
-                }
-                published.insert(document, message["params"]["diagnostics"].clone());
-            }
-            Step::Request {
-                method,
-                mut params,
-                mut expected,
-            } => {
-                workspace.expand_uris(&mut params);
-                workspace.expand_uris(&mut expected);
-                let actual = request_result(stdin, messages_rx, id, &method, params)?;
-                expect_result(&method, &actual, &expected)?;
-            }
-            Step::CodeActions {
-                document,
-                mut expected,
-            } => {
-                let diagnostic = published
-                    .get(&document)
-                    .and_then(|diagnostics| diagnostics.get(0))
-                    .ok_or_else(|| format!("no published diagnostic for {document}"))?;
-                let actual = request_result(
-                    stdin,
-                    messages_rx,
-                    id,
-                    "textDocument/codeAction",
-                    json!({
-                        "textDocument": { "uri": workspace.uri(&document) },
-                        "range": diagnostic["range"],
-                        "context": { "diagnostics": [diagnostic] }
-                    }),
-                )?;
-                workspace.expand_uris(&mut expected);
-                expect_result("textDocument/codeAction", &actual, &expected)?;
-            }
-            Step::Notify { method, mut params } => {
-                workspace.expand_uris(&mut params);
-                notify(stdin, &method, params)?;
-            }
-            Step::RemoveFile { document } => {
-                fs::remove_file(workspace.root.join(&document))
-                    .map_err(|error| format!("remove {document}: {error}"))?;
-            }
+            expected = Some(range);
         }
+        expect_result("selection ranges", &result, &json!([expected]))
+    });
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/native/definition/unopened_import", glob: "primary/main.sol.txt")]
+fn definition_in_unopened_import(fixture: Fixture<&str>) {
+    run_fixture(fixture, |client| {
+        client.open_with_error("primary/main.sol")?;
+        let result = client.request(
+            "textDocument/definition",
+            json!({
+                "textDocument": { "uri": client.workspace.uri("primary/main.sol") },
+                "position": { "line": 3, "character": 10 }
+            }),
+        )?;
+        expect_result(
+            "definition",
+            &result,
+            &json!({
+                "uri": client.workspace.uri("primary/math.sol"),
+                "range": { "start": { "line": 0, "character": 9 }, "end": { "line": 0, "character": 15 } }
+            }),
+        )
+    });
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/native/workspace_symbols/changed_folders", glob: "primary/main.sol.txt")]
+fn workspace_folder_changes_update_symbols(fixture: Fixture<&str>) {
+    run_fixture(fixture, |client| {
+        expect_result(
+            "initial diagnostics",
+            &client.open("primary/main.sol")?,
+            &json!([]),
+        )?;
+        let symbols = json!([{
+            "name": "secondaryValue", "kind": 12,
+            "location": {
+                "uri": client.workspace.uri("secondary/secondary.sol"),
+                "range": { "start": { "line": 0, "character": 9 }, "end": { "line": 0, "character": 23 } }
+            }
+        }]);
+        let query = json!({ "query": "secondaryValue" });
+        let result = client.request("workspace/symbol", query.clone())?;
+        expect_result("initial symbols", &result, &symbols)?;
+
+        let folder = json!({ "uri": client.workspace.uri("secondary"), "name": "secondary" });
+        for (added, removed, expected) in [
+            (json!([]), json!([folder]), json!([])),
+            (json!([folder]), json!([]), symbols),
+        ] {
+            client.notify(
+                "workspace/didChangeWorkspaceFolders",
+                json!({
+                    "event": { "added": added, "removed": removed }
+                }),
+            )?;
+            // Wait for publication so the next request observes the updated roots.
+            expect_result(
+                "updated diagnostics",
+                &client.diagnostics("primary/main.sol")?,
+                &json!([]),
+            )?;
+            let result = client.request("workspace/symbol", query.clone())?;
+            expect_result("updated symbols", &result, &expected)?;
+        }
+        Ok(())
+    });
+}
+
+fn expect_error_diagnostic(diagnostics: &Value, message: &str) -> Result<(), String> {
+    if !diagnostics.as_array().is_some_and(|diagnostics| {
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic["severity"] == 1
+                && diagnostic["message"]
+                    .as_str()
+                    .is_some_and(|text| text.contains(message))
+        })
+    }) {
+        return Err(format!(
+            "missing error diagnostic containing {message:?}: {diagnostics}"
+        ));
     }
     Ok(())
 }
@@ -301,13 +423,6 @@ fn expect_result(method: &str, actual: &Value, expected: &Value) -> Result<(), S
         ));
     }
     Ok(())
-}
-
-fn notify(stdin: &mut ChildStdin, method: &str, params: Value) -> Result<(), String> {
-    send_message(
-        stdin,
-        &json!({ "jsonrpc": "2.0", "method": method, "params": params }),
-    )
 }
 fn request_result(
     stdin: &mut ChildStdin,

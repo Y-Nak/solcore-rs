@@ -32,8 +32,10 @@ fn generated_program(literal: u64, depth: usize, result_kind: u8) -> String {
     source
 }
 
-#[test]
-fn frontend_test_db_invalidates_a_query_started_before_file_seeding() {
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/incremental_cache/preseed", glob: "*.sol.txt")]
+fn frontend_test_db_invalidates_a_query_started_before_file_seeding(
+    fixture: dir_test::Fixture<&str>,
+) {
     let mut db = TestDb::default();
     let key = nameres::ModuleKey {
         library: nameres::LibraryId::Main,
@@ -44,7 +46,7 @@ fn frontend_test_db_invalidates_a_query_started_before_file_seeding() {
         assert!(nameres::module_diagnostics(&db, module).is_empty());
     }
 
-    let loaded = load_main_source(&mut db, "function main( {\n");
+    let loaded = load_main_source(&mut db, fixture.content());
     assert_eq!(loaded, key);
     let module = nameres::module_id_from_key(&db, &key);
     assert!(
