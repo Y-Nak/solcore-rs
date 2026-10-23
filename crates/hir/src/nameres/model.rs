@@ -606,8 +606,6 @@ pub struct BodyAssemblyResolution<'db> {
     pub span: Span<'db>,
     /// Enclosing source binding selected at this occurrence.
     pub resolution: Resolution<'db>,
-    /// Visible Yul locals that would capture a renamed source reference.
-    pub shadowing_names: Vec<String>,
 }
 
 /// A body binding and its source visibility, recorded by lexical resolution.

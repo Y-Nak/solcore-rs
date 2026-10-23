@@ -87,12 +87,9 @@ impl<'db> BodyResolver<'db, '_> {
         if !locals.contains(text)
             && let Some(resolution) = self.lookup_local(text)
         {
-            let mut shadowing_names = locals.iter().cloned().collect::<Vec<_>>();
-            shadowing_names.sort();
             self.map.assembly.push(BodyAssemblyResolution {
                 span: name.span(self.db),
                 resolution,
-                shadowing_names,
             });
         }
     }
