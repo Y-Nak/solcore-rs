@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::collections::BTreeMap;
 
 use hir::{
     anchor::DefId,
@@ -17,25 +17,6 @@ use solcore_test_utils::{
 };
 
 define_frontend_test_db!(TestDb, solcore_hir_ty);
-
-const ABI_SOURCE: &str = r#"
-pragma no-patterson-condition;
-pragma no-bounded-variable-condition;
-pragma no-coverage-condition;
-
-trait Generic<a,rep> {}
-trait ABIDeriving<self> {}
-trait ABIAttribs<self> {}
-trait ABIDecode<decoder,decoded> {}
-trait WordReader<reader> {}
-
-enum ABIDecoder<ty, reader> {ABIDecoder(reader)}
-enum Reader {Reader}
-
-impl WordReader<Reader> {}
-impl ABIAttribs<word> {}
-impl ABIDecode<ABIDecoder<word, Reader>,word> {}
-"#;
 
 fn class_def<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> DefId<'db> {
     module
@@ -83,10 +64,10 @@ fn decoder_ty<'db>(
     adt_ty(db, abi_module, "ABIDecoder", vec![decoded, reader])
 }
 
-#[test]
-fn derives_parameterized_abi_evidence_once() {
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/derived_abi_solver/derives_parameterized_abi_evidence_once", glob: "*.sol")]
+fn derives_parameterized_abi_evidence_once(fixture: dir_test::Fixture<&str>) {
     let mut db = TestDb::default();
-    let key = load_main_source(&mut db, &format!("{ABI_SOURCE}\nenum Box<a> {{Box(a)}}\n"));
+    let key = load_main_source(&mut db, fixture.content());
     let module_id = module_id_from_key(&db, &key);
     let file = db.module_file(module_id).expect("main source file");
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -159,15 +140,10 @@ fn derives_parameterized_abi_evidence_once() {
     ));
 }
 
-#[test]
-fn excludes_recursive_no_generic_and_manual_generic_adts() {
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/derived_abi_solver/excludes_recursive_no_generic_and_manual_generic_adts", glob: "*.sol")]
+fn excludes_recursive_no_generic_and_manual_generic_adts(fixture: dir_test::Fixture<&str>) {
     let mut db = TestDb::default();
-    let key = load_main_source(
-        &mut db,
-        &format!(
-            "{ABI_SOURCE}\npragma no-generic-instance-for Excluded;\nenum Eligible {{Eligible(word)}}\nenum Excluded {{Excluded(word)}}\nenum Manual {{Manual(word)}}\nenum Recursive {{Recursive(Recursive)}}\nimpl Generic<Manual,word> {{}}\n"
-        ),
-    );
+    let key = load_main_source(&mut db, fixture.content());
     let module_id = module_id_from_key(&db, &key);
     let file = db.module_file(module_id).expect("main source file");
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -204,13 +180,12 @@ fn excludes_recursive_no_generic_and_manual_generic_adts() {
     }
 }
 
-#[test]
-fn derives_abi_evidence_for_an_imported_adt_closure() {
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/solver/derived_abi_imported");
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/derived_abi_imported", glob: "main.sol")]
+fn derives_abi_evidence_for_an_imported_adt_closure(fixture: dir_test::Fixture<&str>) {
+    let fixture = std::path::Path::new(fixture.path()).parent().unwrap();
     let repo_root = repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
     let mut db = TestDb::default();
-    let entry = load_fixture_case(&mut db, &fixture, &repo_root, BTreeMap::new());
+    let entry = load_fixture_case(&mut db, fixture, &repo_root, BTreeMap::new());
     load_reachable_modules(&mut db, entry.clone());
 
     let main_id = module_id_from_key(&db, &entry);
@@ -254,13 +229,14 @@ fn derives_abi_evidence_for_an_imported_adt_closure() {
     ));
 }
 
-#[test]
-fn importing_the_marker_does_not_retroactively_activate_an_imported_adt() {
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/solver/derived_abi_imported_inactive");
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/derived_abi_imported_inactive", glob: "main.sol")]
+fn importing_the_marker_does_not_retroactively_activate_an_imported_adt(
+    fixture: dir_test::Fixture<&str>,
+) {
+    let fixture = std::path::Path::new(fixture.path()).parent().unwrap();
     let repo_root = repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
     let mut db = TestDb::default();
-    let entry = load_fixture_case(&mut db, &fixture, &repo_root, BTreeMap::new());
+    let entry = load_fixture_case(&mut db, fixture, &repo_root, BTreeMap::new());
     load_reachable_modules(&mut db, entry.clone());
 
     let main_id = module_id_from_key(&db, &entry);
@@ -297,13 +273,10 @@ fn importing_the_marker_does_not_retroactively_activate_an_imported_adt() {
     ));
 }
 
-#[test]
-fn excludes_contract_local_adts_with_inherited_type_binders() {
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/derived_abi_solver/excludes_contract_local_adts_with_inherited_type_binders", glob: "*.sol")]
+fn excludes_contract_local_adts_with_inherited_type_binders(fixture: dir_test::Fixture<&str>) {
     let mut db = TestDb::default();
-    let key = load_main_source(
-        &mut db,
-        &format!("{ABI_SOURCE}\ncontract C<t> {{\nenum Local<a> {{Local(a)}}\n}}\n"),
-    );
+    let key = load_main_source(&mut db, fixture.content());
     let module_id = module_id_from_key(&db, &key);
     let file = db.module_file(module_id).expect("main source file");
     let module = parse_file_to_hir(&db, file).module(&db);

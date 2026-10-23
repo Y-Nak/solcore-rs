@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fmt::Write as _,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -121,18 +120,12 @@ impl nameres::Db for TestDb {
 #[salsa::db]
 impl solcore_hir_ty::Db for TestDb {}
 
-#[test]
-fn unrelated_signature_edit_does_not_rerun_every_body_inference() {
-    let before = r#"
-function id(x: word) returns (word) { return x; }
-function unrelated(x: word) returns (word) { return 0; }
-function main() returns (word) { return id(1); }
-"#;
-    let after = r#"
-function id(x: word) returns (word) { return x; }
-function unrelated(x: bool) returns (word) { return 0; }
-function main() returns (word) { return id(1); }
-"#;
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/incremental_cache/unrelated_signature_edit_does_not_rerun_every_body_inference", glob: "before.sol")]
+fn unrelated_signature_edit_does_not_rerun_every_body_inference(fixture: dir_test::Fixture<&str>) {
+    let before = fixture.content();
+    let after =
+        std::fs::read_to_string(std::path::Path::new(fixture.path()).with_file_name("after.sol"))
+            .expect("edited source");
     let (mut db, file, key) = db_with_main(before);
 
     {
@@ -162,28 +155,12 @@ function main() returns (word) { return id(1); }
     }
 }
 
-#[test]
-fn same_obligation_body_edit_does_not_resolve_solver_query() {
-    let before = r#"
-trait C<a> {}
-impl C<word> {}
-function use<a>(x: a) returns (word) where a: C { return 0; }
-
-function main() returns (word) {
-  let y: word = 1;
-  return use(1);
-}
-"#;
-    let after = r#"
-trait C<a> {}
-impl C<word> {}
-function use<a>(x: a) returns (word) where a: C { return 0; }
-
-function main() returns (word) {
-  let y: word = 2;
-  return use(1);
-}
-"#;
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/incremental_cache/same_obligation_body_edit_does_not_resolve_solver_query", glob: "before.sol")]
+fn same_obligation_body_edit_does_not_resolve_solver_query(fixture: dir_test::Fixture<&str>) {
+    let before = fixture.content();
+    let after =
+        std::fs::read_to_string(std::path::Path::new(fixture.path()).with_file_name("after.sol"))
+            .expect("edited source");
     let (mut db, file, key) = db_with_main(before);
 
     {
@@ -217,18 +194,12 @@ function main() returns (word) {
     }
 }
 
-#[test]
-fn instance_soundness_edit_is_backdated_into_module_diagnostics() {
-    let before = r#"
-enum Box<a> {Box(word)}
-trait C<a,b> {}
-impl<a,b> C<Box<a>,b> {}
-"#;
-    let after = r#"
-enum Box<a> {Box(word)}
-trait C<a,b> {}
-impl<a> C<Box<a>,word> {}
-"#;
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/incremental_cache/instance_soundness_edit_is_backdated_into_module_diagnostics", glob: "before.sol")]
+fn instance_soundness_edit_is_backdated_into_module_diagnostics(fixture: dir_test::Fixture<&str>) {
+    let before = fixture.content();
+    let after =
+        std::fs::read_to_string(std::path::Path::new(fixture.path()).with_file_name("after.sol"))
+            .expect("edited source");
     let (mut db, file, key) = db_with_main(before);
 
     {
@@ -261,18 +232,11 @@ impl<a> C<Box<a>,word> {}
     }
 }
 
-#[test]
-fn instance_soundness_reuses_scope_resolution_for_many_instances() {
-    const INSTANCE_COUNT: usize = 128;
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/incremental_cache/instance_soundness_reuses_scope_resolution_for_many_instances", glob: "main.sol")]
+fn instance_soundness_reuses_scope_resolution_for_many_instances(fixture: dir_test::Fixture<&str>) {
+    let source = fixture.content();
 
-    let mut source = String::new();
-    for index in 0..INSTANCE_COUNT {
-        writeln!(source, "trait AuditClass{index}<a> {{}}").unwrap();
-        writeln!(source, "impl AuditClass{index}<word> {{}}").unwrap();
-    }
-    source.push_str("function main() returns (word) { return 0; }\n");
-
-    let (db, _file, key) = db_with_file_backed_main(&source);
+    let (db, _file, key) = db_with_file_backed_main(source);
     let module = module_id_from_key(&db, &key);
     let _ = db.take_executed();
     let diagnostics = instance_soundness_diagnostics(&db, module);
@@ -286,12 +250,9 @@ fn instance_soundness_reuses_scope_resolution_for_many_instances() {
     );
 }
 
-#[test]
-fn generic_lookup_does_not_reresolve_all_item_types() {
-    let source = r#"
-trait Generic<a,rep> {}
-enum Box<a> {Box(a)}
-"#;
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/incremental_cache/generic_lookup_does_not_reresolve_all_item_types", glob: "main.sol")]
+fn generic_lookup_does_not_reresolve_all_item_types(fixture: dir_test::Fixture<&str>) {
+    let source = fixture.content();
 
     let (db, file, _key) = db_with_main(source);
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -308,18 +269,12 @@ enum Box<a> {Box(a)}
     );
 }
 
-#[test]
-fn contract_body_edit_does_not_rerun_dispatch_surface_query() {
-    let before = r#"
-contract C {
-  function get() public returns (word) { return 1; }
-}
-"#;
-    let after = r#"
-contract C {
-  function get() public returns (word) { return 2; }
-}
-"#;
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/incremental_cache/contract_body_edit_does_not_rerun_dispatch_surface_query", glob: "before.sol")]
+fn contract_body_edit_does_not_rerun_dispatch_surface_query(fixture: dir_test::Fixture<&str>) {
+    let before = fixture.content();
+    let after =
+        std::fs::read_to_string(std::path::Path::new(fixture.path()).with_file_name("after.sol"))
+            .expect("edited source");
     let (mut db, file, _key) = db_with_main(before);
 
     {
@@ -352,20 +307,20 @@ contract C {
     }
 }
 
-#[test]
-fn import_diagnostic_span_edit_does_not_rerun_unrelated_body_inference() {
-    let before = concat!(
-        "\n",
-        "import {f} from util;  \n",
-        "function f() returns (word) { return 1; }\n",
-        "function main() returns (word) { return f(); }\n",
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/incremental_cache/import_diagnostic_span_edit_does_not_rerun_unrelated_body_inference", glob: "before.sol.txt")]
+fn import_diagnostic_span_edit_does_not_rerun_unrelated_body_inference(
+    fixture: dir_test::Fixture<&str>,
+) {
+    let before = fixture.content();
+    let after = std::fs::read_to_string(
+        std::path::Path::new(fixture.path()).with_file_name("after.sol.txt"),
+    )
+    .expect("edited source");
+    let (mut db, file, key) = db_with_selected_import_conflict(
+        before,
+        &std::fs::read_to_string(std::path::Path::new(fixture.path()).with_file_name("util.sol"))
+            .expect("imported source"),
     );
-    let after = r#"
-import {f} from util;
-function f() returns (word) { return 1; }
-function main() returns (word) { return f(); }
-"#;
-    let (mut db, file, key) = db_with_selected_import_conflict(before);
 
     {
         let module = module_id_from_key(&db, &key);
@@ -396,30 +351,12 @@ function main() returns (word) { return f(); }
     }
 }
 
-#[test]
-fn desugar_body_edit_does_not_rerun_unrelated_body_inference() {
-    let before = r#"
-function choose(b: bool, x: word, y: word) returns (word) {
-  let p: (word, bool) = (x, true);
-  let selected: word = (b ? x : y);
-  match (p) {
-  case (head, flag) { return selected; }}
-}
-
-function stable(x: word) returns (word) { return x; }
-function main() returns (word) { return stable(choose(false, 1, 2)); }
-"#;
-    let after = r#"
-function choose(b: bool, x: word, y: word) returns (word) {
-  let p: (word, bool) = (x, false);
-  let selected: word = (b ? x : y);
-  match (p) {
-  case (head, flag) { return selected; }}
-}
-
-function stable(x: word) returns (word) { return x; }
-function main() returns (word) { return stable(choose(false, 1, 2)); }
-"#;
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/incremental_cache/desugar_body_edit_does_not_rerun_unrelated_body_inference", glob: "before.sol")]
+fn desugar_body_edit_does_not_rerun_unrelated_body_inference(fixture: dir_test::Fixture<&str>) {
+    let before = fixture.content();
+    let after =
+        std::fs::read_to_string(std::path::Path::new(fixture.path()).with_file_name("after.sol"))
+            .expect("edited source");
     let (mut db, file, key) = db_with_main(before);
 
     {
@@ -488,7 +425,7 @@ fn db_with_main_url(content: &str, url: &str) -> (TestDb, SourceFile, ModuleKey)
     (db, file, key)
 }
 
-fn db_with_selected_import_conflict(content: &str) -> (TestDb, SourceFile, ModuleKey) {
+fn db_with_selected_import_conflict(content: &str, util: &str) -> (TestDb, SourceFile, ModuleKey) {
     let mut db = TestDb::default();
     db.module_tree = Some(ModuleTree::new(
         &db,
@@ -505,7 +442,7 @@ fn db_with_selected_import_conflict(content: &str) -> (TestDb, SourceFile, Modul
     let util_file = SourceFile::new(
         &db,
         "memory:///util.sol".parse().expect("valid URL"),
-        Some("function f() returns (word) { return 0; }\nexport { f };\n".to_owned()),
+        Some(util.to_owned()),
     );
     db.insert_module_file(util_key, util_file);
 

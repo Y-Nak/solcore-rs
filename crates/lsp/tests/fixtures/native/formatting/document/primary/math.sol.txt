@@ -1,0 +1,5 @@
+function double(x: word) returns (word) {
+  return x;
+}
+
+export { double };

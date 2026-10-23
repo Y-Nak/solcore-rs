@@ -53,17 +53,10 @@ fn adt_ty<'db>(db: &'db TestDb, module: Module<'db>, name: &str, args: Vec<Ty<'d
     )
 }
 
-#[test]
-fn derived_clause_constrains_every_declared_type_parameter() {
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/derived_class_solver/derived_clause_constrains_every_declared_type_parameter", glob: "*.sol")]
+fn derived_clause_constrains_every_declared_type_parameter(fixture: dir_test::Fixture<&str>) {
     let mut db = TestDb::default();
-    let key = load_main_source(
-        &mut db,
-        r#"
-trait Marker<a> {}
-impl Marker<word> {}
-#[derive(Marker)] enum Phantom<a> { Phantom(word) }
-"#,
-    );
+    let key = load_main_source(&mut db, fixture.content());
     let module_id = module_id_from_key(&db, &key);
     let file = db.module_file(module_id).expect("main source file");
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -106,16 +99,10 @@ impl Marker<word> {}
     ));
 }
 
-#[test]
-fn duplicate_derive_targets_remain_distinct_solver_candidates() {
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/derived_class_solver/duplicate_derive_targets_remain_distinct_solver_candidates", glob: "*.sol")]
+fn duplicate_derive_targets_remain_distinct_solver_candidates(fixture: dir_test::Fixture<&str>) {
     let mut db = TestDb::default();
-    let key = load_main_source(
-        &mut db,
-        r#"
-trait Marker<a> {}
-#[derive(Marker, Marker)] enum Target {}
-"#,
-    );
+    let key = load_main_source(&mut db, fixture.content());
     let module_id = module_id_from_key(&db, &key);
     let file = db.module_file(module_id).expect("main source file");
     let module = parse_file_to_hir(&db, file).module(&db);
@@ -141,17 +128,10 @@ trait Marker<a> {}
     );
 }
 
-#[test]
-fn manual_and_derived_instances_report_the_usual_overlap() {
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/derived_class_solver/manual_and_derived_instances_report_the_usual_overlap", glob: "*.sol")]
+fn manual_and_derived_instances_report_the_usual_overlap(fixture: dir_test::Fixture<&str>) {
     let mut db = TestDb::default();
-    let key = load_main_source(
-        &mut db,
-        r#"
-trait Marker<a> {}
-#[derive(Marker)] enum Target {}
-impl Marker<Target> {}
-"#,
-    );
+    let key = load_main_source(&mut db, fixture.content());
     let module = module_id_from_key(&db, &key);
     assert!(
         solcore_hir_ty::instance_soundness_diagnostics(&db, module)
@@ -163,18 +143,12 @@ impl Marker<Target> {}
     );
 }
 
-#[test]
-fn generic_contract_capture_does_not_create_an_unconditional_clause() {
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/derived_class_solver/generic_contract_capture_does_not_create_an_unconditional_clause", glob: "*.sol")]
+fn generic_contract_capture_does_not_create_an_unconditional_clause(
+    fixture: dir_test::Fixture<&str>,
+) {
     let mut db = TestDb::default();
-    let key = load_main_source(
-        &mut db,
-        r#"
-trait Marker<a> {}
-contract C<t> {
-  #[derive(Marker)] enum Local { Local(t) }
-}
-"#,
-    );
+    let key = load_main_source(&mut db, fixture.content());
     let module = module_id_from_key(&db, &key);
     assert!(derived_class_plans(&db, module).is_empty());
     assert!(
@@ -188,16 +162,10 @@ contract C<t> {
     );
 }
 
-#[test]
-fn multi_parameter_class_derive_is_rejected_at_the_declaration() {
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/derived_class_solver/multi_parameter_class_derive_is_rejected_at_the_declaration", glob: "*.sol")]
+fn multi_parameter_class_derive_is_rejected_at_the_declaration(fixture: dir_test::Fixture<&str>) {
     let mut db = TestDb::default();
-    let key = load_main_source(
-        &mut db,
-        r#"
-trait Convert<a,r> {}
-#[derive(Convert)] enum Target {}
-"#,
-    );
+    let key = load_main_source(&mut db, fixture.content());
     let module = module_id_from_key(&db, &key);
     assert!(derived_class_plans(&db, module).is_empty());
     assert!(
@@ -212,13 +180,12 @@ trait Convert<a,r> {}
     );
 }
 
-#[test]
-fn reexport_edges_do_not_leak_derived_instances() {
-    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/solver/derived_reexport_visibility");
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/solver/derived_reexport_visibility", glob: "main.sol")]
+fn reexport_edges_do_not_leak_derived_instances(fixture: dir_test::Fixture<&str>) {
+    let fixture = std::path::Path::new(fixture.path()).parent().unwrap();
     let repo_root = repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
     let mut db = TestDb::default();
-    let entry = load_fixture_case(&mut db, &fixture, &repo_root, BTreeMap::new());
+    let entry = load_fixture_case(&mut db, fixture, &repo_root, BTreeMap::new());
     load_reachable_modules(&mut db, entry.clone());
 
     let main = module_id_from_key(&db, &entry);
@@ -258,4 +225,4 @@ fn reexport_edges_do_not_leak_derived_instances() {
         Solution::NoSolution
     ));
 }
-use std::{collections::BTreeMap, path::PathBuf};
+use std::collections::BTreeMap;
