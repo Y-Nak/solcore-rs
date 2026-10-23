@@ -256,14 +256,7 @@ impl<'db> InferCtx<'db> {
                 self.pop_sail_scope();
                 ty
             }
-            StmtKind::Assembly { body: yul_body } => {
-                let (new_binds, ty) = self.infer_yul_block(yul_body);
-                let word = self.word();
-                for name in new_binds {
-                    self.add_sail_local(name, word.clone());
-                }
-                ty
-            }
+            StmtKind::Assembly { body: yul_body } => self.infer_yul_block(yul_body),
             StmtKind::Break | StmtKind::Continue => self.unit(),
             StmtKind::Error => InferTy::Error,
         }

@@ -14,7 +14,9 @@ struct YulScope<'db> {
 }
 
 impl<'db> InferCtx<'db> {
-    pub(super) fn infer_yul_block(&mut self, body: &[YulStmt<'db>]) -> (Vec<String>, InferTy<'db>) {
+    pub(super) fn infer_yul_block(&mut self, body: &[YulStmt<'db>]) -> InferTy<'db> {
+        // Assembly can access surrounding Sail locals, but its declarations
+        // belong only to this assembly block's Yul scope.
         let mut scopes = vec![YulScope::default()];
         self.infer_yul_block_scoped(body, &mut scopes)
     }
@@ -23,29 +25,26 @@ impl<'db> InferCtx<'db> {
         &mut self,
         body: &[YulStmt<'db>],
         scopes: &mut Vec<YulScope<'db>>,
-    ) -> (Vec<String>, InferTy<'db>) {
+    ) -> InferTy<'db> {
         self.predeclare_yul_functions(body, scopes);
-        let mut binds = Vec::new();
         let mut ty = self.unit();
         for stmt in body {
-            let (new_binds, stmt_ty) = self.infer_yul_stmt(stmt, scopes);
-            binds.extend(new_binds);
-            ty = stmt_ty;
+            ty = self.infer_yul_stmt(stmt, scopes);
         }
-        (binds, ty)
+        ty
     }
 
     fn infer_yul_stmt(
         &mut self,
         stmt: &YulStmt<'db>,
         scopes: &mut Vec<YulScope<'db>>,
-    ) -> (Vec<String>, InferTy<'db>) {
+    ) -> InferTy<'db> {
         match &stmt.kind {
             YulStmtKind::Block(body) => {
                 scopes.push(YulScope::default());
                 self.infer_yul_block_scoped(body, scopes);
                 scopes.pop();
-                (Vec::new(), self.unit())
+                self.unit()
             }
             YulStmtKind::Let { names, init } => {
                 if let Some(init) = init {
@@ -57,14 +56,10 @@ impl<'db> InferCtx<'db> {
                         init_ty,
                     );
                 }
-                let binds = names
-                    .iter()
-                    .map(|name| (*name.atom()).text(self.db).to_owned())
-                    .collect::<Vec<_>>();
-                for name in &binds {
-                    self.add_yul_local(scopes, name);
+                for name in names {
+                    self.add_yul_local(scopes, (*name.atom()).text(self.db));
                 }
-                (binds, self.unit())
+                self.unit()
             }
             YulStmtKind::Assign { names, value } => {
                 let value_ty = self.infer_yul_expr(value, scopes);
@@ -85,15 +80,15 @@ impl<'db> InferCtx<'db> {
                         }
                     }
                 }
-                (Vec::new(), self.unit())
+                self.unit()
             }
-            YulStmtKind::Expr(expr) => (Vec::new(), self.infer_yul_expr(expr, scopes)),
+            YulStmtKind::Expr(expr) => self.infer_yul_expr(expr, scopes),
             YulStmtKind::If { cond, body } => {
                 self.infer_yul_expr(cond, scopes);
                 scopes.push(YulScope::default());
                 self.infer_yul_block_scoped(body, scopes);
                 scopes.pop();
-                (Vec::new(), self.unit())
+                self.unit()
             }
             YulStmtKind::For {
                 init,
@@ -111,7 +106,7 @@ impl<'db> InferCtx<'db> {
                 self.infer_yul_block_scoped(post, scopes);
                 scopes.pop();
                 scopes.pop();
-                (Vec::new(), self.unit())
+                self.unit()
             }
             YulStmtKind::Switch {
                 expr,
@@ -127,7 +122,7 @@ impl<'db> InferCtx<'db> {
                     self.infer_yul_block_scoped(default, scopes);
                     scopes.pop();
                 }
-                (Vec::new(), self.unit())
+                self.unit()
             }
             YulStmtKind::FunctionDef {
                 params, rets, body, ..
@@ -141,12 +136,10 @@ impl<'db> InferCtx<'db> {
                 }
                 self.infer_yul_block_scoped(body, scopes);
                 scopes.pop();
-                (Vec::new(), self.unit())
+                self.unit()
             }
-            YulStmtKind::Leave | YulStmtKind::Break | YulStmtKind::Continue => {
-                (Vec::new(), self.unit())
-            }
-            YulStmtKind::Error => (Vec::new(), InferTy::Error),
+            YulStmtKind::Leave | YulStmtKind::Break | YulStmtKind::Continue => self.unit(),
+            YulStmtKind::Error => InferTy::Error,
         }
     }
 

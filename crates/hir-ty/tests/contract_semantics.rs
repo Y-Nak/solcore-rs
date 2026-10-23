@@ -448,6 +448,54 @@ contract C {{
 }
 
 #[test]
+fn yul_assembly_bindings_do_not_escape_into_later_assembly() {
+    let diagnostics = diagnostics(
+        r#"
+contract C {
+  function main() returns (word) {
+    assembly { let temporary := 1 }
+    assembly { pop(temporary) }
+    return 0;
+  }
+}
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_UNKNOWN_YUL_NAME)
+                && diagnostic.message.contains("temporary")
+        }),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn yul_assembly_shadowing_preserves_outer_sail_variable_types() {
+    for operation in ["pop(value)", "value := 1"] {
+        let source = format!(
+            r#"
+contract C {{
+  function main() returns (bool) {{
+    let value: bool = true;
+    assembly {{ let value := 1 }}
+    assembly {{ {operation} }}
+    return value;
+  }}
+}}
+"#,
+        );
+        let diagnostics = diagnostics(&source);
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_NON_WORD_YUL_VAR)
+                    && diagnostic.message.contains("value")
+            }),
+            "{operation}: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn yul_for_body_values_do_not_leak_into_the_post_block() {
     let diagnostics = diagnostics(
         r#"
