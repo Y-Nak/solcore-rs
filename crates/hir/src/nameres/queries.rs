@@ -147,7 +147,7 @@ pub fn resolve_body_with_imports_and_policy<'db>(
     let scope = item_scope_facts(db, context.module);
     let mut resolver = BodyResolver::new(db, &scope, imports, context.enclosing_contract);
     resolver.with_type_vars(&context.type_vars, |resolver| {
-        resolver.with_scope(|resolver| {
+        resolver.with_scope(body.span(db), |resolver| {
             for (index, param) in context.params.iter().enumerate() {
                 resolver.add_param(body, index, &param.name);
             }

@@ -1,0 +1,1 @@
+function id(comptime value: word) returns (word) { return value; }

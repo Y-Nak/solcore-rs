@@ -252,13 +252,10 @@ impl<'db> InferCtx<'db> {
         };
         let info = self.lookup_adt_info(*def)?;
         let ctor = info.adt.ctors(self.db).first()?;
-        if def.file(self.db) != self.module.def_id_value(self.db).file(self.db) {
-            // A projection exposes the product representation just like a
-            // constructor pattern. Respect opaque exports, including aliases
-            // and qualified imports, by comparing constructor identities.
-            if !self.is_imported_adt_ctor_visible(*def, hir_nameres::CtorIndex::from_usize(0)) {
-                return None;
-            }
+        // A projection exposes the product representation just like a
+        // constructor pattern.
+        if !self.is_adt_ctor_visible(*def, hir_nameres::CtorIndex::from_usize(0)) {
+            return None;
         }
         let field = self.field_name(body, expr);
         let index = ctor
@@ -385,10 +382,8 @@ impl<'db> InferCtx<'db> {
                     .enumerate()
                     .any(|(index, ctor)| {
                         ident_text(self.db, &ctor.name) == "Proxy"
-                            && self.is_imported_adt_ctor_visible(
-                                def,
-                                hir_nameres::CtorIndex::from_usize(index),
-                            )
+                            && self
+                                .is_adt_ctor_visible(def, hir_nameres::CtorIndex::from_usize(index))
                     })
             });
             if !visible {
@@ -1065,11 +1060,13 @@ impl<'db> InferCtx<'db> {
     }
 
     fn is_concat_lit_callee(&self, body: FuncBody<'db>, callee: Id<Expr<'db>>) -> bool {
-        match &body.exprs(self.db).get(callee).kind {
-            ExprKind::Ident(name) => (*name.atom()).text(self.db) == "concatLit",
-            ExprKind::Field { field, .. } => (*field.atom()).text(self.db) == "concatLit",
-            _ => false,
-        }
+        matches!(
+            self.expr_resolutions.get(&(body, callee)),
+            Some(hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Function,
+            }) if crate::support::is_canonical_std_def_named(self.db, *def, "concatLit")
+        )
     }
 
     pub(super) fn expected_string_lit_ty(
@@ -1205,8 +1202,8 @@ impl<'db> InferCtx<'db> {
         let Some(expected) = expected else {
             return (None, None);
         };
-        let expected = self.normalize_aliases(expected);
-        match self.engine.resolve(expected.clone()) {
+        let expected = self.expected_shape_ty(expected);
+        match expected.clone() {
             InferTy::Function { params, ret } => {
                 if params.len() != param_count {
                     self.diagnostics.push(TypeckDiagnostic::WrongArity {

@@ -1,0 +1,16 @@
+{
+  "documents": [
+    "main.sol",
+    "math.sol"
+  ],
+  "checks": [
+    {
+      "kind": "rename",
+      "at": {
+        "needle": "local"
+      },
+      "new_name": "value",
+      "accepted": false
+    }
+  ]
+}

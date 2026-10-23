@@ -1,0 +1,3 @@
+function value() returns (word) { return 7; }
+function broken() returns (word) { return missing; }
+function main() returns (word) { return value(); }

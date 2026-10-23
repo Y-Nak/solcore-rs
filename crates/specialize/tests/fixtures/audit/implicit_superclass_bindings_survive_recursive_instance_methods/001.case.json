@@ -1,0 +1,11 @@
+{
+  "loader": "bare",
+  "checks": [
+    {
+      "check": "function_count",
+      "max": 9
+    }
+  ],
+  "source": "001.sol",
+  "max_depth": 16
+}

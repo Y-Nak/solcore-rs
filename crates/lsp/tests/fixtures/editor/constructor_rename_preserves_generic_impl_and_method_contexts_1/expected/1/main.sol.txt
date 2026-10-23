@@ -1,0 +1,6 @@
+enum Choice<a> { Selected(a), Other }
+trait Maker<a> { function make(x: a) returns (Choice<a>); function take(x: Choice<a>, defaultValue: a) returns (a); }
+impl<a> Maker<a> {
+function make(x: a) returns (Choice<a>) { return .Selected(x); }
+function take(x: Choice<a>, defaultValue: a) returns (a) { match (x) { case .Selected(y) { return y; } case .Other { return defaultValue; } } }
+}

@@ -2,16 +2,13 @@
 
 use hir::{
     anchor::DefId,
-    ast::{
-        function::{FuncParam, PatKind, StmtKind},
-        item::{ContractItem, Item, Module},
-    },
+    ast::item::{ContractItem, Item, Module},
     input::SourceFile,
     nameres::{
         BuiltinKind, DefResolutionKind, ImportedNames, LocalBinding, Namespace, Resolution,
         ScopeEntry, TypeVarBinding,
     },
-    span::{Span, Spanned, SpannedElem},
+    span::Span,
 };
 use lsp_types::{CompletionItem, CompletionItemKind, CompletionResponse, Position, Url};
 
@@ -150,17 +147,11 @@ fn qualified_completion_context(text: &str, offset: u32) -> Option<QualifiedComp
 }
 
 fn is_qualified_path_char(ch: char) -> bool {
-    ch == '.' || ch == '-' || ch == '_' || ch.is_alphanumeric()
+    ch == '.' || ch == '_' || ch.is_alphanumeric()
 }
 
 fn is_identifier(text: &str) -> bool {
-    text.split('-').all(is_identifier_chunk)
-}
-
-fn is_identifier_chunk(text: &str) -> bool {
-    let mut chars = text.chars();
-    chars.next().is_some_and(char::is_alphabetic)
-        && chars.all(|ch| ch == '_' || ch.is_alphanumeric())
+    parser::is_valid_identifier(text)
 }
 
 fn add_qualified_completions<'db>(
@@ -357,15 +348,6 @@ fn add_body_completions<'db>(
         &sig.type_vars,
     ));
 
-    for param in sig.params.atom() {
-        if let Some(name) = param_name(param) {
-            completions.push(
-                name.atom().text(db).to_owned(),
-                CompletionItemKind::VARIABLE,
-                Some("parameter"),
-            );
-        }
-    }
     for type_var in &type_vars {
         completions.push(
             type_var.name.atom().text(db).to_owned(),
@@ -399,48 +381,23 @@ fn add_body_completions<'db>(
         hir::nameres::NameresDiagnosticPolicy::Emit,
     );
 
-    for binding in &body_map.stmt_bindings {
-        let Resolution::Local(LocalBinding::Let { .. }) = &binding.resolution else {
-            continue;
-        };
-        let stmt = binding.body.stmts(db).get(binding.stmt);
-        if let StmtKind::Let { name, .. } = &stmt.kind {
-            add_local_if_visible(db, file, offset, name, completions);
+    for binding in body_map.scoped_bindings.iter().rev() {
+        let scope = binding.scope.resolve_to_absolute(db);
+        if scope.file() == file
+            && scope.start().as_u32() <= offset
+            && offset < scope.end().as_u32()
+            && span_ends_before_offset(db, binding.introduced_after, file, offset)
+        {
+            completions.push(
+                binding.name.clone(),
+                CompletionItemKind::VARIABLE,
+                Some(if matches!(binding.resolution, Resolution::Param(_)) {
+                    "parameter"
+                } else {
+                    "local"
+                }),
+            );
         }
-    }
-    for binding in &body_map.pats {
-        let Resolution::Local(LocalBinding::Pattern { .. }) = &binding.resolution else {
-            continue;
-        };
-        let pat = binding.body.pats(db).get(binding.pat);
-        if let PatKind::Var(name) = &pat.kind {
-            add_local_if_visible(db, file, offset, name, completions);
-        }
-    }
-}
-
-fn param_name<'a, 'db>(
-    param: &'a FuncParam<'db>,
-) -> Option<&'a SpannedElem<'db, hir::ast::Ident<'db>>> {
-    match param {
-        FuncParam::Typed { name, .. } | FuncParam::Untyped { name, .. } => Some(name),
-        FuncParam::Error { .. } => None,
-    }
-}
-
-fn add_local_if_visible<'db>(
-    db: &'db vfs::AnalysisHost,
-    file: SourceFile,
-    offset: u32,
-    name: &SpannedElem<'db, hir::ast::Ident<'db>>,
-    completions: &mut CompletionAccumulator,
-) {
-    if span_ends_before_offset(db, name.span(db), file, offset) {
-        completions.push(
-            name.atom().text(db).to_owned(),
-            CompletionItemKind::VARIABLE,
-            Some("local"),
-        );
     }
 }
 
@@ -714,24 +671,19 @@ mod tests {
         assert_no_completion(&items, "Eq.eq");
     }
 
-    #[test]
-    fn qualified_context_accepts_only_lexer_shaped_hyphenated_identifiers() {
-        let valid = "foo-bar.member-prefix";
-        assert_eq!(
-            qualified_completion_context(valid, valid.len() as u32),
-            Some(QualifiedCompletionContext {
-                qualifier: "foo-bar".to_owned(),
-                member_prefix: "member-prefix".to_owned(),
-            })
-        );
-
-        for invalid in ["foo-.member", "foo--bar.member", "foo.-member"] {
-            assert_eq!(
-                qualified_completion_context(invalid, invalid.len() as u32),
-                None,
-                "unexpectedly accepted {invalid:?}"
-            );
+    #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/completion_context", glob: "*.json")]
+    fn qualified_completion_context_fixture(fixture: dir_test::Fixture<&str>) {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Case {
+            source: String,
+            expected: Option<(String, String)>,
         }
+        let case: Case =
+            serde_json::from_str(fixture.content()).expect("completion context fixture");
+        let actual = qualified_completion_context(&case.source, case.source.len() as u32)
+            .map(|context| (context.qualifier, context.member_prefix));
+        assert_eq!(actual, case.expected, "{}", case.source);
     }
 
     fn world_with_module(main: &str, module_path: &str, module_source: &str) -> (WorldState, Url) {

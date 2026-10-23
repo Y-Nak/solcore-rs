@@ -1,0 +1,1 @@
+import * from std; import * from std.dispatch; contract C { enum Choice { Choice, Other } function main() returns (word) { match (Choice()) { case (value) { return 7; } } } }

@@ -301,6 +301,11 @@ fn needs_space(
     let (Some(left), Some(right)) = (previous.token(), current.token()) else {
         return true;
     };
+    if layout.pragma_hyphens.contains(&previous.range.start)
+        || layout.pragma_hyphens.contains(&current.range.start)
+    {
+        return false;
+    }
     if matches!(
         right,
         Token::Comma | Token::Semi | Token::RParen | Token::RBracket

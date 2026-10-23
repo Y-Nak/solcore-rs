@@ -913,11 +913,18 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                 );
                 let mut normalizer =
                     AliasNormalizer::new(self.db, self.hir_module, &self.item_resolutions);
-                let instance_givens = instance
+                let mut instance_givens = instance
                     .preds(self.db)
                     .iter()
                     .map(|pred| normalizer.normalize_pred(instance_lowerer.lower_pred(*pred)))
                     .collect::<Vec<_>>();
+                let head =
+                    normalizer.normalize_pred(instance_lowerer.lower_pred(instance.head(self.db)));
+                instance_givens.extend(crate::direct_superclass_predicates(
+                    self.db,
+                    self.trait_env.base(self.db),
+                    head,
+                ));
                 self.diagnostics.extend(
                     normalizer
                         .take_errors()

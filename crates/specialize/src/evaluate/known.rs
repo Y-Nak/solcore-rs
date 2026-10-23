@@ -1,14 +1,15 @@
+use hir::string_literal::encode_string_literal;
 use hir::{ast::function::LitKind, span::Span};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::{CEnv, TypeReg, VEnv, assigned::AssignedNames, value::BigInt};
+use super::{TypeReg, VEnv, value::BigInt};
 use crate::{
+    decode_string_literal,
     ir::{
-        LetMode, MonoArm, MonoBuiltinCtor, MonoExpr, MonoExprKind, MonoId, MonoParam, MonoPat,
-        MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
+        MonoArm, MonoBuiltinCtor, MonoExpr, MonoExprKind, MonoId, MonoParam, MonoPat, MonoPatKind,
+        MonoStmt, MonoStmtKind, MonoTy,
         visit::{Visitor, walk_pat, walk_stmt},
     },
-    string_literal::decode_string_literal,
 };
 
 pub(super) fn build_type_reg<'db>(
@@ -39,65 +40,6 @@ fn collect_type_reg_stmts<'db>(stmts: &[MonoStmt<'db>], reg: &mut TypeReg<'db>) 
 
 struct TypeRegCollector<'reg, 'db> {
     reg: &'reg mut TypeReg<'db>,
-}
-
-pub(super) fn with_pattern_types<'db>(reg: &TypeReg<'db>, pats: &[MonoPat<'db>]) -> TypeReg<'db> {
-    let mut reg = reg.clone();
-    let mut collector = PatternTypeCollector { reg: &mut reg };
-    for pat in pats {
-        collector.visit_pat(pat);
-    }
-    reg
-}
-
-pub(super) fn known_pattern_bindings<'db>(
-    pats: &[MonoPat<'db>],
-    env: &VEnv<'db>,
-    needed: &FxHashSet<String>,
-) -> Option<Vec<MonoStmt<'db>>> {
-    fn collect<'db>(
-        pat: &MonoPat<'db>,
-        env: &VEnv<'db>,
-        needed: &FxHashSet<String>,
-        out: &mut Vec<MonoStmt<'db>>,
-    ) -> Option<()> {
-        match &pat.kind {
-            MonoPatKind::Var(id) if needed.contains(&id.name) => out.push(MonoStmt {
-                span: pat.span,
-                kind: MonoStmtKind::Let {
-                    mode: LetMode::Runtime,
-                    id: id.clone(),
-                    ty: Some(id.ty),
-                    init: Some(env.get(&id.name)?.clone()),
-                },
-            }),
-            MonoPatKind::Con { args, .. } | MonoPatKind::Tuple(args) => {
-                for pat in args {
-                    collect(pat, env, needed, out)?;
-                }
-            }
-            _ => {}
-        }
-        Some(())
-    }
-    let mut bindings = Vec::new();
-    for pat in pats {
-        collect(pat, env, needed, &mut bindings)?;
-    }
-    Some(bindings)
-}
-
-struct PatternTypeCollector<'reg, 'db> {
-    reg: &'reg mut TypeReg<'db>,
-}
-
-impl<'db> Visitor<'db> for PatternTypeCollector<'_, 'db> {
-    fn visit_pat(&mut self, pat: &MonoPat<'db>) {
-        if let MonoPatKind::Var(id) = &pat.kind {
-            self.reg.insert(id.name.clone(), id.clone());
-        }
-        walk_pat(self, pat);
-    }
 }
 
 impl<'reg, 'db> Visitor<'db> for TypeRegCollector<'reg, 'db> {
@@ -162,7 +104,7 @@ pub(super) fn string_expr<'db>(value: String, ty: MonoTy<'db>, span: Span<'db>) 
     MonoExpr {
         span,
         ty,
-        kind: MonoExprKind::Lit(LitKind::String(encode_string_lit(&value))),
+        kind: MonoExprKind::Lit(LitKind::String(encode_string_literal(&value))),
     }
 }
 
@@ -183,25 +125,106 @@ pub(super) fn bool_expr<'db>(value: bool, ty: MonoTy<'db>, span: Span<'db>) -> M
     }
 }
 
-pub(super) fn match_arms_with<'a, 'db, F>(
-    env: &VEnv<'db>,
+pub(super) struct MatchedArm<'db> {
+    pub(super) index: usize,
+    pub(super) env: VEnv<'db>,
+    pub(super) bindings: Vec<MonoId<'db>>,
+    pub(super) body: Vec<MonoStmt<'db>>,
+}
+
+#[derive(Default)]
+pub(super) struct KnownPatternBindings<'db> {
+    pub(super) env: VEnv<'db>,
+    pub(super) bindings: Vec<MonoId<'db>>,
+}
+
+/// Match the static columns of a residual match. A mismatch eliminates the
+/// whole arm; runtime columns remain for runtime selection. Binding values are
+/// collected together before the evaluator introduces any shadowing names.
+pub(super) fn match_known_patterns_with<'db, F>(
+    pats: &[MonoPat<'db>],
     scrutinees: &[MonoExpr<'db>],
-    arms: &'a [MonoArm<'db>],
     is_known: F,
-) -> Option<(VEnv<'db>, &'a MonoArm<'db>)>
+) -> Option<KnownPatternBindings<'db>>
 where
     F: Fn(&MonoExpr<'db>) -> bool + Copy,
 {
-    arms.iter().find_map(|arm| {
+    let mut known = KnownPatternBindings::default();
+    for (pat, value) in pats.iter().zip(scrutinees) {
+        if is_known(value) {
+            known.env = match_pat(known.env, pat, value, is_known)?;
+        } else {
+            for id in pattern_bindings(std::slice::from_ref(pat)) {
+                known.env.remove(&id.name);
+            }
+        }
+    }
+    // Name resolution gives the last occurrence of a repeated binder its
+    // identity. A later runtime column must shadow an earlier static value.
+    known.bindings = pattern_bindings(pats)
+        .into_iter()
+        .filter(|id| known.env.contains_key(&id.name))
+        .collect();
+    Some(known)
+}
+
+pub(super) fn match_arms_with<'db, F>(
+    env: &VEnv<'db>,
+    scrutinees: &[MonoExpr<'db>],
+    arms: &[MonoArm<'db>],
+    is_known: F,
+) -> Option<MatchedArm<'db>>
+where
+    F: Fn(&MonoExpr<'db>) -> bool + Copy,
+{
+    for (index, arm) in arms.iter().enumerate() {
         if arm.pats.len() != scrutinees.len() {
-            return None;
+            continue;
+        }
+        if !product_pattern_decision(&arm.pats, scrutinees, is_known)? {
+            continue;
         }
         let mut env = env.clone();
         for (pat, value) in arm.pats.iter().zip(scrutinees) {
-            env = match_pat(env, pat, value, is_known)?;
+            env = match_pat(env, pat, value, |_| true)?;
         }
-        Some((env, arm))
-    })
+        return Some(MatchedArm {
+            index,
+            env,
+            bindings: pattern_bindings(&arm.pats),
+            body: arm.body.clone(),
+        });
+    }
+    None
+}
+
+pub(super) fn pattern_bindings<'db>(pats: &[MonoPat<'db>]) -> Vec<MonoId<'db>> {
+    let mut bindings = MatchedBindings { ids: Vec::new() };
+    for pat in pats {
+        bindings.visit_pat(pat);
+    }
+    // Pattern names share one arm scope. Name resolution exposes only the
+    // final declaration of a repeated name, including across nested patterns
+    // and scrutinee columns. Keep that declaration's type and source identity
+    // wherever evaluation reconstructs the arm environment or runtime locals.
+    let mut seen = FxHashSet::default();
+    bindings.ids.reverse();
+    bindings.ids.retain(|id| seen.insert(id.name.clone()));
+    bindings.ids.reverse();
+    bindings.ids
+}
+
+struct MatchedBindings<'db> {
+    ids: Vec<MonoId<'db>>,
+}
+
+impl<'db> Visitor<'db> for MatchedBindings<'db> {
+    fn visit_pat(&mut self, pat: &MonoPat<'db>) {
+        if let MonoPatKind::Var(id) = &pat.kind {
+            self.ids.push(id.clone());
+        }
+        walk_pat(self, pat);
+    }
 }
 
 pub(super) fn match_expr_arms_with<'db, F>(
@@ -209,14 +232,83 @@ pub(super) fn match_expr_arms_with<'db, F>(
     scrutinee: &MonoExpr<'db>,
     arms: &[crate::ir::MonoExprArm<'db>],
     is_known: F,
-) -> Option<(VEnv<'db>, MonoExpr<'db>)>
+) -> Option<(VEnv<'db>, MonoExpr<'db>, Vec<MonoId<'db>>)>
 where
     F: Fn(&MonoExpr<'db>) -> bool + Copy,
 {
-    arms.iter().find_map(|arm| {
-        let env = match_pat(env.clone(), &arm.pat, scrutinee, is_known)?;
-        Some((env, arm.expr.clone()))
-    })
+    for arm in arms {
+        // A known constructor can select a projection even when its fields are
+        // runtime values. An undecidable earlier arm still blocks selection.
+        if !pattern_decision(&arm.pat, scrutinee, is_known)? {
+            continue;
+        }
+        let env = match_pat(env.clone(), &arm.pat, scrutinee, |_| true)?;
+        return Some((
+            env,
+            arm.expr.clone(),
+            pattern_bindings(std::slice::from_ref(&arm.pat)),
+        ));
+    }
+    None
+}
+
+fn pattern_decision<'db, F>(pat: &MonoPat<'db>, value: &MonoExpr<'db>, is_known: F) -> Option<bool>
+where
+    F: Fn(&MonoExpr<'db>) -> bool + Copy,
+{
+    match &pat.kind {
+        MonoPatKind::Wildcard | MonoPatKind::Var(_) => Some(true),
+        MonoPatKind::Lit(lit) => is_known(value).then(|| literal_matches(lit, value)),
+        MonoPatKind::ComptimeLabel(expr) => is_known(value)
+            .then(|| literal_from_known_expr(expr).is_some_and(|lit| literal_matches(&lit, value))),
+        MonoPatKind::Con { ctor, args } => match &unannotated_value(value).kind {
+            MonoExprKind::Con {
+                ctor: value_ctor,
+                args: values,
+            } => {
+                if !constructor_names_match(&ctor.name, &value_ctor.name)
+                    || args.len() != values.len()
+                {
+                    return Some(false);
+                }
+                product_pattern_decision(args, values, is_known)
+            }
+            _ => is_known(value).then_some(false),
+        },
+        MonoPatKind::Tuple(pats) => match &unannotated_value(value).kind {
+            MonoExprKind::Tuple(values) if pats.len() == values.len() => {
+                product_pattern_decision(pats, values, is_known)
+            }
+            _ => is_known(value).then_some(false),
+        },
+        MonoPatKind::Error => None,
+    }
+}
+
+fn unannotated_value<'expr, 'db>(mut value: &'expr MonoExpr<'db>) -> &'expr MonoExpr<'db> {
+    while let MonoExprKind::TypeAnnot { expr, .. } = &value.kind {
+        value = expr;
+    }
+    value
+}
+
+fn product_pattern_decision<'db, F>(
+    pats: &[MonoPat<'db>],
+    values: &[MonoExpr<'db>],
+    is_known: F,
+) -> Option<bool>
+where
+    F: Fn(&MonoExpr<'db>) -> bool + Copy,
+{
+    let mut result = Some(true);
+    for (pat, value) in pats.iter().zip(values) {
+        match pattern_decision(pat, value, is_known) {
+            Some(false) => return Some(false),
+            None => result = None,
+            Some(true) => {}
+        }
+    }
+    result
 }
 
 fn match_pat<'db, F>(
@@ -239,7 +331,7 @@ where
             Some(env)
         }
         MonoPatKind::Lit(lit) => literal_matches(lit, value).then_some(env),
-        MonoPatKind::Con { ctor, args } => match &value.kind {
+        MonoPatKind::Con { ctor, args } => match &unannotated_value(value).kind {
             MonoExprKind::Con {
                 ctor: value_ctor,
                 args: value_args,
@@ -253,7 +345,7 @@ where
             }
             _ => None,
         },
-        MonoPatKind::Tuple(pats) => match &value.kind {
+        MonoPatKind::Tuple(pats) => match &unannotated_value(value).kind {
             MonoExprKind::Tuple(values) if pats.len() == values.len() => {
                 for (pat, value) in pats.iter().zip(values) {
                     env = match_pat(env, pat, value, is_known)?;
@@ -278,7 +370,7 @@ fn constructor_matches(
     constructor_names_match(pat_ctor, value_ctor)
 }
 
-fn constructor_names_match(lhs: &str, rhs: &str) -> bool {
+pub(super) fn constructor_names_match(lhs: &str, rhs: &str) -> bool {
     // Constructor names are canonicalized to `{Adt}_{Ctor}` (or the builtin
     // spelling) at lowering time; suffix-based fuzzy matching is unsound
     // because user constructor names may themselves contain underscores
@@ -303,30 +395,6 @@ fn literal_bigint(lit: &LitKind) -> Option<BigInt> {
         LitKind::Hex(text) => BigInt::from_hex_str(text),
         LitKind::String(_) | LitKind::Error => None,
     }
-}
-
-pub(super) fn remove_assigned<'db>(mut env: VEnv<'db>, assigned: &AssignedNames) -> VEnv<'db> {
-    match assigned {
-        AssignedNames::All => env.clear(),
-        AssignedNames::Names(names) => {
-            for name in names {
-                env.remove(name);
-            }
-        }
-    }
-    env
-}
-
-pub(super) fn remove_comptime_assigned(mut env: CEnv, assigned: &AssignedNames) -> CEnv {
-    match assigned {
-        AssignedNames::All => env.clear(),
-        AssignedNames::Names(names) => {
-            for name in names {
-                env.remove(name);
-            }
-        }
-    }
-    env
 }
 
 pub(super) fn lvalue_root_name(expr: &MonoExpr<'_>) -> Option<String> {
@@ -358,20 +426,4 @@ impl<'out, 'db> Visitor<'db> for PatBinderCollector<'out> {
     }
 
     fn visit_expr(&mut self, _expr: &MonoExpr<'db>) {}
-}
-
-fn encode_string_lit(value: &str) -> String {
-    let mut out = String::from("\"");
-    for ch in value.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            ch => out.push(ch),
-        }
-    }
-    out.push('"');
-    out
 }

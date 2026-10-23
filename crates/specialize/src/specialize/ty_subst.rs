@@ -1,8 +1,16 @@
 use super::*;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct TySubst<'db> {
     vars: FxHashMap<u32, Ty<'db>>,
+}
+
+impl Hash for TySubst<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let mut vars = self.vars.iter().collect::<Vec<_>>();
+        vars.sort_by_key(|(index, _)| **index);
+        vars.hash(state);
+    }
 }
 
 impl<'db> TySubst<'db> {
@@ -38,12 +46,67 @@ impl<'db> TySubst<'db> {
         }
     }
 
+    /// Recover binders that occur only in constraints from the dictionaries
+    /// selected by inference. These need not occur in a function's value type.
+    pub(super) fn refine_from_evidence(
+        &mut self,
+        db: &'db dyn Db,
+        predicates: &[Pred<'db>],
+        bindings: &[(Pred<'db>, Evidence<'db>)],
+    ) {
+        loop {
+            let before = self.clone();
+            for predicate in predicates {
+                let PredKind::InClass { class, main, args } = predicate.kind(db) else {
+                    continue;
+                };
+                let mut unique = None;
+                let mut ambiguous = false;
+                for (bound, _) in bindings {
+                    let PredKind::InClass {
+                        class: bound_class,
+                        main: bound_main,
+                        args: bound_args,
+                    } = bound.kind(db)
+                    else {
+                        continue;
+                    };
+                    if class != bound_class || args.len() != bound_args.len() {
+                        continue;
+                    }
+                    let mut matched = self.clone();
+                    if matched.match_ty(db, *main, *bound_main)
+                        && args
+                            .iter()
+                            .zip(bound_args)
+                            .all(|(arg, bound)| matched.match_ty(db, *arg, *bound))
+                    {
+                        if unique.as_ref().is_some_and(|existing| *existing != matched) {
+                            ambiguous = true;
+                            break;
+                        }
+                        unique = Some(matched);
+                    }
+                }
+                if !ambiguous && let Some(matched) = unique {
+                    *self = matched;
+                }
+            }
+            // Another predicate may fix a binder shared by two constraints
+            // from the same class. Never choose the first matching dictionary
+            // when its type arguments still admit multiple interpretations.
+            if *self == before {
+                break;
+            }
+        }
+    }
+
     pub(super) fn match_ty(&mut self, db: &'db dyn Db, pattern: Ty<'db>, target: Ty<'db>) -> bool {
         let pattern = strip_comptime_ty(db, pattern);
         let target = strip_comptime_ty(db, target);
         match pattern.kind(db) {
             TyKind::BoundVar(var) => match self.vars.get(&var.index) {
-                Some(existing) => *existing == target,
+                Some(existing) => value_types_equal(db, *existing, target),
                 None => {
                     self.vars.insert(var.index, target);
                     true
@@ -105,7 +168,13 @@ impl<'db> TySubst<'db> {
             return true;
         }
         match pattern.kind(db) {
-            TyKind::BoundVar(var) => self.insert_if_consistent(var.index, target),
+            TyKind::BoundVar(var) => match self.vars.get(&var.index) {
+                Some(existing) => value_types_equal(db, *existing, target),
+                None => {
+                    self.vars.insert(var.index, target);
+                    true
+                }
+            },
             TyKind::Named { ctor, args } => match target.kind(db) {
                 TyKind::Named {
                     ctor: target_ctor,
@@ -181,13 +250,17 @@ impl<'db> TySubst<'db> {
         }
     }
 
-    pub(super) fn apply_evidence(&self, db: &'db dyn Db, evidence: Evidence<'db>) -> Evidence<'db> {
+    pub(super) fn apply_evidence(
+        &self,
+        db: &'db dyn Db,
+        evidence: LogicalEvidence<'db>,
+    ) -> LogicalEvidence<'db> {
         match evidence {
-            Evidence::Instance {
+            LogicalEvidence::Instance {
                 instance,
                 args,
                 sub_evidence,
-            } => Evidence::Instance {
+            } => LogicalEvidence::Instance {
                 instance,
                 args: args.into_iter().map(|arg| self.apply_ty(db, arg)).collect(),
                 sub_evidence: sub_evidence
@@ -195,19 +268,19 @@ impl<'db> TySubst<'db> {
                     .map(|evidence| self.apply_evidence(db, evidence))
                     .collect(),
             },
-            Evidence::Builtin { pred } => Evidence::Builtin {
+            LogicalEvidence::Builtin { pred } => LogicalEvidence::Builtin {
                 pred: self.apply_pred(db, pred),
             },
-            Evidence::Superclass { class, pred, child } => Evidence::Superclass {
+            LogicalEvidence::Superclass { class, pred, child } => LogicalEvidence::Superclass {
                 class,
                 pred: self.apply_pred(db, pred),
                 child: Box::new(self.apply_evidence(db, *child)),
             },
-            Evidence::Derived {
+            LogicalEvidence::Derived {
                 kind,
                 pred,
                 sub_evidence,
-            } => Evidence::Derived {
+            } => LogicalEvidence::Derived {
                 kind,
                 pred: self.apply_pred(db, pred),
                 sub_evidence: sub_evidence
@@ -215,6 +288,109 @@ impl<'db> TySubst<'db> {
                     .map(|evidence| self.apply_evidence(db, evidence))
                     .collect(),
             },
+        }
+    }
+}
+
+/// Value-type matching erases comptime qualifiers at every structural level.
+/// Already selected dictionary arguments must use the same comparison, while
+/// retaining their original qualified types in the substitution and its identity.
+fn value_types_equal<'db>(db: &'db dyn Db, lhs: Ty<'db>, rhs: Ty<'db>) -> bool {
+    let lhs = strip_comptime_ty(db, lhs);
+    let rhs = strip_comptime_ty(db, rhs);
+    match (lhs.kind(db), rhs.kind(db)) {
+        (
+            TyKind::Named {
+                ctor: lhs_ctor,
+                args: lhs_args,
+            },
+            TyKind::Named {
+                ctor: rhs_ctor,
+                args: rhs_args,
+            },
+        ) => {
+            lhs_ctor == rhs_ctor
+                && lhs_args.len() == rhs_args.len()
+                && lhs_args
+                    .iter()
+                    .zip(rhs_args)
+                    .all(|(lhs, rhs)| value_types_equal(db, *lhs, *rhs))
+        }
+        (
+            TyKind::Function {
+                params: lhs_params,
+                ret: lhs_ret,
+            },
+            TyKind::Function {
+                params: rhs_params,
+                ret: rhs_ret,
+            },
+        ) => {
+            lhs_params.len() == rhs_params.len()
+                && lhs_params
+                    .iter()
+                    .zip(rhs_params)
+                    .all(|(lhs, rhs)| value_types_equal(db, *lhs, *rhs))
+                && value_types_equal(db, *lhs_ret, *rhs_ret)
+        }
+        (TyKind::Tuple(lhs), TyKind::Tuple(rhs)) => {
+            lhs.len() == rhs.len()
+                && lhs
+                    .iter()
+                    .zip(rhs)
+                    .all(|(lhs, rhs)| value_types_equal(db, *lhs, *rhs))
+        }
+        _ => lhs == rhs,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use solcore_test_utils::define_frontend_test_db;
+
+    define_frontend_test_db!(TestDb, hir_ty);
+
+    #[test]
+    fn value_matching_preserves_qualified_dictionary_arguments() {
+        let db = TestDb::default();
+        let word = Ty::word(&db);
+        let qualified = Ty::comptime(&db, Ty::comptime(&db, word));
+        let variable = Ty::bound(&db, 0);
+        for (selected, target) in [
+            (qualified, word),
+            (
+                Ty::tuple(&db, vec![qualified, word]),
+                Ty::tuple(&db, vec![word, Ty::comptime(&db, word)]),
+            ),
+            (
+                Ty::function(&db, vec![qualified], word),
+                Ty::function(&db, vec![word], Ty::comptime(&db, word)),
+            ),
+            (
+                Ty::named(
+                    &db,
+                    TyCtor::Builtin(BuiltinTyCtor::Pair),
+                    vec![qualified, word],
+                ),
+                Ty::named(
+                    &db,
+                    TyCtor::Builtin(BuiltinTyCtor::Pair),
+                    vec![word, Ty::comptime(&db, word)],
+                ),
+            ),
+        ] {
+            for partial in [false, true] {
+                let mut subst = TySubst::from_args(vec![selected]);
+                let matches = if partial {
+                    subst.match_ty_known(&db, variable, target)
+                } else {
+                    subst.match_ty(&db, variable, target)
+                };
+                assert!(matches);
+                assert_eq!(subst.apply_ty(&db, variable), selected);
+                assert!(!subst.match_ty(&db, variable, Ty::bool(&db)));
+            }
         }
     }
 }

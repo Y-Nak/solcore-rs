@@ -1,0 +1,1 @@
+function main(value: word) returns (word) { { let renamed: word = 7; assembly { value := add(value, renamed) } } return value; }

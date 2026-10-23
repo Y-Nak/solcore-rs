@@ -1,0 +1,1 @@
+import * from math; function renamed() returns (word) { return 2; } function main() returns (word) { return target(); }

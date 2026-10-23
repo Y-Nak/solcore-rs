@@ -1,0 +1,14 @@
+{
+  "diagnostics": [],
+  "pragmas": [
+    "no-bounded-variable-condition",
+    "no-patterson-condition",
+    "no-generic-instance-for"
+  ],
+  "functions": [
+    {
+      "name": "f",
+      "body": true
+    }
+  ]
+}

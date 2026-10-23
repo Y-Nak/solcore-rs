@@ -1,6 +1,180 @@
 use super::*;
 
+/// Dictionary identity, separate from the path used to discover it. Projecting
+/// the same predicate from one local dictionary is independent of the sequence
+/// of superclass edges; other dictionaries retain their complete prerequisites.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) enum DictionaryIdentity<'db> {
+    Given {
+        pred: Pred<'db>,
+        source: Pred<'db>,
+    },
+    Instance {
+        instance: DefId<'db>,
+        args: Vec<Ty<'db>>,
+        children: Vec<Self>,
+    },
+    Builtin(Pred<'db>),
+    Superclass {
+        class: DefId<'db>,
+        pred: Pred<'db>,
+        child: Box<Self>,
+    },
+    Derived {
+        kind: DerivedClauseKind<'db>,
+        pred: Pred<'db>,
+        children: Vec<Self>,
+    },
+}
+
+/// Conservative identity for a dictionary branch whose type arguments are
+/// still open. Such a branch may later match any instantiation of its clause.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) enum BranchOrigin<'db> {
+    Instance(DefId<'db>),
+    Superclass(DefId<'db>),
+    Derived(DerivedClauseKind<'db>),
+}
+
+/// Exact dictionary identity for cycle checks and finite-proof footprints.
+/// Recursive instances at smaller types do not conflict with their callers.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(super) enum BranchRoot<'db> {
+    Instance(DefId<'db>, Vec<Ty<'db>>),
+    Superclass(DefId<'db>, Pred<'db>),
+    Derived(DerivedClauseKind<'db>, Pred<'db>),
+}
+
+impl<'db> BranchRoot<'db> {
+    pub(super) fn origin(&self) -> BranchOrigin<'db> {
+        match self {
+            Self::Instance(def, _) => BranchOrigin::Instance(*def),
+            Self::Superclass(class, _) => BranchOrigin::Superclass(*class),
+            Self::Derived(kind, _) => BranchOrigin::Derived(*kind),
+        }
+    }
+}
+
 impl<'db> Evidence<'db> {
+    pub(super) fn branch_root(&self) -> Option<BranchRoot<'db>> {
+        match self {
+            Self::Instance { instance, args, .. } => {
+                Some(BranchRoot::Instance(*instance, args.clone()))
+            }
+            Self::Superclass { class, pred, .. } => Some(BranchRoot::Superclass(*class, *pred)),
+            Self::Derived { kind, pred, .. } => Some(BranchRoot::Derived(*kind, *pred)),
+            Self::Builtin { .. } => None,
+        }
+    }
+
+    pub(super) fn dictionary_identity(
+        &self,
+        is_given: &impl Fn(Pred<'db>) -> bool,
+    ) -> DictionaryIdentity<'db> {
+        if let Some(source) = evidence_root_given(self)
+            && is_given(source)
+        {
+            let pred = match self {
+                Self::Builtin { pred } | Self::Superclass { pred, .. } => *pred,
+                _ => {
+                    unreachable!("only given dictionaries and their projections have a given root")
+                }
+            };
+            return DictionaryIdentity::Given { pred, source };
+        }
+        match self {
+            Self::Instance {
+                instance,
+                args,
+                sub_evidence,
+            } => DictionaryIdentity::Instance {
+                instance: *instance,
+                args: args.clone(),
+                children: sub_evidence
+                    .iter()
+                    .map(|child| child.dictionary_identity(is_given))
+                    .collect(),
+            },
+            Self::Builtin { pred } => DictionaryIdentity::Builtin(*pred),
+            Self::Superclass { class, pred, child } => DictionaryIdentity::Superclass {
+                class: *class,
+                pred: *pred,
+                child: Box::new(child.dictionary_identity(is_given)),
+            },
+            Self::Derived {
+                kind,
+                pred,
+                sub_evidence,
+            } => DictionaryIdentity::Derived {
+                kind: *kind,
+                pred: *pred,
+                children: sub_evidence
+                    .iter()
+                    .map(|child| child.dictionary_identity(is_given))
+                    .collect(),
+            },
+        }
+    }
+
+    fn children(&self) -> &[Self] {
+        match self {
+            Self::Instance { sub_evidence, .. } | Self::Derived { sub_evidence, .. } => {
+                sub_evidence
+            }
+            Self::Superclass { child, .. } => std::slice::from_ref(child),
+            Self::Builtin { .. } => &[],
+        }
+    }
+
+    fn same_root(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Instance {
+                    instance: a,
+                    args: aa,
+                    ..
+                },
+                Self::Instance {
+                    instance: b,
+                    args: ba,
+                    ..
+                },
+            ) => a == b && aa == ba,
+            (
+                Self::Derived {
+                    kind: a, pred: ap, ..
+                },
+                Self::Derived {
+                    kind: b, pred: bp, ..
+                },
+            ) => a == b && ap == bp,
+            (
+                Self::Superclass {
+                    class: a, pred: ap, ..
+                },
+                Self::Superclass {
+                    class: b, pred: bp, ..
+                },
+            ) => a == b && ap == bp,
+            (Self::Builtin { pred: a }, Self::Builtin { pred: b }) => a == b,
+            _ => false,
+        }
+    }
+
+    fn contains_root(&self, root: &Self) -> bool {
+        self.same_root(root)
+            || self
+                .children()
+                .iter()
+                .any(|child| child.contains_root(root))
+    }
+
+    pub(super) fn repeats_root(&self) -> bool {
+        self.children()
+            .iter()
+            .any(|child| child.contains_root(self))
+    }
+
     /// Returns a short evidence snapshot for diagnostics and tests.
     pub fn display(&self, db: &'db dyn HirDb) -> String {
         match self {
@@ -82,13 +256,32 @@ pub(super) fn solution_from_answers<'db>(
         if answer_priority(db, env, &answer) != best_priority {
             continue;
         }
-        if seen_candidates.insert((
-            answer_root(db, env, &answer),
-            answer.candidate.subst.clone(),
-        )) {
+        let identity = answer
+            .candidate
+            .evidence
+            .dictionary_identity(&|pred| env.local_givens(db).contains(&pred));
+        if seen_candidates.insert((answer.candidate.subst.clone(), identity)) {
             candidates.push(answer.candidate);
         }
     }
+
+    // Clause preference applies to prerequisites as well as the root goal.
+    // Keep competing dictionaries at the same priority, but discard proofs
+    // that differ only by taking a less-preferred superclass/default path.
+    let retained = candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(index, candidate)| {
+            (!candidates.iter().enumerate().any(|(other_index, other)| {
+                index != other_index
+                    && candidate.subst == other.subst
+                    && evidence_preference(db, env, &other.evidence, &candidate.evidence)
+                        == Some(std::cmp::Ordering::Less)
+            }))
+            .then_some(candidate.clone())
+        })
+        .collect::<Vec<_>>();
+    let candidates = retained;
 
     match candidates.as_slice() {
         [] => Solution::NoSolution,
@@ -100,55 +293,83 @@ pub(super) fn solution_from_answers<'db>(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum AnswerRoot<'db> {
-    Local(Pred<'db>),
-    Builtin(Pred<'db>),
-    Instance(DefId<'db>),
-    DefaultInstance(DefId<'db>),
-    Derived(DerivedClauseKind<'db>),
-    Superclass(DefId<'db>),
-    Other,
+fn evidence_priority<'db>(db: &'db dyn Db, env: TraitEnvId<'db>, evidence: &Evidence<'db>) -> u8 {
+    if evidence_root_is_local_given(db, env, evidence) {
+        return 0;
+    }
+    match evidence {
+        Evidence::Superclass { .. } => 2,
+        Evidence::Instance { instance, .. } => env
+            .clauses_ref(db)
+            .iter()
+            .find(|clause| matches!(clause.origin, ClauseOrigin::Instance { def, .. } if def == *instance))
+            .map_or(1, |clause| clause_priority(&clause.origin, false)),
+        _ => 1,
+    }
+}
+
+/// Partial order on dictionaries for the same goal. Distinct implementations
+/// at the same priority are incomparable, including at any prerequisite depth.
+fn evidence_preference<'db>(
+    db: &'db dyn Db,
+    env: TraitEnvId<'db>,
+    left: &Evidence<'db>,
+    right: &Evidence<'db>,
+) -> Option<std::cmp::Ordering> {
+    use std::cmp::Ordering;
+    let is_given = |pred| env.local_givens(db).contains(&pred);
+    if left.dictionary_identity(&is_given) == right.dictionary_identity(&is_given) {
+        return Some(Ordering::Equal);
+    }
+    let priority = evidence_priority(db, env, left).cmp(&evidence_priority(db, env, right));
+    if priority != Ordering::Equal {
+        return Some(priority);
+    }
+    if !left.same_root(right) || left.children().len() != right.children().len() {
+        return None;
+    }
+    let mut ordering = Ordering::Equal;
+    for (left, right) in left.children().iter().zip(right.children()) {
+        let child = evidence_preference(db, env, left, right)?;
+        if child == Ordering::Equal {
+            continue;
+        }
+        if ordering != Ordering::Equal && ordering != child {
+            return None;
+        }
+        ordering = child;
+    }
+    Some(ordering)
 }
 
 fn answer_priority<'db>(db: &'db dyn Db, env: TraitEnvId<'db>, answer: &Answer<'db>) -> u8 {
-    if evidence_root_is_local_given(db, env, &answer.candidate.evidence) {
+    clause_priority(
+        &answer.origin,
+        evidence_root_is_local_given(db, env, &answer.candidate.evidence),
+    )
+}
+
+pub(super) fn clause_priority(origin: &ClauseOrigin<'_>, local_given: bool) -> u8 {
+    if local_given {
         return 0;
     }
-    match &answer.origin {
-        ClauseOrigin::Instance { default: true, .. } => 3,
+    match origin {
+        ClauseOrigin::Instance {
+            kind: InstanceKind::Default,
+            ..
+        } => 3,
+        ClauseOrigin::Instance {
+            kind: InstanceKind::StandardDefault,
+            ..
+        } => 4,
         ClauseOrigin::Superclass(_) => 2,
-        ClauseOrigin::Instance { default: false, .. }
+        ClauseOrigin::Instance {
+            kind: InstanceKind::Regular,
+            ..
+        }
         | ClauseOrigin::Builtin
         | ClauseOrigin::Derived(_)
         | ClauseOrigin::Given => 1,
-    }
-}
-
-fn answer_root<'db>(
-    db: &'db dyn Db,
-    env: TraitEnvId<'db>,
-    answer: &Answer<'db>,
-) -> AnswerRoot<'db> {
-    if evidence_root_is_local_given(db, env, &answer.candidate.evidence) {
-        return evidence_root_pred(&answer.candidate.evidence)
-            .map(AnswerRoot::Local)
-            .unwrap_or(AnswerRoot::Other);
-    }
-    match &answer.origin {
-        ClauseOrigin::Instance {
-            def: instance,
-            default: true,
-        } => AnswerRoot::DefaultInstance(*instance),
-        ClauseOrigin::Instance { def: instance, .. } => AnswerRoot::Instance(*instance),
-        ClauseOrigin::Builtin => evidence_root_pred(&answer.candidate.evidence)
-            .map(AnswerRoot::Builtin)
-            .unwrap_or(AnswerRoot::Other),
-        ClauseOrigin::Derived(kind) => AnswerRoot::Derived(*kind),
-        ClauseOrigin::Given => evidence_root_pred(&answer.candidate.evidence)
-            .map(AnswerRoot::Local)
-            .unwrap_or(AnswerRoot::Other),
-        ClauseOrigin::Superclass(class) => AnswerRoot::Superclass(*class),
     }
 }
 
@@ -157,19 +378,14 @@ fn evidence_root_is_local_given<'db>(
     env: TraitEnvId<'db>,
     evidence: &Evidence<'db>,
 ) -> bool {
-    match evidence {
-        Evidence::Builtin { pred } => env.local_givens(db).contains(pred),
-        Evidence::Superclass { child, .. } => evidence_root_is_local_given(db, env, child),
-        Evidence::Instance { .. } | Evidence::Derived { .. } => false,
-    }
+    evidence_root_given(evidence).is_some_and(|pred| env.local_givens(db).contains(&pred))
 }
 
-fn evidence_root_pred<'db>(evidence: &Evidence<'db>) -> Option<Pred<'db>> {
+pub(super) fn evidence_root_given<'db>(evidence: &Evidence<'db>) -> Option<Pred<'db>> {
     match evidence {
-        Evidence::Builtin { pred }
-        | Evidence::Superclass { pred, .. }
-        | Evidence::Derived { pred, .. } => Some(*pred),
-        Evidence::Instance { .. } => None,
+        Evidence::Builtin { pred } => Some(*pred),
+        Evidence::Superclass { child, .. } => evidence_root_given(child),
+        Evidence::Instance { .. } | Evidence::Derived { .. } => None,
     }
 }
 

@@ -1,0 +1,8 @@
+enum Choice<a> { Pick(a), Other }
+enum Box<a> { Box(a) }
+trait Mapper<a> { function map(x: a) returns (a); }
+trait Maker<a> where a: Mapper { function make(x: a) returns (Choice<a>); }
+impl<a> Mapper<Box<a>> where a: Mapper { function map(x: Box<a>) returns (Box<a>) { return x; } }
+impl<a> Maker<Box<a>> where a: Mapper {
+function make(x: Box<a>) returns (Choice<Box<a>>) { return .Pick(Mapper.map(x)); }
+}

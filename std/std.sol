@@ -1,4 +1,4 @@
-import { add, sub, mul, div, mod, addmod as addmod_, mulmod as mulmod_, and as and_, or as or_, xor as xor_, shl, shr, eq, not as not_, gt as gt_, iszero, keccak256, mstore, mload, mcopy, sstore, sload, gas, caller as caller_, callvalue as callvalue_, calldataload, calldatacopy, returndatasize, returndatacopy, log1 as log1_, call, staticcall, revert_, invalid } from std.opcodes;
+import { add, sub, mul, div, mod, addmod as addmod_, mulmod as mulmod_, and as and_, or as or_, xor as xor_, shl, shr, eq, not as not_, gt as gt_, iszero, keccak256, mstore, mload, mcopy, sstore, sload, gas, caller as caller_, callvalue as callvalue_, calldatasize, calldataload, calldatacopy, returndatasize, returndatacopy, log1 as log1_, call, staticcall, revert_, invalid } from std.opcodes;
 
 pragma no-patterson-condition ABIEncode, Num, Array, ArrayPush, Eq, Ord;
 pragma no-coverage-condition ABIDecode, MemoryType, Array, ArrayPush, RValueIdxAccess;
@@ -7,6 +7,8 @@ export {
     ABIAttribs,
     ABIDecode,
     ABIDecoder(*),
+    ABIElement,
+    ABIElementAttribs,
     ABIEncode,
     ABITuple(*),
     Add,
@@ -1106,8 +1108,15 @@ function set_free_memory(loc: word) returns (()) {
 
 // Allocate memory and update the memory pointer.
 function allocate_memory(size: word) returns (word) {
-    let ptr = get_free_memory();
-    set_free_memory(ptr + size);
+    let ptr: word;
+    assembly {
+        ptr := mload(0x40)
+        let end := add(ptr, size)
+        if lt(end, ptr) {
+            revert(0, 0)
+        }
+        mstore(0x40, end)
+    }
     return ptr;
 }
 
@@ -1117,17 +1126,11 @@ function allocate_zeroed_memory(size: word) returns (word) {
     return ptr;
 }
 
-// Clears a memory area.
+// Clears exactly the requested memory range, including an unaligned tail.
 function zeroize_memory(ptr: word, len: word) returns (()) {
-    let end_ptr = ptr + len;
-
-    // Zero out 32-byte words.
-    for (let i = 0; i < len / 32; i += 1, ptr += 32) {
-        mstore(ptr, 0);
-    }
-
-    // Zero out trailing bytes. We rely on the zero-slot (0x60-0x7f).
-    mcopy(ptr, 0x60, end_ptr - ptr);
+    // Calldata reads beyond its end are zero-filled. This avoids reading a
+    // fixed zero slot or touching bytes outside the requested destination.
+    calldatacopy(ptr, calldatasize(), len);
 }
 
 // --- Indexable Types ---
@@ -1257,8 +1260,9 @@ enum slice<ptr> {
 
 // --- Word Reader ---
 
-// A WordReader is an abstraction over byte indexed structure that can be read in word sized chunks (e.g. calldata / memory)
-// These let us use the same abi decoding routines for calldata / memory
+// A WordReader is a bounded byte cursor. Reading and copying require that the
+// entire requested range exists; advancing may reach, but never pass, the end.
+// These checks belong to the source so every ABI decoder shares the same rules.
 trait WordReader<ty> {
     // returns the word currently pointed to by the WordReader
     function read(reader: ty) returns (word);
@@ -1268,28 +1272,37 @@ trait WordReader<ty> {
     function copyToMem(reader: ty, dst: word, cnt: word) returns (());
 }
 
-// WordReader for memory
+function checkReaderRange(ptr: word, end: word, count: word) returns (()) {
+    require(ptr <= end, Error(0x08638556)); // ABIInputTruncated()
+    require(count <= end - ptr, Error(0x08638556));
+}
+
+// The second field is the exclusive end of the source bytes, preserved when
+// rebasing a reader onto a nested tuple or dynamic tail.
 enum MemoryWordReader {
-    MemoryWordReader(word)
+    MemoryWordReader(word, word)
 }
 impl WordReader<MemoryWordReader> {
     function read(reader: MemoryWordReader) returns (word) {
         match (reader) {
-            case MemoryWordReader(ptr) {
+            case MemoryWordReader(ptr, end) {
+                checkReaderRange(ptr, end, 32);
                 return mload(ptr);
             }
         }
     }
     function advance(reader: MemoryWordReader, offset: word) returns (MemoryWordReader) {
         match (reader) {
-            case MemoryWordReader(ptr) {
-                return MemoryWordReader(ptr + offset);
+            case MemoryWordReader(ptr, end) {
+                checkReaderRange(ptr, end, offset);
+                return MemoryWordReader(ptr + offset, end);
             }
         }
     }
     function copyToMem(reader: MemoryWordReader, dst: word, cnt: word) returns (()) {
         match (reader) {
-            case MemoryWordReader(ptr) {
+            case MemoryWordReader(ptr, end) {
+                checkReaderRange(ptr, end, cnt);
                 mcopy(dst, ptr, cnt);
             }
         }
@@ -1318,6 +1331,7 @@ impl WordReader<CalldataWordReader> {
     function read(reader: CalldataWordReader) returns (word) {
         match (reader) {
             case CalldataWordReader(ptr) {
+                checkReaderRange(ptr, calldatasize(), 32);
                 return calldataload(ptr);
             }
         }
@@ -1325,6 +1339,7 @@ impl WordReader<CalldataWordReader> {
     function advance(reader: CalldataWordReader, offset: word) returns (CalldataWordReader) {
         match (reader) {
             case CalldataWordReader(ptr) {
+                checkReaderRange(ptr, calldatasize(), offset);
                 return CalldataWordReader(ptr + offset);
             }
         }
@@ -1332,6 +1347,7 @@ impl WordReader<CalldataWordReader> {
     function copyToMem(reader: CalldataWordReader, dst: word, cnt: word) returns (()) {
         match (reader) {
             case CalldataWordReader(ptr) {
+                checkReaderRange(ptr, calldatasize(), cnt);
                 calldatacopy(dst, ptr, cnt);
             }
         }
@@ -1348,7 +1364,12 @@ trait HasWordReader<self, reader> {
 
 impl HasWordReader<memory<bytes>, MemoryWordReader> {
     function getWordReader(x: memory<bytes>) returns (MemoryWordReader) {
-        return MemoryWordReader(Typedef.rep(x));
+        let base = Typedef.rep(x);
+        require(base <= ~0 - 32, Error(0x08638556));
+        let start = base + 32;
+        let length = mload(base);
+        require(length <= ~0 - start, Error(0x08638556));
+        return MemoryWordReader(start, start + length);
     }
 }
 
@@ -1588,6 +1609,21 @@ trait ABIEncode<self> {
     function encodeInto(x: self, basePtr: word, offset: word, tail: word) returns (word) /* newTail */ ;
 }
 
+// These internal primitives use their full word representation on the wire.
+// Other word-backed types need their own codec (bytes4, for example, is shifted).
+trait RawABIWord<t> {}
+impl RawABIWord<word> {}
+impl RawABIWord<byte> {}
+
+// The standard fallback leaves application codecs free to choose a different
+// representation for internal word and byte values.
+default impl<t> ABIEncode<t> where t: RawABIWord, t: Typedef<word> {
+    function encodeInto(x: t, basePtr: word, offset: word, tail: word) returns (word) {
+        mstore(basePtr + offset, Typedef.rep(x));
+        return tail;
+    }
+}
+
 impl ABIEncode<uint256> {
     // a unit256 is written directly into the head
     function encodeInto(x: uint256, basePtr: word, offset: word, tail: word) returns (word) {
@@ -1616,11 +1652,10 @@ impl ABIEncode<bytes32> {
 }
 
 impl ABIEncode<bytes4> {
-    // bytes4's word rep is right-aligned (e.g. `bytes4(shr(224, h))`),
-    // so it is written directly into the head like bytes32
+    // Fixed bytes are left-aligned on the wire and right-aligned internally.
     function encodeInto(x: bytes4, basePtr: word, offset: word, tail: word) returns (word) {
         let repx: word = Typedef.rep(x);
-        mstore(basePtr + offset, repx);
+        mstore(basePtr + offset, shl(224, repx));
         return tail;
     }
 }
@@ -1659,26 +1694,23 @@ impl ABIEncode<memory<bytes>> {
     }
 }
 
-// ABI encoding for a memory dynamic array whose elements fit in a single word.
-// Assumes memory layout `[ length | elem_0 | elem_1 | ... ]`, which matches the
-// on-the-wire tail of `t[]` so the body can be `mcopy`d verbatim.
-// `memory(DynArray(t)):ABIAttribs` is already derivable from the generic
-// `memory(ty):ABIAttribs` + `DynArray(t):ABIAttribs` instances above.
-impl<t> ABIEncode<memory<DynArray<t>>> where t: Typedef<word> {
+// Memory arrays store one word per element, but an element's ABI layout may
+// differ (bytes4 alignment, or a pointer to another dynamic value). Delegate
+// each element to its codec, using offsets relative to the element region.
+impl<t> ABIEncode<memory<DynArray<t>>> where t: Typedef<word>, t: ABIAttribs, t: ABIEncode {
     function encodeInto(x: memory<DynArray<t>>, basePtr: word, offset: word, tail: word) returns (word) {
         let srcPtr: word = Typedef.rep(x);
         let len: word = mload(srcPtr);
-        let totalBytes: word = (len + 1) * 32;
-
-        // head slot: relative pointer from basePtr to tail
         mstore(basePtr + offset, tail - basePtr);
-
-        // copy length + elements verbatim into the tail
-        let s: word = srcPtr;
-        let t_: word = tail;
-        let n: word = totalBytes;
-        mcopy(t_, s, n);
-        return tail + totalBytes;
+        mstore(tail, len);
+        let elements = tail + 32;
+        let stride = ABIAttribs.headSize(@t);
+        let newTail = elements + len * stride;
+        for (let i = 0; i < len; i += 1) {
+            let value: t = IndexAccess.get(x, uint256(i));
+            newTail = ABIEncode.encodeInto(value, elements, i * stride, newTail);
+        }
+        return newTail;
     }
 }
 
@@ -1704,7 +1736,6 @@ impl<a, b> ABIEncode<(a, b)> where a: ABIAttribs, a: ABIEncode, b: ABIEncode {
 }
 
 // abi encoding for an ABITuple of encodable types
-// TODO: is this correct?
 impl<tuple> ABIEncode<ABITuple<tuple>> where tuple: ABIEncode, tuple: ABIAttribs {
     function encodeInto(x: ABITuple<tuple>, basePtr: word, offset: word, tail: word) returns (word) {
         let prx: Proxy<tuple>;
@@ -1716,7 +1747,7 @@ impl<tuple> ABIEncode<ABITuple<tuple>> where tuple: ABIEncode, tuple: ABIAttribs
                 // pointer in the head, and encode the tuple into the tail
             }
             case false {
-                // store the length of the head in basePtr
+                // Write this tuple's offset at its own head slot.
                 mstore(basePtr + offset, tail - basePtr);
 
                 // encode the underlying tuple into the tail
@@ -1773,6 +1804,13 @@ impl<ty, reader> WordReader<ABIDecoder<ty, reader>> where reader: WordReader {
     }
 }
 
+// Raw primitives retain all bits and use the bounded ABI reader.
+default impl<t, reader> ABIDecode<ABIDecoder<t, reader>, t> where t: RawABIWord, t: Typedef<word>, reader: WordReader {
+    function decode(ptr: ABIDecoder<t, reader>, currentHeadOffset: word) returns (t) {
+        return Typedef.abs(WordReader.read(WordReader.advance(ptr, currentHeadOffset)));
+    }
+}
+
 // ABI Decoding for uint256
 impl<reader> ABIDecode<ABIDecoder<uint256, reader>, uint256> where reader: WordReader {
     function decode(ptr: ABIDecoder<uint256, reader>, currentHeadOffset: word) returns (uint256) {
@@ -1792,8 +1830,9 @@ impl<reader> ABIDecode<ABIDecoder<bytes32, reader>, bytes32> where reader: WordR
 // ABI Decoding for bytes4
 impl<reader> ABIDecode<ABIDecoder<bytes4, reader>, bytes4> where reader: WordReader {
     function decode(ptr: ABIDecoder<bytes4, reader>, currentHeadOffset: word) returns (bytes4) {
-        let syntaxValue3: bytes4 = Typedef.abs(WordReader.read(WordReader.advance(ptr, currentHeadOffset)));
-        return syntaxValue3;
+        let raw = WordReader.read(WordReader.advance(ptr, currentHeadOffset));
+        require(shl(32, raw) == 0, Error(0xf8eff6b3)); // DirtyPaddingForBytes4()
+        return bytes4(shr(224, raw));
     }
 }
 
@@ -1825,18 +1864,22 @@ impl<reader> ABIDecode<ABIDecoder<(), reader>, ()> where reader: WordReader {
 }
 
 // ABI decoding for bytes/strings (only in memory)
-function decodeBytesLike<a, ptrtype, reader>(ptr: ABIDecoder<memory<a>, reader>, currentHeadOffset: word) returns (memory<a>) where reader: WordReader {
-    let tmp: word;
+function decodeBytesLike<a, reader>(ptr: ABIDecoder<memory<a>, reader>, currentHeadOffset: word) returns (memory<a>) where reader: WordReader {
     let headRdr = WordReader.advance(ptr, currentHeadOffset);
     let tailPtr: word = WordReader.read(headRdr);
 
     let src = WordReader.advance(ptr, tailPtr);
-    let srcRdr = getReader(src);
     let length = WordReader.read(src);
+    // Validate before allocating or copying. In particular, EVM copy
+    // opcodes must not silently turn missing input into zero bytes.
+    let payload = WordReader.advance(src, 32);
+    WordReader.advance(payload, length);
+    require(length <= ~0 - 63, Error(0x08638556));
     let total = length + 32;
     let rounded = round_up_to_mul_of_32(total);
     let resultPtr: word = allocate_memory(rounded);
-    WordReader.copyToMem(srcRdr, resultPtr, total);
+    WordReader.copyToMem(src, resultPtr, total);
+    zeroize_memory(resultPtr + total, rounded - total);
     return memory(resultPtr);
 }
 
@@ -1871,56 +1914,102 @@ impl<a, b, a_decoded, b_decoded, reader> ABIDecode<ABIDecoder<(a, b), reader>, (
     }
 }
 
-impl<reader, tuple, tuple_decoded> ABIDecode<ABIDecoder<ABITuple<tuple>, reader>, tuple_decoded> where reader: WordReader, tuple: ABIDecode<tuple_decoded>, tuple: ABIAttribs {
+impl<reader, tuple, tuple_decoded> ABIDecode<ABIDecoder<ABITuple<tuple>, reader>, tuple_decoded> where reader: WordReader, ABIDecoder<tuple, reader>: ABIDecode<tuple_decoded>, tuple: ABIAttribs {
     function decode(ptr: ABIDecoder<ABITuple<tuple>, reader>, currentHeadOffset: word) returns (tuple_decoded) {
         let prx: Proxy<tuple>;
+        let rdr = getReader(ptr);
         match (ABIAttribs.isStatic(prx)) {
             case true {
-                return ABIDecode.decode(WordReader.advance(ptr, currentHeadOffset), 0);
+                let inner: ABIDecoder<tuple, reader> = ABIDecoder(rdr);
+                return ABIDecode.decode(inner, currentHeadOffset);
             }
             case false {
-                let tailPtr = WordReader.read(ptr);
-                return ABIDecode.decode(WordReader.advance(ptr, tailPtr), 0);
+                let tailPtr = WordReader.read(WordReader.advance(rdr, currentHeadOffset));
+                let inner: ABIDecoder<tuple, reader> = ABIDecoder(WordReader.advance(rdr, tailPtr));
+                return ABIDecode.decode(inner, 0);
             }
         }
     }
 }
 
-impl<reader, tuple, tuple_decoded> ABIDecode<ABIDecoder<memory<ABITuple<tuple>>, reader>, memory<tuple_decoded>> where reader: WordReader, tuple: ABIDecode<tuple_decoded>, tuple: ABIAttribs {
+impl<reader, tuple, tuple_decoded> ABIDecode<ABIDecoder<memory<ABITuple<tuple>>, reader>, memory<tuple_decoded>> where reader: WordReader, ABIDecoder<memory<tuple>, reader>: ABIDecode<memory<tuple_decoded>>, tuple: ABIAttribs {
     function decode(ptr: ABIDecoder<memory<ABITuple<tuple>>, reader>, currentHeadOffset: word) returns (memory<tuple_decoded>) {
         let prx: Proxy<tuple>;
+        let rdr = getReader(ptr);
         match (ABIAttribs.isStatic(prx)) {
             case true {
-                return ABIDecode.decode(WordReader.advance(ptr, currentHeadOffset), 0);
+                let inner: ABIDecoder<memory<tuple>, reader> = ABIDecoder(rdr);
+                return ABIDecode.decode(inner, currentHeadOffset);
             }
             case false {
-                let tailPtr = WordReader.read(ptr);
-                return ABIDecode.decode(WordReader.advance(ptr, tailPtr), 0);
+                let tailPtr = WordReader.read(WordReader.advance(rdr, currentHeadOffset));
+                let inner: ABIDecoder<memory<tuple>, reader> = ABIDecoder(WordReader.advance(rdr, tailPtr));
+                return ABIDecode.decode(inner, 0);
             }
         }
     }
 }
 
-impl<reader, baseType, baseType_decoded> ABIDecode<ABIDecoder<memory<DynArray<baseType>>, reader>, memory<DynArray<baseType_decoded>>> where baseType: ABIAttribs, reader: WordReader, ABIDecoder<baseType, reader>: ABIDecode<baseType_decoded> {
+// Validate a complete array head before allocation or index arithmetic. This
+// also rejects a malicious length whose multiplication would wrap a word.
+function checkArrayHead<reader>(rdr: reader, length: word, stride: word) returns (()) where reader: WordReader {
+    if (stride > 0) {
+        require(length <= ~0 / stride, Error(0x08638556));
+    }
+    WordReader.advance(rdr, length * stride);
+}
+
+// An array element is one ABI value. A primitive product normally describes an
+// argument/field list, so in this context it must instead use ABITuple's layout:
+// static tuples are inline and dynamic tuples have a single offset head.
+enum ABIElement<t> {}
+
+trait ABIElementAttribs<t> {
+    function headSize(p: Proxy<t>) returns (word);
+}
+
+default impl<t> ABIElementAttribs<ABIElement<t>> where t: ABIAttribs {
+    function headSize(p: Proxy<ABIElement<t>>) returns (word) {
+        return ABIAttribs.headSize(@t);
+    }
+}
+
+impl<a, b> ABIElementAttribs<ABIElement<(a, b)>> where a: ABIAttribs, b: ABIAttribs {
+    function headSize(p: Proxy<ABIElement<(a, b)>>) returns (word) {
+        return ABIAttribs.headSize(@ABITuple<(a, b)>);
+    }
+}
+
+default impl<t, reader, decoded> ABIDecode<ABIDecoder<ABIElement<t>, reader>, decoded> where ABIDecoder<t, reader>: ABIDecode<decoded> {
+    function decode(ptr: ABIDecoder<ABIElement<t>, reader>, offset: word) returns (decoded) {
+        let inner: ABIDecoder<t, reader> = ABIDecoder(getReader(ptr));
+        return ABIDecode.decode(inner, offset);
+    }
+}
+
+impl<a, b, reader, decoded> ABIDecode<ABIDecoder<ABIElement<(a, b)>, reader>, decoded> where reader: WordReader, a: ABIAttribs, b: ABIAttribs, ABIDecoder<(a, b), reader>: ABIDecode<decoded> {
+    function decode(ptr: ABIDecoder<ABIElement<(a, b)>, reader>, offset: word) returns (decoded) {
+        let inner: ABIDecoder<ABITuple<(a, b)>, reader> = ABIDecoder(getReader(ptr));
+        return ABIDecode.decode(inner, offset);
+    }
+}
+
+impl<reader, baseType, baseType_decoded> ABIDecode<ABIDecoder<memory<DynArray<baseType>>, reader>, memory<DynArray<baseType_decoded>>> where baseType: ABIAttribs, baseType_decoded: Typedef<word>, reader: WordReader, ABIDecoder<baseType, reader>: ABIDecode<baseType_decoded> {
     function decode(ptr: ABIDecoder<memory<DynArray<baseType>>, reader>, currentHeadOffset: word) returns (memory<DynArray<baseType_decoded>>) {
-        let arrayPtr = WordReader.advance(ptr, currentHeadOffset);
+        let rdr = getReader(ptr);
+        let dataOffset = WordReader.read(WordReader.advance(rdr, currentHeadOffset));
+        let arrayPtr = WordReader.advance(rdr, dataOffset);
         let length = WordReader.read(arrayPtr);
-        // this trigger a missing typedef constraint
-        // let elementPtr:ABIDecoder(baseType, reader) = Typedef.abs(WordReader.advance(arrayPtr, 32));
-        arrayPtr = WordReader.advance(arrayPtr, 32);
-        let prx: Proxy<baseType_decoded>;
-        let result: memory<DynArray<baseType_decoded>> = allocateDynamicArray(prx, length);
-        let offset: word = 0;
-        let prx: Proxy<baseType>;
-        let elementHeadSize: word = ABIAttribs.headSize(prx);
-
-        // TODO: surface level loops
-        // TODO: sugar for assigning to indexAccess types (result[i])
-        //for(let i = 0; i < length; i++) {
-        //result[i] = ABIDecode.decode(elementPtr, offset);
-        //assembly { offset := add(offset, elementHeadSize) }
-        //}
-
+        let elements = WordReader.advance(arrayPtr, 32);
+        let stride = ABIAttribs.headSize(@baseType);
+        checkArrayHead(elements, length, stride);
+        require(length < ~0 / 32, Error(0x08638556));
+        let result = allocateDynamicArray(@baseType_decoded, length);
+        let elementDecoder: ABIDecoder<baseType, reader> = ABIDecoder(elements);
+        for (let i = 0; i < length; i += 1) {
+            let value: baseType_decoded = ABIDecode.decode(elementDecoder, i * stride);
+            IndexAccess.set(result, uint256(i), value);
+        }
         return result;
     }
 }
@@ -1933,10 +2022,12 @@ function getReader<ty, reader>(d: ABIDecoder<ty, reader>) returns (reader) {
     }
 }
 
-impl<baseType, baseType_decoded> ABIDecode<ABIDecoder<calldata<DynArray<baseType>>, CalldataWordReader>, calldata<DynArray<baseType_decoded>>> where ABIDecoder<baseType, CalldataWordReader>: ABIDecode<baseType_decoded>, baseType: WordReader {
+impl<baseType, baseType_decoded> ABIDecode<ABIDecoder<calldata<DynArray<baseType>>, CalldataWordReader>, calldata<DynArray<baseType_decoded>>> where ABIDecoder<baseType, CalldataWordReader>: ABIDecode<baseType_decoded>, baseType: ABIAttribs {
     function decode(ptr: ABIDecoder<calldata<DynArray<baseType>>, CalldataWordReader>, currentHeadOffset: word) returns (calldata<DynArray<baseType_decoded>>) {
-        let newptr = WordReader.advance(ptr, currentHeadOffset);
-        let reader: CalldataWordReader = getReader(newptr);
+        let offset = WordReader.read(WordReader.advance(ptr, currentHeadOffset));
+        let reader = WordReader.advance(getReader(ptr), offset);
+        let length = WordReader.read(reader);
+        checkArrayHead(WordReader.advance(reader, 32), length, ABIAttribs.headSize(@baseType));
         let addr: word = Typedef.rep(reader);
         return Typedef.abs(addr);
     }
@@ -1949,12 +2040,14 @@ impl<baseType, baseType_decoded> ABIDecode<ABIDecoder<calldata<DynArray<baseType
 // demand (abiArrayLength / abiArrayGet). Because nothing is materialised here,
 // this works for any decodable element type — including multi-word ADTs such as
 // a sum(...) — which the word-per-slot memory(DynArray(...)) path cannot hold.
-impl<baseType, baseType_decoded> ABIDecode<ABIDecoder<calldata<array<baseType>>, CalldataWordReader>, calldata<array<baseType_decoded>>> where ABIDecoder<baseType, CalldataWordReader>: ABIDecode<baseType_decoded> {
+impl<baseType, baseType_decoded> ABIDecode<ABIDecoder<calldata<array<baseType>>, CalldataWordReader>, calldata<array<baseType_decoded>>> where ABIElement<baseType>: ABIElementAttribs, ABIDecoder<ABIElement<baseType>, CalldataWordReader>: ABIDecode<baseType_decoded> {
     function decode(ptr: ABIDecoder<calldata<array<baseType>>, CalldataWordReader>, currentHeadOffset: word) returns (calldata<array<baseType_decoded>>) {
         let headRdr = WordReader.advance(ptr, currentHeadOffset);
         let dataOffset: word = WordReader.read(headRdr);
         let dataRdr = WordReader.advance(ptr, dataOffset);
         let rdr: CalldataWordReader = getReader(dataRdr);
+        let length = WordReader.read(rdr);
+        checkArrayHead(WordReader.advance(rdr, 32), length, ABIElementAttribs.headSize(@ABIElement<baseType>));
         let addr: word = Typedef.rep(rdr);
         return Typedef.abs(addr);
     }
@@ -1981,31 +2074,17 @@ function abiArrayLength<t>(a: calldata<array<t>>) returns (uint256) {
 //     head offset; the element's own dynamic decoder follows that offset. This
 //     is uniform across element kinds: a dynamic sum follows it and rebases to
 //     the element start, a bare bytes/string leaf follows it to its length word.
-function abiArrayGet<t, t_decoded>(a: calldata<array<t>>, i: uint256) returns (t_decoded) where t: ABIAttribs, ABIDecoder<t, CalldataWordReader>: ABIDecode<t_decoded> {
+function abiArrayGet<t, t_decoded>(a: calldata<array<t>>, i: uint256) returns (t_decoded) where ABIElement<t>: ABIElementAttribs, ABIDecoder<ABIElement<t>, CalldataWordReader>: ABIDecode<t_decoded> {
     // Bounds check: valid indices are [0, length); i == length is already past
     // the last element, so reject i >= length (mirrors the storage-array guard).
     require(i < abiArrayLength(a), Error(0x7f52b2bf)); // ArrayOutOfBounds()
-    let base: word = Typedef.rep(a);
-    let elemRegion: word = base + 32;
-    let prx: Proxy<t>;
+    let base = CalldataWordReader(Typedef.rep(a));
+    let elemRdr = WordReader.advance(base, 32);
+    let stride = ABIElementAttribs.headSize(@ABIElement<t>);
+    checkArrayHead(elemRdr, Typedef.rep(abiArrayLength(a)), stride);
     let idx: word = Typedef.rep(i);
-    match (ABIAttribs.isStatic(prx)) {
-        case true {
-            let elemRdr: CalldataWordReader = CalldataWordReader(elemRegion);
-            let dec: ABIDecoder<t, CalldataWordReader> = ABIDecoder(elemRdr);
-            return ABIDecode.decode(dec, idx * ABIAttribs.headSize(prx));
-        }
-        case false {
-            // Dynamic elements: the region is a table of 32-byte offsets (relative
-            // to the region base), one per element. Hand the element decoder the
-            // region base and element i's slot as its head offset; the element's own
-            // (dynamic) decoder follows that offset — uniformly for a dynamic sum
-            // element or a bare bytes/string element (calldata(array(bytes))).
-            let elemRdr: CalldataWordReader = CalldataWordReader(elemRegion);
-            let dec: ABIDecoder<t, CalldataWordReader> = ABIDecoder(elemRdr);
-            return ABIDecode.decode(dec, idx * 32);
-        }
-    }
+    let dec: ABIDecoder<ABIElement<t>, CalldataWordReader> = ABIDecoder(elemRdr);
+    return ABIDecode.decode(dec, idx * stride);
 }
 
 // --- Assignment ---
@@ -2023,12 +2102,10 @@ pragma no-bounded-variable-condition LVA, RVA;
 
 // --- Storage ---
 
-// Zeroes the storage slots in [start, endSlot). Mirrors solc's
-// clear_storage_range, used when a dynamic array shrinks so that regrowing it
-// cannot resurrect the old elements.
-function clearStorageRange(start: word, endSlot: word) returns (()) {
-    for (; start < endSlot; start += 1) {
-        sstore(start, 0);
+// Count slots rather than comparing hashed addresses, which can wrap around.
+function clearStorageSlots(start: word, count: word) returns (()) {
+    for (let i: word = 0; i < count; i += 1) {
+        sstore(start + i, 0);
     }
 }
 
@@ -2272,7 +2349,7 @@ impl<member> Typedef<array<member>, word> {
 }
 
 // cf https://docs.soliditylang.org/en/latest/internals/layout_in_storage.html#mappings-and-dynamic-arrays
-// the slot itself stores the array length; elements live at keccak256(slot) + i
+// The slot stores the array length; each element occupies StorageSize slots.
 impl<member> StorageSize<array<member>> {
     function size(x: Proxy<array<member>>) returns (word) {
         return 1;
@@ -2284,7 +2361,7 @@ trait Length<self> {
 }
 
 // Dynamic storage arrays carry their length at the slot itself (matching the
-// Solidity convention) while elements live at keccak256(slot) + i.
+// Solidity convention). Element addresses account for their storage footprint.
 trait Array<self> {
     function setLength(arr: self, n: uint256) returns (());
     function pop(arr: self) returns (());
@@ -2312,18 +2389,37 @@ impl<t> Length<calldata<array<t>>> {
     }
 }
 
-impl<t> Array<storage<array<t>>> {
-    // Shrinking clears the abandoned slots, matching solc's resize_array.
-    // For string/bytes elements this zeroes the inline slot, which makes any
-    // keccak-derived tail unreachable (reads are governed by the length word) but
-    // does not reclaim it.
+// All array operations use the same typed layout, including zero-sized values.
+// Reject lengths/indices whose element offsets would wrap and alias earlier
+// elements. Adding the offset to the hashed base still uses EVM slot arithmetic.
+function storageArrayOffset<t>(index: word, p: Proxy<t>) returns (word) where t: StorageSize {
+    let stride: word = StorageSize.size(p);
+    if (stride != 0) {
+        if (index > ~0 / stride) {
+            out_of_bounds();
+        }
+    }
+    return index * stride;
+}
+
+function storageArrayElement<t>(arr: storage<array<t>>, index: word) returns (storage<t>) where t: StorageSize {
+    return storage(hash1(Typedef.rep(arr)) + storageArrayOffset(index, @t));
+}
+
+impl<t> Array<storage<array<t>>> where t: StorageSize {
+    // Initialize every newly exposed inline slot, including on growth. Clearing
+    // a parent array discards child lengths but not their hashed payloads; when
+    // a child later grows, this same rule prevents deleted values reappearing.
     function setLength(arr: storage<array<t>>, n: uint256) returns (()) {
         let slot: word = Typedef.rep(arr);
         let oldLen: word = sload(slot);
         let newLen: word = Typedef.rep(n);
+        let oldEnd: word = storageArrayOffset(oldLen, @t);
+        let newEnd: word = storageArrayOffset(newLen, @t);
         if (newLen < oldLen) {
-            let base: word = hash1(slot);
-            clearStorageRange(base + newLen, base + oldLen);
+            clearStorageSlots(hash1(slot) + newEnd, oldEnd - newEnd);
+        } else {
+            clearStorageSlots(hash1(slot) + oldEnd, newEnd - oldEnd);
         }
         sstore(slot, newLen);
     }
@@ -2334,8 +2430,7 @@ impl<t> Array<storage<array<t>>> {
         if (n == 0) {
             out_of_bounds();
         }
-        sstore(hash1(slot) + (n - 1), 0);
-        sstore(slot, n - 1);
+        Array.setLength(arr, uint256(n - 1));
     }
 }
 
@@ -2343,14 +2438,16 @@ impl<t> Array<storage<array<t>>> {
 // than the element tag type itself. That is what lets array(string) accept a
 // memory(string), via storage(string):CanStore(memory(string)). For word-sized
 // elements v collapses to the element type and CanStore.store delegates to
-// StorageType.store, so the generated code is unchanged.
-impl<t, v> ArrayPush<storage<array<t>>, v> where storage<t>: CanStore<v> {
+// StorageType.store.
+impl<t, v> ArrayPush<storage<array<t>>, v> where storage<t>: CanStore<v>, t: StorageSize {
     function push(arr: storage<array<t>>, val: v) returns (()) {
         let slot: word = Typedef.rep(arr);
         let n: word = sload(slot);
-        let syntaxValue14: storage<t> = storage(hash1(slot) + n);
-        CanStore.store(syntaxValue14, val);
-        sstore(slot, n + 1);
+        if (n == ~0) {
+            out_of_bounds();
+        }
+        Array.setLength(arr, uint256(n + 1));
+        CanStore.store(storageArrayElement(arr, n), val);
     }
 }
 
@@ -2454,7 +2551,7 @@ impl<k, v> CanStore<storage<mapping(k => v)>, storage<mapping(k => v)>> {
     }
 }
 
-impl<v> CanStore<storage<array<v>>, storage<array<v>>> where v: StorageCopy {
+impl<v> CanStore<storage<array<v>>, storage<array<v>>> where v: StorageCopy, v: StorageSize {
     // Whole-array assignment is a deep copy, as in Solidity: a = b resizes a
     // to b's length and then copies every
     // element. Assigning an array to itself is a no-op. A *local* bound to an
@@ -2463,18 +2560,10 @@ impl<v> CanStore<storage<array<v>>, storage<array<v>>> where v: StorageCopy {
         let dst: word = Typedef.rep(l);
         let src: word = Typedef.rep(r);
         if (dst != src) {
-            let oldLen: word = sload(dst);
             let newLen: word = sload(src);
-            let dstBase: word = hash1(dst);
-            if (newLen < oldLen) {
-                clearStorageRange(dstBase + newLen, dstBase + oldLen);
-            }
-            sstore(dst, newLen);
-            let srcBase: word = hash1(src);
+            Array.setLength(l, uint256(newLen));
             for (let i = 0; i < newLen; i += 1) {
-                let syntaxValue15: storage<v> = storage(dstBase + i);
-                let syntaxValue16: storage<v> = storage(srcBase + i);
-                StorageCopy.copySlot(syntaxValue15, syntaxValue16);
+                StorageCopy.copySlot(storageArrayElement(l, i), storageArrayElement(r, i));
             }
         }
     }
@@ -2499,14 +2588,12 @@ impl<v> CanStore<storage<array<v>>, storage<array<v>>> where v: StorageCopy {
 // resurrect. The element types differ: `t` is the storage element tag and `v`
 // what a value of it looks like in memory (they coincide for word-sized
 // elements; for array(string), t = string and v = memory(string)).
-function storeArrayLit<t, v>(dst: storage<array<t>>, src: memory<DynArray<v>>) returns (()) where storage<t>: CanStore<v>, v: Typedef<word> {
+function storeArrayLit<t, v>(dst: storage<array<t>>, src: memory<DynArray<v>>) returns (()) where storage<t>: CanStore<v>, v: Typedef<word>, t: StorageSize {
     let n: word = mload(Typedef.rep(src));
     Array.setLength(dst, uint256(n));
-    let base: word = hash1(Typedef.rep(dst));
     let i: word = 0;
     for (; i < n; i += 1) {
-        let syntaxValue17: storage<t> = storage(base + i);
-        CanStore.store(syntaxValue17, IndexAccess.get(src, uint256(i)));
+        CanStore.store(storageArrayElement(dst, i), IndexAccess.get(src, uint256(i)));
     }
 }
 
@@ -2586,7 +2673,7 @@ impl StorageCopy<bytes> {
 
 // Nested arrays recurse into the array CanStore instance above. The recursion is
 // on the element type, so it terminates with the type's structure.
-impl<t> StorageCopy<array<t>> where t: StorageCopy {
+impl<t> StorageCopy<array<t>> where t: StorageCopy, t: StorageSize {
     function copySlot(dst: storage<array<t>>, src: storage<array<t>>) returns (()) {
         CanStore.store(dst, src);
     }
@@ -2693,7 +2780,7 @@ impl<i, a> RValueIdxAccess<(storage<mapping(i => a)>, i), a> where storage<a>: C
     }
 }
 
-impl<a, i> LValueIdxAccess<(storage<array<a>>, i), storage<a>> where i: Typedef<word> {
+impl<a, i> LValueIdxAccess<(storage<array<a>>, i), storage<a>> where i: Typedef<word>, a: StorageSize {
     function lookup(xi: (storage<array<a>>, i)) returns (storage<a>) {
         match (xi) {
             case (x, i) {
@@ -2704,7 +2791,7 @@ impl<a, i> LValueIdxAccess<(storage<array<a>>, i), storage<a>> where i: Typedef<
                 if (idx >= sload(slot)) {
                     out_of_bounds();
                 }
-                return storage(hash1(slot) + idx);
+                return storageArrayElement(x, idx);
             }
         }
     }
@@ -2714,7 +2801,7 @@ impl<a, i> LValueIdxAccess<(storage<array<a>>, i), storage<a>> where i: Typedef<
 // than the element tag type. For word-sized elements that is the element itself;
 // for array(string) it is a memory(string); for a nested array(array(t)) it
 // is the inner array's handle, which push/pop/length then consume.
-impl<a, v, i> RValueIdxAccess<(storage<array<a>>, i), v> where storage<a>: CanStore<v>, i: Typedef<word> {
+impl<a, v, i> RValueIdxAccess<(storage<array<a>>, i), v> where storage<a>: CanStore<v>, i: Typedef<word>, a: StorageSize {
     function lookup(xi: (storage<array<a>>, i)) returns (v) {
         return CanStore.load(LValueIdxAccess.lookup(xi));
     }
@@ -2724,7 +2811,7 @@ impl<a, v, i> RValueIdxAccess<(storage<array<a>>, i), v> where storage<a>: CanSt
 // ridx(arr, i), which dispatches here and decodes element i on demand via
 // abiArrayGet. There is deliberately no LValueIdxAccess instance — calldata is
 // immutable, so `arr[i] = …` is (correctly) rejected at compile time.
-impl<t, t_decoded, i> RValueIdxAccess<(calldata<array<t>>, i), t_decoded> where t: ABIAttribs, ABIDecoder<t, CalldataWordReader>: ABIDecode<t_decoded>, i: Typedef<word> {
+impl<t, t_decoded, i> RValueIdxAccess<(calldata<array<t>>, i), t_decoded> where ABIElement<t>: ABIElementAttribs, ABIDecoder<ABIElement<t>, CalldataWordReader>: ABIDecode<t_decoded>, i: Typedef<word> {
     function lookup(xi: (calldata<array<t>>, i)) returns (t_decoded) {
         match (xi) {
             case (a, idx) {

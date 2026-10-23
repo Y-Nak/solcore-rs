@@ -4,6 +4,7 @@ use hir::ast::function;
 use super::{
     common::*,
     expr_pat::{parsed_expr_parser, parsed_pat_parser},
+    recovery::{is_structured_statement_start, trace_recovery},
     types::{parsed_ty_comptime_span, type_parser},
     yul::parsed_yul_stmt_parser,
 };
@@ -145,6 +146,71 @@ where
             // than by statement semicolons. They are never candidates for a
             // function-body tail expression.
             kind: assign_stmt_kind(lhs, tail, true),
+        })
+}
+
+fn statement_recovery_parser<'src, I>()
+-> impl Parser<'src, I, ParsedStmt<'src>, ParserErr<'src>> + Clone
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    // Recovery belongs to the statement that failed, rather than to an
+    // expression parser consuming its keyword. Keep balanced argument lists
+    // and bodies together, and leave the enclosing brace and next statement
+    // for their owning parsers.
+    any()
+        .filter(|token| !matches!(token, Token::RBrace))
+        .rewind()
+        .ignore_then(custom(|input| {
+            let mut closers = Vec::new();
+            let mut consumed = false;
+            while let Some(token) = input.peek() {
+                if matches!(token, Token::RBrace) && !closers.contains(&Token::RBrace) {
+                    break;
+                }
+                if consumed
+                    && closers.is_empty()
+                    && is_structured_statement_start(&token)
+                    && !matches!(token, Token::LBrace)
+                {
+                    break;
+                }
+                input.next();
+                consumed = true;
+                match token {
+                    Token::LParen => closers.push(Token::RParen),
+                    Token::LBracket => closers.push(Token::RBracket),
+                    Token::LBrace => closers.push(Token::RBrace),
+                    Token::RParen | Token::RBracket | Token::RBrace => {
+                        if let Some(index) = closers.iter().rposition(|closer| *closer == token) {
+                            // An outer delimiter also ends any unclosed inner
+                            // groups. Otherwise a missing `)` in a match arm
+                            // could consume statements after the match body.
+                            closers.truncate(index);
+                        }
+                        if closers.is_empty() && matches!(token, Token::RBrace) {
+                            if matches!(input.peek(), Some(Token::Else)) {
+                                input.next();
+                                // An `else if` belongs to the same statement.
+                                consumed = false;
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    Token::Semi if closers.is_empty() => break,
+                    _ => {}
+                }
+            }
+            Ok(())
+        }))
+        .map_with(|_, e| {
+            let span = e.span();
+            trace_recovery("statement", span);
+            ParsedStmt {
+                span,
+                kind: ParsedStmtKind::Error,
+            }
         })
 }
 
@@ -388,7 +454,13 @@ where
                 kind: ParsedStmtKind::Continue,
             })
             .boxed();
-        let assign_or_expr = parsed_expr_parser()
+        // Once a statement keyword has selected a structured statement, an
+        // error in its contents must not reinterpret that keyword as an
+        // erroneous expression and hide the actual failure farther inside.
+        let assign_or_expr = any()
+            .filter(is_structured_statement_start)
+            .not()
+            .ignore_then(parsed_expr_parser())
             .then(assign_tail_parser().or_not())
             .then(just(Token::Semi).or_not())
             .validate(|((lhs, tail), semi), e, emitter| {
@@ -418,6 +490,8 @@ where
             continue_stmt,
             assign_or_expr,
         ))
+        .labelled("statement")
+        .recover_with(via_parser(statement_recovery_parser()))
     })
     .labelled("statement")
 }

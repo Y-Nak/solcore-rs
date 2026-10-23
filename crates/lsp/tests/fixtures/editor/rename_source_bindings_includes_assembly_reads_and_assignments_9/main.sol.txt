@@ -1,0 +1,1 @@
+import * from std; import * from std.dispatch; contract C { function update(value: word) returns (word) { assembly { value := add(value, 1) } return value; } }

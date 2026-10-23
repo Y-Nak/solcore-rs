@@ -11,5 +11,5 @@ error[SC0001]: parse error: unexpected `function`
   | ^^^^^^^^ unexpected token
 4 |     return 1;
   |
-  = note: expecting `;`
+  = note: expecting `-`, or `;`
   = note: while parsing pragma declaration

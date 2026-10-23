@@ -28,6 +28,8 @@ pub mod nameres;
 pub mod sema;
 /// Anchor-relative source spans.
 pub mod span;
+/// Shared decoding of source string literal spellings.
+pub mod string_literal;
 /// HIR visitors and validation helpers.
 pub mod visit;
 

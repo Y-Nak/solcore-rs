@@ -13,12 +13,12 @@ error[SC0001]: could not parse top-level item near `infixl 70 (^^) => pow;`; exp
   |
 ---
 
-error[SC0001]: parse error: unexpected `;`
-  --> /user-op-lambda.sol:17:50
+error[SC0001]: parse error: unexpected `^`
+  --> /user-op-lambda.sol:17:47
    |
 16 |     // operator (^^) used inside a lambda body
 17 |     let f = lam(x : word) -> word { return x ^^ 3; };
-   |                                                  ^ unexpected token
+   |                                               ^ unexpected token
 18 |     return f(2);
    |
-   = note: expecting `&&`, `&`, `(`, `.`, `?`, `[`, `^`, `|`, or `||`
+   = note: expecting `!`, `(`, `.`, `@`, `[`, `lam`, or `~`

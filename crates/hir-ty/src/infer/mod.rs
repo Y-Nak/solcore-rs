@@ -241,6 +241,15 @@ pub enum ObligationSource<'db> {
     },
     /// Obligation instantiated from a scheme.
     Scheme,
+    /// Obligation instantiated from a named function used as a value.
+    FunctionValue {
+        /// Body containing the function expression.
+        body: FuncBody<'db>,
+        /// Expression that resolved to the function.
+        expr: Id<Expr<'db>>,
+        /// Function whose scheme was instantiated.
+        function: DefId<'db>,
+    },
     /// Obligation instantiated while typing a call callee.
     CallSite {
         /// Body containing the call.
@@ -383,14 +392,19 @@ pub struct InferenceResult<'db> {
     pub root_scheme: TyScheme<'db>,
     /// Expression type table.
     pub expr_tys: Vec<ExprTy<'db>>,
+    /// Callable signatures for inferred nominal closure types. Their identities
+    /// remain nominal during trait selection; backends use these signatures to
+    /// lower the original lambda body and parameters.
+    pub closure_tys: Vec<(DefId<'db>, Ty<'db>)>,
     /// Pattern type table.
     pub pat_tys: Vec<PatTy<'db>>,
+    /// Expression names whose constructor identity required an expected type.
+    /// These complete the `DotCtorDeferred` entries from name resolution.
+    pub inferred_expr_resolutions: Vec<hir_nameres::BodyExprResolution<'db>>,
+    /// Pattern names whose constructor identity required a scrutinee type.
+    pub inferred_pat_resolutions: Vec<hir_nameres::BodyPatResolution<'db>>,
     /// Let binding type table.
     pub let_tys: Vec<LetTy<'db>>,
-    /// Resolved callable signatures of compiler-generated nominal closures.
-    /// Their identities remain nominal while selecting trait evidence; backends
-    /// can erase the representation without reconstructing the signature.
-    pub closure_tys: Vec<(DefId<'db>, Ty<'db>)>,
     /// Deferred obligations that the future solver must resolve.
     pub obligations: Vec<DeferredObligation<'db>>,
     /// Evidence for obligations solved by the trait solver.
@@ -491,11 +505,41 @@ struct ClosureSig<'db> {
 enum DotCtorLookup<'db> {
     Match {
         ty: InferTy<'db>,
-        callee: CallSiteCallee<'db>,
+        constructor: ConstructorIdentity<'db>,
     },
     NoExpected,
     NoMatch,
     Ambiguous(Vec<String>),
+}
+
+enum ConstructorIdentity<'db> {
+    Adt {
+        ty: DefId<'db>,
+        index: hir_nameres::CtorIndex,
+    },
+    Builtin(hir_nameres::BuiltinKind),
+}
+
+impl<'db> ConstructorIdentity<'db> {
+    fn resolution(&self) -> hir_nameres::Resolution<'db> {
+        match self {
+            Self::Adt { ty, index } => hir_nameres::Resolution::Ctor {
+                ty: *ty,
+                index: *index,
+            },
+            Self::Builtin(kind) => hir_nameres::Resolution::Builtin(*kind),
+        }
+    }
+
+    fn callee(&self) -> CallSiteCallee<'db> {
+        match self {
+            Self::Adt { ty, index } => CallSiteCallee::AdtCtor {
+                ty: *ty,
+                index: *index,
+            },
+            Self::Builtin(kind) => CallSiteCallee::Builtin(*kind),
+        }
+    }
 }
 
 impl<'db> BodyTyContext<'db> {

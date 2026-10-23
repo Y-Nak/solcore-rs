@@ -442,7 +442,7 @@ impl<'db> Driver<'db> {
             .into_iter()
             .zip(key.sub_evidence.iter().cloned())
             .collect::<Vec<_>>();
-        Some(replay_evidence_bindings(evidence, &bindings))
+        Some(self.elaborate_evidence(adt_module, evidence, &bindings))
     }
 }
 
@@ -604,6 +604,7 @@ impl<'db> Driver<'db> {
                 def,
                 ty,
                 base_name: specialize_name(self.db, &base, &subst.specialization_args()),
+                subst,
                 origin: MonoFunctionOrigin::Source,
                 evidence_bindings,
             },

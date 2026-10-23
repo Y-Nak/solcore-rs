@@ -6,7 +6,6 @@
 //! missing dictionary must not hide a selected manual ABI implementation.
 
 use hir::anchor::DefId;
-use nameres::module_id_for_source_file;
 use rustc_hash::FxHashMap;
 
 use super::std_abi::{
@@ -64,7 +63,7 @@ pub(super) fn method_abi_roots<'db>(
             continue;
         };
         // Only the std declarations describe the generated dispatch protocol.
-        if module_id_for_source_file(db, def.file(db)) != Some(module_id) {
+        if !StdAbiModule::Dispatch.contains(db, def) {
             continue;
         }
         let PredKind::InClass {
@@ -99,8 +98,8 @@ fn sort_abi_roots<'db>(db: &'db dyn Db, args: Ty<'db>, roots: &mut [(AbiEvidence
             unreachable!("ABI roots are canonical class predicates")
         };
         let order = match AbiClass::from_def(db, *class).expect("canonical ABI root") {
-            AbiClass::SigString => 0,
-            AbiClass::Attribs => 1,
+            AbiClass::SigString | AbiClass::TypeString => 0,
+            AbiClass::Attribs | AbiClass::ElementAttribs => 1,
             AbiClass::Encode => 2,
             AbiClass::Decode => 3,
             AbiClass::Generic => unreachable!("Generic is checked by exposed ADT identity"),

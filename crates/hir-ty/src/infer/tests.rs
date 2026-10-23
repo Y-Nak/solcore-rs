@@ -4082,3 +4082,782 @@ default impl Marker<Box<word>> {}
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn nested_instance_ambiguity_preserves_distinct_prerequisite_dictionaries() {
+    for instances in [
+        "impl C<word> { function f(x:word) returns(word) { return 1; } } impl C<word> { function f(x:word) returns(word) { return 2; } }",
+        "impl C<word> { function f(x:word) returns(word) { return 2; } } impl C<word> { function f(x:word) returns(word) { return 1; } }",
+    ] {
+        let db = TestDb::default();
+        let source = format!(
+            "trait C<a> {{ function f(x:a) returns(word); }} trait D<a> {{}} enum Box<a> {{Box(a)}} {instances} impl<a> D<Box<a>> where a: C {{}}"
+        );
+        let module = parse_module(&db, &source);
+        let resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &resolution);
+        let solution = solve_class_goal(
+            &db,
+            env,
+            class_id(&db, module, "D"),
+            adt_ty(&db, module, "Box", vec![Ty::word(&db)]),
+            Vec::new(),
+        );
+        let Solution::Ambiguous { candidates } = solution else {
+            panic!("{solution:?}");
+        };
+        assert_eq!(candidates.len(), 2);
+        assert_ne!(candidates[0].evidence, candidates[1].evidence);
+    }
+}
+
+#[test]
+fn nested_instance_prefers_direct_prerequisites_over_superclasses() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+trait C<a> {}
+trait Sub<a> where a: C {}
+trait D<a> {}
+impl C<word> {}
+impl Sub<word> {}
+impl<a> D<a> where a: C {}
+"#,
+    );
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &resolution);
+    let solution = solve_class_goal(
+        &db,
+        env,
+        class_id(&db, module, "D"),
+        Ty::word(&db),
+        Vec::new(),
+    );
+    let Solution::Unique {
+        evidence: Evidence::Instance { sub_evidence, .. },
+        ..
+    } = solution
+    else {
+        panic!("{solution:?}");
+    };
+    assert!(matches!(
+        sub_evidence.as_slice(),
+        [Evidence::Instance { .. }]
+    ));
+}
+
+#[test]
+fn productive_instance_cycles_have_finite_distinct_dictionaries() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        "trait C<a> {} impl C<word> {} impl<a> C<a> where a: C {}",
+    );
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &resolution);
+    let report = solve_class_report(
+        &db,
+        env,
+        class_id(&db, module, "C"),
+        Ty::word(&db),
+        Vec::new(),
+    );
+    assert!(!report.exhausted, "{report:?}");
+    assert!(matches!(report.solution, Solution::Ambiguous { candidates } if candidates.len() == 2));
+}
+
+#[test]
+fn structural_invokable_rules_preserve_comptime_transparency() {
+    let db = TestDb::default();
+    let module = parse_module(&db, "");
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &resolution);
+    let params = vec![Ty::word(&db); 16];
+    let function = Ty::function(&db, params.clone(), Ty::word(&db));
+    let goal = Pred::in_class(
+        &db,
+        ClassId::Builtin(BuiltinClassId::Invokable),
+        Ty::comptime(&db, function),
+        vec![Ty::comptime(&db, Ty::tuple(&db, params)), Ty::word(&db)],
+    );
+    assert!(matches!(
+        solve(&db, env, canonical_goal(&db, goal)),
+        Solution::Unique { .. }
+    ));
+}
+
+#[test]
+fn unit_arguments_support_nullary_and_unary_function_types() {
+    let db = TestDb::default();
+    let module = parse_module(&db, "");
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &resolution);
+    for params in [vec![], vec![Ty::unit(&db)]] {
+        let goal = Pred::in_class(
+            &db,
+            ClassId::Builtin(BuiltinClassId::Invokable),
+            Ty::function(&db, params, Ty::word(&db)),
+            vec![Ty::unit(&db), Ty::word(&db)],
+        );
+        let solution = solve(&db, env, canonical_goal(&db, goal));
+        assert!(matches!(solution, Solution::Unique { .. }), "{solution:?}");
+    }
+}
+
+#[test]
+fn tabled_solver_prunes_dominated_dictionaries_before_expanding_parents() {
+    for depth in [12, 24] {
+        for late_preferred in [false, true] {
+            for ambiguous_leaf in [false, true] {
+                let db = TestDb::default();
+                let context = if late_preferred { "where a: Ready" } else { "" };
+                let duplicate = if ambiguous_leaf {
+                    "impl C<word> {}"
+                } else {
+                    ""
+                };
+                let source = format!(
+                    r#"
+trait C<a> {{}}
+trait Sub<a> where a: C {{}}
+trait Ready<a> {{}}
+trait Middle<a> {{}}
+trait Seed<a> {{}}
+impl<a> C<a> {context} {{}}
+impl<a> Sub<a> {{}}
+impl<a> Ready<a> where a: Middle {{}}
+impl<a> Middle<a> where a: Seed {{}}
+impl<a> Seed<a> {{}}
+{duplicate}
+trait D<a> {{}}
+enum Box<a> {{ Box(a) }}
+impl D<word> {{}}
+impl<a> D<Box<a>> where a: D, a: C {{}}
+"#
+                );
+                let module = parse_module(&db, &source);
+                let resolution = hir_nameres::resolve_module(&db, module);
+                let env = trait_env(&db, module, &resolution);
+                let ty =
+                    (0..depth).fold(Ty::word(&db), |ty, _| adt_ty(&db, module, "Box", vec![ty]));
+                let report =
+                    solve_class_report(&db, env, class_id(&db, module, "D"), ty, Vec::new());
+                assert!(!report.exhausted, "{report:?}");
+                if ambiguous_leaf {
+                    let Solution::Ambiguous { candidates } = &report.solution else {
+                        panic!("{report:?}");
+                    };
+                    assert_eq!(candidates.len(), 2, "{report:?}");
+                    assert_ne!(candidates[0].evidence, candidates[1].evidence);
+                } else {
+                    assert!(
+                        matches!(report.solution, Solution::Unique { .. }),
+                        "{report:?}"
+                    );
+                }
+                // Both logical discovery and complete evidence construction
+                // must scale with the chain, not its 2^depth proof choices.
+                assert!(report.stats.answers_found < 20 * depth + 20, "{report:?}");
+                assert!(report.stats.generator_steps < 20 * depth + 20, "{report:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn tabled_solver_preserves_lower_priority_seeds_in_preference_cycles() {
+    let implementations = [
+        "impl<a> C<a> where a: D {}",
+        "impl<a> D<a> where a: C {}",
+        "impl<a> Sub<a> {}",
+    ];
+    for reversed in [false, true] {
+        let db = TestDb::default();
+        let mut implementations = implementations;
+        if reversed {
+            implementations.reverse();
+        }
+        let source = format!(
+            "trait C<a> {{}} trait D<a> {{}} trait Sub<a> where a:C {{}} trait Top<a> {{}} {} impl<a> Top<a> where a:C {{}}",
+            implementations.join(" ")
+        );
+        let module = parse_module(&db, &source);
+        let resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &resolution);
+        let report = solve_class_report(
+            &db,
+            env,
+            class_id(&db, module, "Top"),
+            Ty::word(&db),
+            Vec::new(),
+        );
+        assert!(!report.exhausted, "{report:?}");
+        let Solution::Unique { mut evidence, .. } = report.solution else {
+            panic!("{report:?}");
+        };
+        // Top -> direct C -> direct D -> superclass C -> Sub. Dropping the
+        // superclass C seed because direct C exists would remove every proof.
+        for _ in 0..3 {
+            let Evidence::Instance {
+                mut sub_evidence, ..
+            } = evidence
+            else {
+                panic!("expected direct instance: {evidence:?}");
+            };
+            assert_eq!(sub_evidence.len(), 1);
+            evidence = sub_evidence.pop().unwrap();
+        }
+        assert!(
+            matches!(evidence, Evidence::Superclass { .. }),
+            "{evidence:?}"
+        );
+    }
+}
+
+#[test]
+fn superclass_dictionary_identity_retains_given_origins_and_target_substitutions() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+trait A<a,r> {}
+trait B<a,r> where a:A<r> {}
+trait C<a,r> where a:A<r> {}
+trait D<a,r> where a:B<r>,a:C<r> {}
+trait E<a,r> where a:A<r> {}
+trait Outer<a> {}
+enum Box<a> { Box(a) }
+impl<a> Outer<Box<a>> where a:A<word> {}
+"#,
+    );
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let base = trait_env(&db, module, &resolution);
+    let rigid = Ty::bound(&db, 7);
+    let given = |name, arg| Pred::in_class(&db, class_id(&db, module, name), rigid, vec![arg]);
+    let first = given("D", Ty::word(&db));
+    let env = trait_env_with_givens(&db, base, vec![first]);
+    let solution = solve_class_goal(
+        &db,
+        env,
+        class_id(&db, module, "Outer"),
+        adt_ty(&db, module, "Box", vec![rigid]),
+        Vec::new(),
+    );
+    assert!(matches!(solution, Solution::Unique { .. }), "{solution:?}");
+
+    // Two superclass paths from D are one dictionary; an independent E
+    // assumption is a different dictionary even though its target is equal.
+    let env = trait_env_with_givens(&db, base, vec![first, given("E", Ty::word(&db))]);
+    let solution = solve_class_goal(
+        &db,
+        env,
+        class_id(&db, module, "A"),
+        rigid,
+        vec![Ty::word(&db)],
+    );
+    assert!(matches!(solution, Solution::Ambiguous { candidates } if candidates.len() == 2));
+
+    // Projection identity includes the target type arguments, including when
+    // the surrounding query infers one of them.
+    let env = trait_env_with_givens(&db, base, vec![first, given("D", Ty::bool(&db))]);
+    let goal = Pred::in_class(
+        &db,
+        class_id(&db, module, "A"),
+        rigid,
+        vec![Ty::bound(&db, 0)],
+    );
+    let solution = solve(
+        &db,
+        env,
+        crate::canonical_goal_with_allowed(&db, goal, vec![0]),
+    );
+    let Solution::Ambiguous { candidates } = solution else {
+        panic!("{solution:?}")
+    };
+    assert_eq!(candidates.len(), 2);
+    assert_ne!(candidates[0].subst, candidates[1].subst);
+}
+
+#[test]
+fn superclass_cycles_preserve_one_local_dictionary_identity() {
+    for parents in ["a:B,a:C", "a:C,a:B"] {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            &format!(
+                "trait A<a> where a:D {{}} trait B<a> where a:A {{}} trait C<a> where a:A {{}} trait D<a> where {parents} {{}}"
+            ),
+        );
+        let resolution = hir_nameres::resolve_module(&db, module);
+        let base = trait_env(&db, module, &resolution);
+        let rigid = Ty::bound(&db, 4);
+        let env = trait_env_with_givens(
+            &db,
+            base,
+            vec![Pred::in_class(
+                &db,
+                class_id(&db, module, "D"),
+                rigid,
+                Vec::new(),
+            )],
+        );
+        let report = solve_class_report(&db, env, class_id(&db, module, "A"), rigid, Vec::new());
+        assert!(!report.exhausted, "{report:?}");
+        assert!(
+            matches!(report.solution, Solution::Unique { .. }),
+            "{report:?}"
+        );
+        assert!(report.stats.answers_found < 40, "{report:?}");
+    }
+}
+
+#[test]
+fn tabled_solver_prunes_cyclic_alternatives_in_their_consuming_context() {
+    for depth in [12, 24] {
+        for cycle in ["superclass", "instance", "shared"] {
+            for reversed in [false, true] {
+                for ambiguous_leaf in [false, true] {
+                    let db = TestDb::default();
+                    let (classes, mut instances) = match cycle {
+                        "superclass" => (
+                            "trait C<a> where a:Sub {} trait Sub<a> where a:C {}",
+                            vec!["impl<a> C<a> {}", "impl<a> Sub<a> {}"],
+                        ),
+                        "instance" => (
+                            "trait C<a> {} trait Sub<a> where a:C {} trait Ready<a> {}",
+                            vec![
+                                "impl<a> C<a> where a:Ready {}",
+                                "impl<a> Ready<a> where a:C {}",
+                                "impl<a> Sub<a> {}",
+                            ],
+                        ),
+                        "shared" => (
+                            "trait C<a> {} trait Sub<a> where a:C {} trait Ready<a> {} trait Middle<a> {} trait Shared<a> {}",
+                            vec![
+                                "impl<a> C<a> where a:Ready,a:Shared {}",
+                                "impl<a> Ready<a> where a:Middle,a:Shared {}",
+                                "impl<a> Middle<a> where a:C {}",
+                                "impl<a> Shared<a> {}",
+                                "impl<a> Sub<a> {}",
+                            ],
+                        ),
+                        _ => unreachable!(),
+                    };
+                    if ambiguous_leaf {
+                        instances.push("impl C<word> {}");
+                    }
+                    if reversed {
+                        instances.reverse();
+                    }
+                    let source = format!(
+                        "{classes} {} trait D<a> {{}} enum Box<a> {{ Box(a) }} impl D<word> {{}} impl<a> D<Box<a>> where a:D,a:C {{}}",
+                        instances.join(" ")
+                    );
+                    let module = parse_module(&db, &source);
+                    let resolution = hir_nameres::resolve_module(&db, module);
+                    let env = trait_env(&db, module, &resolution);
+                    let ty = (0..depth)
+                        .fold(Ty::word(&db), |ty, _| adt_ty(&db, module, "Box", vec![ty]));
+                    let report =
+                        solve_class_report(&db, env, class_id(&db, module, "D"), ty, Vec::new());
+                    assert!(
+                        !report.exhausted,
+                        "{cycle} {depth} {reversed} {ambiguous_leaf}: {report:?}"
+                    );
+                    if ambiguous_leaf {
+                        let Solution::Ambiguous { candidates } = &report.solution else {
+                            panic!("{report:?}")
+                        };
+                        assert_eq!(candidates.len(), 2, "{report:?}");
+                    } else {
+                        assert!(
+                            matches!(report.solution, Solution::Unique { .. }),
+                            "{report:?}"
+                        );
+                    }
+                    // Retain recursive seeds within the cycle, but never
+                    // multiply their dominated uses along the outer chain.
+                    assert!(report.stats.answers_found < 50 * depth + 50, "{report:?}");
+                    assert!(report.stats.generator_steps < 50 * depth + 50, "{report:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn cyclic_preference_keeps_substitutions_needed_by_later_conditions() {
+    for conditions in ["a:C<r>,a:Wanted<r>", "a:Wanted<r>,a:C<r>"] {
+        for instances in [
+            "impl C<word,word> {} impl Sub<word,bool> {}",
+            "impl Sub<word,bool> {} impl C<word,word> {}",
+        ] {
+            let db = TestDb::default();
+            let module = parse_module(
+                &db,
+                &format!(
+                    r#"
+trait C<a,r> where a:Sub<r> {{}}
+trait Sub<a,r> where a:C<r> {{}}
+trait Wanted<a,r> {{}}
+trait Outer<a> {{}}
+enum Box<a> {{ Box(a) }}
+{instances}
+impl Wanted<word,bool> {{}}
+impl<a,r> Outer<Box<a>> where {conditions} {{}}
+"#
+                ),
+            );
+            let resolution = hir_nameres::resolve_module(&db, module);
+            let env = trait_env(&db, module, &resolution);
+            let report = solve_class_report(
+                &db,
+                env,
+                class_id(&db, module, "Outer"),
+                adt_ty(&db, module, "Box", vec![Ty::word(&db)]),
+                Vec::new(),
+            );
+            assert!(!report.exhausted, "{report:?}");
+            let Solution::Unique {
+                evidence: Evidence::Instance { args, .. },
+                ..
+            } = report.solution
+            else {
+                panic!("{report:?}")
+            };
+            // The direct C<word,word> dictionary has a better priority but
+            // cannot satisfy Wanted. It must not erase the bool substitution.
+            assert_eq!(args, vec![Ty::word(&db), Ty::bool(&db)]);
+        }
+    }
+}
+
+#[test]
+fn dictionary_discovery_analysis_and_expansion_share_one_fuel_budget() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+trait C<a> {}
+trait Sub<a> where a:C {}
+trait Outer<a> {}
+enum Box<a> { Box(a) }
+impl C<word> {}
+impl Sub<word> {}
+impl<a> Outer<Box<a>> where a:C {}
+"#,
+    );
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &resolution);
+    let goal = canonical_goal(
+        &db,
+        Pred::in_class(
+            &db,
+            class_id(&db, module, "Outer"),
+            adt_ty(&db, module, "Box", vec![Ty::word(&db)]),
+            Vec::new(),
+        ),
+    );
+    let budget = 1000;
+    let complete = crate::solver::solve_report_with_fuel(&db, env, goal, budget);
+    assert!(!complete.exhausted, "{complete:?}");
+    assert!(matches!(complete.solution, Solution::Unique { .. }));
+    let used = budget - complete.fuel_remaining;
+    assert!(used < budget);
+    let mut exhausted_after_discovery = false;
+    for fuel in 0..used {
+        let report = crate::solver::solve_report_with_fuel(&db, env, goal, fuel);
+        assert!(report.exhausted, "fuel={fuel}, used={used}: {report:?}");
+        assert_eq!(report.fuel_remaining, 0, "{report:?}");
+        exhausted_after_discovery |=
+            report.stats.table_size == 3 && report.stats.answers_found == 4;
+    }
+    assert!(
+        exhausted_after_discovery,
+        "the analysis phase must also consume the shared budget"
+    );
+    let exact = crate::solver::solve_report_with_fuel(&db, env, goal, used);
+    assert!(!exact.exhausted, "{exact:?}");
+    assert_eq!(exact.fuel_remaining, 0);
+}
+
+#[test]
+fn finite_witness_footprints_propagate_through_shared_logical_answers() {
+    for depth in [12, 24] {
+        for reversed in [false, true] {
+            let db = TestDb::default();
+            let mut declarations = vec![
+                "trait Target<a> {}".to_owned(),
+                "trait Super<a> where a:Target {}".to_owned(),
+                "trait Bridge<a> {}".to_owned(),
+                "trait Leaf<a> {}".to_owned(),
+                "trait RecursiveLeaf<a> where a:Leaf {}".to_owned(),
+                "trait IndependentLeaf<a> where a:Leaf {}".to_owned(),
+                "trait D<a> {}".to_owned(),
+                "enum Box<a> { Box(a) }".to_owned(),
+            ];
+            let mut instances = vec![
+                "impl<a> Target<a> where a:Bridge {}".to_owned(),
+                "impl<a> Bridge<a> where a:Leaf {}".to_owned(),
+                "impl<a> RecursiveLeaf<a> where Box<a>:D {}".to_owned(),
+                "impl<a> IndependentLeaf<a> where a:Slow0 {}".to_owned(),
+                "impl<a> Super<a> {}".to_owned(),
+                "impl D<word> {}".to_owned(),
+                "impl<a> D<Box<a>> where a:D,a:Target {}".to_owned(),
+            ];
+            for index in 0..8 {
+                declarations.push(format!("trait Slow{index}<a> {{}}"));
+                instances.push(if index == 7 {
+                    format!("impl<a> Slow{index}<a> {{}}")
+                } else {
+                    format!("impl<a> Slow{index}<a> where a:Slow{} {{}}", index + 1)
+                });
+            }
+            if reversed {
+                instances.reverse();
+            }
+            declarations.extend(instances);
+            let module = parse_module(&db, &declarations.join(" "));
+            let resolution = hir_nameres::resolve_module(&db, module);
+            let env = trait_env(&db, module, &resolution);
+            let ty = (0..depth).fold(Ty::word(&db), |ty, _| adt_ty(&db, module, "Box", vec![ty]));
+            let report = solve_class_report(&db, env, class_id(&db, module, "D"), ty, Vec::new());
+            assert!(!report.exhausted, "{depth} {reversed}: {report:?}");
+            assert!(
+                matches!(report.solution, Solution::Unique { .. }),
+                "{report:?}"
+            );
+            // Bridge has one logical answer but two witness footprints. Its
+            // fast recursive Leaf proof conflicts with an ancestor D; its
+            // slower independent proof must still reach Target and allow the
+            // superclass alternative to be pruned in D's consuming context.
+            assert!(report.stats.answers_found < 80 * depth + 100, "{report:?}");
+        }
+    }
+}
+
+#[test]
+fn contextual_proofs_preserve_rigid_roots_across_flexible_child_goals() {
+    for rigid_index in [0, 7] {
+        for reversed in [false, true] {
+            let db = TestDb::default();
+            let instances = if reversed {
+                "impl<a,r> Sub<a,r> where a:C,a:Fix<r> {} impl<a> Seed<a> {}"
+            } else {
+                "impl<a> Seed<a> {} impl<a,r> Sub<a,r> where a:C,a:Fix<r> {}"
+            };
+            let module = parse_module(
+                &db,
+                &format!(
+                    "trait C<a> {{}} trait Seed<a> where a:C {{}} trait Sub<a,r> where a:C {{}} trait Fix<a,r> {{}} {instances}"
+                ),
+            );
+            let resolution = hir_nameres::resolve_module(&db, module);
+            let base = trait_env(&db, module, &resolution);
+            let rigid = Ty::bound(&db, rigid_index);
+            let env = trait_env_with_givens(
+                &db,
+                base,
+                vec![Pred::in_class(
+                    &db,
+                    class_id(&db, module, "Fix"),
+                    rigid,
+                    vec![Ty::word(&db)],
+                )],
+            );
+            let report =
+                solve_class_report(&db, env, class_id(&db, module, "C"), rigid, Vec::new());
+            assert!(!report.exhausted, "{report:?}");
+            let Solution::Ambiguous { candidates } = report.solution else {
+                panic!("expected independent Seed and Sub dictionaries: {report:?}")
+            };
+            assert_eq!(candidates.len(), 2);
+            // The Sub projection root is fixed, but its child introduces a
+            // flexible r and shifts the rigid variable's canonical index.
+            // That cycle must terminate without merging the independent Seed.
+            for candidate in candidates {
+                let Evidence::Superclass { pred, .. } = candidate.evidence else {
+                    panic!("expected superclass dictionary")
+                };
+                assert_eq!(
+                    pred,
+                    Pred::in_class(&db, class_id(&db, module, "C"), rigid, Vec::new())
+                );
+            }
+            assert!(report.stats.answers_found < 40);
+        }
+    }
+}
+
+#[test]
+fn decreasing_instance_chains_prune_redundant_superclass_dictionaries() {
+    for depth in [12, 24] {
+        for reversed in [false, true] {
+            for ambiguous_leaf in [false, true] {
+                let db = TestDb::default();
+                let mut instances = vec![
+                    "impl C<word> {}",
+                    "impl<a> C<Box<a>> where a:C {}",
+                    "impl<a> Sub<Box<a>> where a:C {}",
+                ];
+                if ambiguous_leaf {
+                    instances.push("impl C<word> {}");
+                }
+                if reversed {
+                    instances.reverse();
+                }
+                let module = parse_module(
+                    &db,
+                    &format!(
+                        "trait C<a> {{}} trait Sub<a> where a:C {{}} enum Box<a> {{ Box(a) }} {}",
+                        instances.join(" ")
+                    ),
+                );
+                let resolution = hir_nameres::resolve_module(&db, module);
+                let env = trait_env(&db, module, &resolution);
+                let ty =
+                    (0..depth).fold(Ty::word(&db), |ty, _| adt_ty(&db, module, "Box", vec![ty]));
+                let report =
+                    solve_class_report(&db, env, class_id(&db, module, "C"), ty, Vec::new());
+                assert!(
+                    !report.exhausted,
+                    "{depth} {reversed} {ambiguous_leaf}: {report:?}"
+                );
+                if ambiguous_leaf {
+                    assert!(
+                        matches!(&report.solution, Solution::Ambiguous { candidates } if candidates.len() == 2),
+                        "{report:?}"
+                    );
+                } else {
+                    assert!(
+                        matches!(report.solution, Solution::Unique { .. }),
+                        "{report:?}"
+                    );
+                }
+                assert!(report.stats.answers_found < 30 * depth + 30, "{report:?}");
+                assert!(report.stats.generator_steps < 30 * depth + 30, "{report:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn decreasing_dictionary_roots_preserve_permuted_rigid_arguments() {
+    for depth in [12, 13, 24] {
+        for rigid_index in [0, 7] {
+            let db = TestDb::default();
+            let module = parse_module(
+                &db,
+                r#"
+trait C<a,b> {}
+trait Sub<a,b> where a:C<b> {}
+enum Box<a> { Box(a) }
+impl<a,b> C<Box<a>,Box<b>> where b:C<a> {}
+impl<a,b> Sub<Box<a>,Box<b>> where b:C<a> {}
+"#,
+            );
+            let resolution = hir_nameres::resolve_module(&db, module);
+            let base = trait_env(&db, module, &resolution);
+            let class = class_id(&db, module, "C");
+            let rigid = Ty::bound(&db, rigid_index);
+            let boolean = Ty::bool(&db);
+            let givens = [
+                Pred::in_class(&db, class, rigid, vec![boolean]),
+                Pred::in_class(&db, class, boolean, vec![rigid]),
+            ];
+            let env = trait_env_with_givens(&db, base, givens.to_vec());
+            let nest = |ty| (0..depth).fold(ty, |ty, _| adt_ty(&db, module, "Box", vec![ty]));
+            let report = solve_class_report(&db, env, class, nest(rigid), vec![nest(boolean)]);
+            assert!(!report.exhausted, "{depth} {rigid_index}: {report:?}");
+            let Solution::Unique { mut evidence, .. } = report.solution else {
+                panic!("{report:?}");
+            };
+            for _ in 0..depth {
+                let Evidence::Instance {
+                    mut sub_evidence, ..
+                } = evidence
+                else {
+                    panic!("a direct instance must outrank its superclass alternative");
+                };
+                assert_eq!(sub_evidence.len(), 1);
+                evidence = sub_evidence.pop().unwrap();
+            }
+            assert_eq!(
+                evidence,
+                Evidence::Builtin {
+                    pred: givens[depth % 2]
+                }
+            );
+            assert!(report.stats.answers_found < 30 * depth + 30);
+        }
+    }
+}
+
+#[test]
+fn solver_budget_bounds_successful_and_answerless_work() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        "trait Known<a> {} impl Known<word> {} trait Missing<a> {} trait Cycle<a> {} trait Other<a> {} impl<a> Cycle<a> where a:Other {} impl<a> Other<a> where a:Cycle {}",
+    );
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &resolution);
+    for (class, required, has_answer) in [
+        ("Known", 1, true),
+        ("Missing", 1, false),
+        ("Cycle", 2, false),
+    ] {
+        let goal = canonical_goal(
+            &db,
+            Pred::in_class(&db, class_id(&db, module, class), Ty::word(&db), Vec::new()),
+        );
+        for budget in 0..required {
+            let report = crate::solver::solve_report_with_fuel(&db, env, goal, budget);
+            assert!(report.exhausted, "{class} {budget}: {report:?}");
+            assert_eq!(report.fuel_remaining, 0);
+        }
+        let complete = crate::solver::solve_report_with_fuel(&db, env, goal, required);
+        assert!(!complete.exhausted, "{class}: {complete:?}");
+        assert_eq!(complete.fuel_remaining, 0);
+        if has_answer {
+            assert!(matches!(complete.solution, Solution::Unique { .. }));
+        } else {
+            assert!(matches!(complete.solution, Solution::NoSolution));
+        }
+    }
+}
+
+#[test]
+fn direct_superclass_predicates_instantiate_aliases_and_secondary_arguments() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+type Alias(a) = a;
+trait Parent<a,b> {}
+trait Child<a,b> where a:Parent<Alias<b>> {}
+"#,
+    );
+    let resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &resolution);
+    let child = Pred::in_class(
+        &db,
+        class_id(&db, module, "Child"),
+        Ty::word(&db),
+        vec![Ty::bool(&db)],
+    );
+    let expected = Pred::in_class(
+        &db,
+        class_id(&db, module, "Parent"),
+        Ty::word(&db),
+        vec![Ty::bool(&db)],
+    );
+    assert_eq!(
+        crate::direct_superclass_predicates(&db, env.base(&db), child),
+        vec![expected]
+    );
+}
+
+#[path = "tests/fixtures.rs"]
+mod fixture_tests;

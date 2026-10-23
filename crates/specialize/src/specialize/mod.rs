@@ -29,7 +29,7 @@ use hir_ty::infer::ComptimeObligation;
 use hir_ty::{
     AbiParam, AliasNormalizer, BinderEnv, BodyDesugarView, BodyPreTypeckDesugarPlan, BodyTyContext,
     BuiltinClassId, BuiltinTyCtor, CallSiteCallee, CallSiteEvidence, ClassId,
-    ComptimeObligationKind, Db, DispatchConstructor, DispatchFallback, Evidence,
+    ComptimeObligationKind, Db, DispatchConstructor, DispatchFallback, Evidence as LogicalEvidence,
     GeneratedOriginKind, InferenceResult, LoweredFunction, Pred, PredKind, PreparedModule,
     ProductShape, Solution, Ty, TyCtor, TyKind, TypeLowering, UserTyCtor, UserTyCtorKind,
     canonical_goal, canonical_goal_with_allowed, contract_dispatch_name_type_name,
@@ -62,6 +62,7 @@ mod derived_class;
 mod derived_generic;
 mod derived_storage;
 mod diagnostics;
+mod dictionary;
 mod driver;
 mod evidence;
 mod intrinsics;
@@ -71,11 +72,11 @@ mod ty_subst;
 
 use body::{BinOpExpr, BodyCtx, BodyIndex};
 pub use diagnostics::{SpecializeDiagnostic, SpecializeDiagnosticKind};
+use dictionary::{Evidence, MethodEvidence};
 use driver::{
     AdtInfo, DerivedAbiFamily, DerivedAbiKey, DerivedClassKey, DerivedStorageFamily,
     DerivedStorageKey, Driver, FunctionInfo, SpecKey, SyntheticKey,
 };
-use evidence::replay_evidence_bindings;
 use intrinsics::{
     builtin_ctor_name, builtin_intrinsic, builtin_name, overloaded_operator_method,
     overloaded_unary_operator_method, plain_operator_function,

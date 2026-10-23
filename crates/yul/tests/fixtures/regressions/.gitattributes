@@ -1,0 +1,3 @@
+# These literals test raw carriage returns; preserve their bytes on checkout.
+folded_cr/main.sol -text
+folded_crlf/main.sol -text whitespace=cr-at-eol

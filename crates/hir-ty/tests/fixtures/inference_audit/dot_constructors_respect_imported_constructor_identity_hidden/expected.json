@@ -1,0 +1,19 @@
+{
+  "loader": "project",
+  "functions": [
+    {
+      "name": "forge",
+      "solve": true,
+      "contains_codes": [
+        "SC0224"
+      ]
+    },
+    {
+      "name": "inspect",
+      "solve": true,
+      "contains_codes": [
+        "SC0224"
+      ]
+    }
+  ]
+}

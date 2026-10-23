@@ -9,12 +9,27 @@ fn format(source: &str) -> String {
 }
 
 fn assert_stable(source: &str) {
-    let formatted = format(source);
-    assert_eq!(
-        format(&formatted),
-        formatted,
-        "formatting must be idempotent"
-    );
+    let source = source.to_owned();
+    run_with_fixture_stack(move || {
+        let formatted = format(&source);
+        assert_eq!(
+            format(&formatted),
+            formatted,
+            "formatting must be idempotent"
+        );
+    });
+}
+
+fn run_with_fixture_stack(assertion: impl FnOnce() + Send + 'static) {
+    // Match the diagnostic fixture runner's stack for deep parser regressions.
+    let result = std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(assertion)
+        .expect("spawn formatting assertion")
+        .join();
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
 }
 
 #[test]
@@ -144,15 +159,7 @@ fn formatting_e2e_sources(fixture: Fixture<&str>) {
 
 #[test]
 fn repository_fixtures_are_formatted() {
-    // Match the diagnostic fixture runner's stack for deep parser regressions.
-    let result = std::thread::Builder::new()
-        .stack_size(64 * 1024 * 1024)
-        .spawn(check_repository_fixture_formatting)
-        .expect("spawn fixture formatting check")
-        .join();
-    if let Err(payload) = result {
-        std::panic::resume_unwind(payload);
-    }
+    run_with_fixture_stack(check_repository_fixture_formatting);
 }
 
 fn check_repository_fixture_formatting() {
@@ -235,4 +242,12 @@ proptest! {
         let formatted = format(&source);
         prop_assert_eq!(format(&formatted), formatted);
     }
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/format_cases", glob: "**/input.txt")]
+fn exact_formatting_fixture(fixture: Fixture<&str>) {
+    let expected =
+        fs::read_to_string(Path::new(fixture.path()).with_file_name("expected.txt")).unwrap();
+    assert_eq!(format(fixture.content()), expected);
+    assert_stable(fixture.content());
 }

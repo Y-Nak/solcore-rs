@@ -1,0 +1,2 @@
+typeish Alias = word;
+             function caller(x: Alias) returns (word) { return 0; }

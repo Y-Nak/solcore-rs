@@ -1,0 +1,7 @@
+import {Choice as Renamed} from math;
+type Alias = Renamed;
+function main() returns (word) {
+let make = lam (x: word) -> Alias { return .Pick(x); };
+let value: Alias = make(7);
+match (value) { case .Pick(n) { return n; } case .Other { return 0; } }
+}

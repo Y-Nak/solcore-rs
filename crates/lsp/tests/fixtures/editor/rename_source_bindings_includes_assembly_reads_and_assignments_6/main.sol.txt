@@ -1,0 +1,1 @@
+function main(input: word) returns (word) { let value = input; let f = lam (x: word) -> word { assembly { pop(value) } return value; }; return f(input); }

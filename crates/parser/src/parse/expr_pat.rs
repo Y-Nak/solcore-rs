@@ -358,23 +358,35 @@ where
     // right so a long chain does not recurse through Chumsky once per
     // `else` arm. The then arm still uses the complete expression grammar,
     // which preserves nested conditionals such as `a ? b ? c : d : e`.
-    let ternary_head = or
-        .clone()
-        .then_ignore(just(Token::Question))
-        .then(expr.clone())
-        .then_ignore(just(Token::Colon));
-    ternary_head
-        .repeated()
-        .foldr(or, |(cond, then_expr), else_expr| {
-            let span = LexSpan::from(cond.span.start..else_expr.span.end);
-            ParsedExpr {
-                span,
-                kind: ParsedExprKind::If {
-                    cond: Box::new(cond),
-                    then_expr: Box::new(then_expr),
-                    else_expr: Box::new(else_expr),
-                },
+    // Parse the first operand before testing for `?`: speculatively parsing a
+    // complete operand and reparsing it on fallback doubles the work at every
+    // nested call, parenthesis, or collection expression.
+    let ternary_tail = just(Token::Question)
+        .ignore_then(expr)
+        .then_ignore(just(Token::Colon))
+        .then(or.clone());
+    or.then(ternary_tail.repeated().collect::<Vec<_>>())
+        .map(|(first, tails)| {
+            let mut heads = Vec::with_capacity(tails.len());
+            let mut last = first;
+            for (then_expr, next) in tails {
+                heads.push((last, then_expr));
+                last = next;
             }
+            heads
+                .into_iter()
+                .rev()
+                .fold(last, |else_expr, (cond, then_expr)| {
+                    let span = LexSpan::from(cond.span.start..else_expr.span.end);
+                    ParsedExpr {
+                        span,
+                        kind: ParsedExprKind::If {
+                            cond: Box::new(cond),
+                            then_expr: Box::new(then_expr),
+                            else_expr: Box::new(else_expr),
+                        },
+                    }
+                })
         })
 }
 

@@ -9,7 +9,10 @@ use lsp_types::{Location, Position, PrepareRenameResponse, Range, TextEdit, Url,
 
 use crate::{
     LineIndexExt,
-    references::{collect_reference_locations, reference_target_at, target_supports_text_rename},
+    references::{
+        collect_reference_locations, preserves_resolutions, reference_target_at,
+        target_accepts_identifier, target_supports_text_rename,
+    },
     state::WorldState,
 };
 
@@ -43,16 +46,19 @@ pub fn handle_rename(
     position: Position,
     new_name: &str,
 ) -> Option<WorkspaceEdit> {
-    if !parser::is_valid_identifier(new_name) {
+    let target = reference_target_at(world, uri, position)?;
+    if !target_accepts_identifier(world, &target, new_name) {
         return None;
     }
 
-    let target = reference_target_at(world, uri, position)?;
     if !target_supports_text_rename(world, &target) {
         return None;
     }
     let locations = editable_reference_locations(world, &target)?;
     let changes = text_edits_by_uri(locations, new_name)?;
+    if !preserves_resolutions(world, &target, &changes) {
+        return None;
+    }
 
     Some(WorkspaceEdit {
         changes: Some(changes),

@@ -1,0 +1,6 @@
+{
+  "loader": "std",
+  "checks": [],
+  "source": "002.sol",
+  "frontend_clean": true
+}

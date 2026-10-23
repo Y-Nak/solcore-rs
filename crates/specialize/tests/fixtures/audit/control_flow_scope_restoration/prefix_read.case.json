@@ -1,0 +1,11 @@
+{
+  "source": "prefix_read.sol",
+  "loader": "fixture",
+  "frontend_clean": true,
+  "checks": [
+    {
+      "check": "main_return_variable",
+      "name": "result"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "loader": "std",
+  "checks": [],
+  "source": "001.sol",
+  "frontend_clean": true,
+  "diagnostics": [
+    {
+      "kind": "missing_evidence",
+      "context": "derived f: word: P"
+    }
+  ]
+}

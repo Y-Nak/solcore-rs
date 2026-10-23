@@ -55,12 +55,13 @@ pub use prepare::{
 pub use solver::{
     BaseTraitEnvId, BaseTraitEnvSource, Candidate, CanonicalGoal, ClauseOrigin, DerivedClassPlan,
     DerivedClauseKind, DerivedGenericClauseSource, DerivedGenericFromArm, DerivedGenericPlan,
-    DerivedGenericToArm, Evidence, LocalGivensId, ModuleTraitEnvSource, ProgramClause, Solution,
-    SolverReport, Substitution, TraitClauseSetId, TraitEnvId, canonical_goal,
-    canonical_goal_with_allowed, derived_class_plans, derived_generic_instance_plan,
-    derived_generic_plan, instance_soundness_diagnostics, solve, solve_report,
-    trait_env_for_module, trait_env_from_module_resolution,
-    trait_env_from_module_resolution_and_imports, trait_env_with_givens,
+    DerivedGenericToArm, Evidence, InstanceKind, LocalGivensId, ModuleTraitEnvSource,
+    ProgramClause, Solution, SolverReport, Substitution, TraitClauseSetId, TraitEnvId,
+    canonical_goal, canonical_goal_with_allowed, derived_class_plans,
+    derived_generic_instance_plan, derived_generic_plan, direct_superclass_predicates,
+    instance_soundness_diagnostics, solve, solve_report, trait_env_for_module,
+    trait_env_from_module_resolution, trait_env_from_module_resolution_and_imports,
+    trait_env_with_givens,
 };
 pub use support::{is_canonical_std_def_named, is_canonical_std_module_def_named};
 

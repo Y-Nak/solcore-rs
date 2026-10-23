@@ -1,0 +1,3 @@
+import * from math hiding {hidden};
+import {hidden as kept} from math;
+function main() returns (word) { return kept(); }

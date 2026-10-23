@@ -1,0 +1,1 @@
+function main(value: word) returns (word) { assembly { pop(value) } let renamed: word = 7; return renamed; }

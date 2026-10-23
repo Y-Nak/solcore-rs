@@ -1,11 +1,14 @@
 use super::*;
 
+mod assembly;
+
 pub(super) struct BodyResolver<'db, 'a> {
     db: &'db dyn Db,
     scope: &'a ItemScopeFacts<'db>,
     imports: &'a dyn ImportedNames<'db>,
     contract: Option<DefId<'db>>,
     local_scopes: Vec<FxHashMap<String, Resolution<'db>>>,
+    scope_spans: Vec<Span<'db>>,
     type_vars: Vec<TypeVarBinding<'db>>,
     pub(super) map: BodyResolutionMap<'db>,
 }
@@ -23,6 +26,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             imports,
             contract,
             local_scopes: Vec::new(),
+            scope_spans: Vec::new(),
             type_vars: Vec::new(),
             map: BodyResolutionMap::default(),
         }
@@ -51,7 +55,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     body,
                     stmt: stmt_id,
                 });
-                self.add_local(ident_text_str(self.db, name), resolution.clone());
+                self.add_local(ident_text_str(self.db, name), resolution.clone(), stmt.span);
                 self.map.record_stmt(body, stmt_id, resolution);
             }
             StmtKind::Return(expr) => {
@@ -107,18 +111,19 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 }
             }
             StmtKind::Block { body: block } => {
-                self.with_scope(|resolver| {
+                self.with_scope(stmt.span, |resolver| {
                     for stmt in block {
                         resolver.stmt(body, *stmt);
                     }
                 });
             }
-            StmtKind::Assembly { .. } | StmtKind::Break | StmtKind::Continue | StmtKind::Error => {}
+            StmtKind::Assembly { body } => self.assembly(body),
+            StmtKind::Break | StmtKind::Continue | StmtKind::Error => {}
         }
     }
 
     fn match_arm(&mut self, body: FuncBody<'db>, arm: &MatchArm<'db>) {
-        self.with_scope(|resolver| {
+        self.with_scope(arm.span, |resolver| {
             for pat in &arm.pats {
                 resolver.pat(body, *pat);
             }
@@ -179,7 +184,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 if let Some(ret) = ret {
                     self.ty(*ret);
                 }
-                self.with_scope(|resolver| {
+                self.with_scope(lambda_body.span(self.db), |resolver| {
                     for (index, param) in params.atom().iter().enumerate() {
                         if let Some(name) = param_name(param) {
                             resolver.add_param(*lambda_body, index, name);
@@ -269,7 +274,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     Resolution::Err
                 } else {
                     let resolution = Resolution::Local(LocalBinding::Pattern { body, pat: pat_id });
-                    self.add_local(leaf, resolution.clone());
+                    self.add_local(leaf, resolution.clone(), name.span(self.db));
                     resolution
                 };
                 self.map.record_pat(body, pat_id, resolution);
@@ -339,7 +344,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                         } else if args.is_empty() {
                             let resolution =
                                 Resolution::Local(LocalBinding::Pattern { body, pat: pat_id });
-                            self.add_local(leaf, resolution.clone());
+                            self.add_local(leaf, resolution.clone(), name.span(self.db));
                             resolution
                         } else {
                             self.map
@@ -944,7 +949,15 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         true
     }
 
-    fn add_local(&mut self, name: &str, resolution: Resolution<'db>) {
+    fn add_local(&mut self, name: &str, resolution: Resolution<'db>, introduced_after: Span<'db>) {
+        if let Some(scope) = self.scope_spans.last() {
+            self.map.scoped_bindings.push(ScopedBodyBinding {
+                name: name.to_owned(),
+                resolution: resolution.clone(),
+                scope: *scope,
+                introduced_after,
+            });
+        }
         if let Some(scope) = self.local_scopes.last_mut() {
             scope.insert(name.to_owned(), resolution);
         } else {
@@ -966,12 +979,15 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 body,
                 index: ParamIndex::from_usize(index),
             }),
+            name.span(self.db),
         );
     }
 
-    pub(super) fn with_scope(&mut self, f: impl FnOnce(&mut Self)) {
+    pub(super) fn with_scope(&mut self, span: Span<'db>, f: impl FnOnce(&mut Self)) {
         self.local_scopes.push(FxHashMap::default());
+        self.scope_spans.push(span);
         f(self);
+        self.scope_spans.pop();
         self.local_scopes.pop();
     }
 

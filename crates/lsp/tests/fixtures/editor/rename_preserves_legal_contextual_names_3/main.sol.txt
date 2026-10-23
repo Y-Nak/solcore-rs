@@ -1,0 +1,1 @@
+function main() returns (word) { let value: word = 1; return value; }

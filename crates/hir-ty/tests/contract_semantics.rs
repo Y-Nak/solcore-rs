@@ -277,12 +277,7 @@ fn diagnostics_for_module(db: &TestDb, key: &ModuleKey) -> Vec<Diagnostic> {
         .collect()
 }
 
-#[test]
-fn canonical_dispatch_under_main_root_preserves_manual_abi_diagnostics() {
-    let source = include_str!(
-        "../../uitest/tests/fixtures/typeck/visible_manual_std_abi_instances/main.sol"
-    )
-    .replace("import * from std.dispatch;", "import * from dispatch;");
+fn db_with_overlapping_std(src: &str, shared_sources: bool) -> (TestDb, ModuleKey) {
     let mut db = TestDb::default();
     db.module_tree = Some(ModuleTree::new(
         &db,
@@ -294,44 +289,35 @@ fn canonical_dispatch_under_main_root_preserves_manual_abi_diagnostics() {
         library: LibraryId::Main,
         logical_path: vec!["main".to_owned()],
     };
-    insert_module_source(&mut db, entry.clone(), "/std/main.sol", &source);
+    insert_module_source(&mut db, entry.clone(), "/std/main.sol", src);
     insert_real_std_modules(&mut db);
-    // The same canonical dispatch source is reached through the main root,
-    // while its std imports retain their standard-library identities.
-    let dispatch_path = vec!["dispatch".to_owned()];
-    let dispatch = db
-        .module_files
-        .remove(&ModuleKey {
+    // Exercise both a canonical source reached only through Main and sources
+    // shared by Main/Std identities (as in an editor with overlapping roots).
+    let aliases: &[&str] = if shared_sources {
+        &["std", "dispatch", "Generic", "ABIGeneric"]
+    } else {
+        &["dispatch", "ABIGeneric"]
+    };
+    for name in aliases {
+        let key = ModuleKey {
             library: LibraryId::Std,
-            logical_path: dispatch_path.clone(),
-        })
-        .expect("canonical dispatch source");
-    db.module_files.insert(
-        ModuleKey {
-            library: LibraryId::Main,
-            logical_path: dispatch_path,
-        },
-        dispatch,
-    );
-    db.sync_inputs();
-
-    let module = module_id_from_key(&db, &entry);
-    let resolution_diagnostics = nameres::reachable_diagnostics(&db, module);
-    assert!(
-        resolution_diagnostics.is_empty(),
-        "{resolution_diagnostics:?}"
-    );
-    let diagnostics = diagnostics_for_module(&db, &entry);
-    for class in ["ABIAttribs", "ABIEncode", "ABIDecode"] {
-        assert!(
-            diagnostics.iter().any(|diagnostic| {
-                diagnostic.code.as_deref() == Some("SC0231")
-                    && diagnostic.message.contains(&format!("manual `{class}`"))
-            }),
-            "missing {class} diagnostic: {diagnostics:?}"
+            logical_path: vec![(*name).to_owned()],
+        };
+        let file = if shared_sources {
+            db.module_files[&key]
+        } else {
+            db.module_files.remove(&key).expect("canonical source")
+        };
+        db.module_files.insert(
+            ModuleKey {
+                library: LibraryId::Main,
+                ..key
+            },
+            file,
         );
     }
-    assert_eq!(diagnostics.len(), 3, "{diagnostics:?}");
+    db.sync_inputs();
+    (db, entry)
 }
 
 #[test]
@@ -914,38 +900,6 @@ contract Batch {
     let abi = contract_abi_json(&db, module, contract).expect("calldata ADT array ABI JSON");
     assert!(abi.contains("\"internalType\": \"Operation[]\""), "{abi}");
     assert!(abi.contains("\"type\": \"Operation[]\""), "{abi}");
-}
-
-#[test]
-fn calldata_tuple_array_json_preserves_components_and_runtime_sigstring_shape() {
-    let (mut db, key) = db_with_main(
-        r#"
-import * from std;
-
-contract Tuples {
-  function first(values: calldata<array<(uint256, address)>>) public returns (uint256) {
-    return uint256(0);
-  }
-}
-"#,
-    );
-    insert_real_std_modules(&mut db);
-    let file = db.module_files[&key];
-    let module = parse_file_to_hir(&db, file).module(&db);
-    let contract = contract_named(&db, module, "Tuples");
-    let surface = contract_dispatch_surface(&db, module, contract);
-    let method = &surface.methods[0];
-
-    // std.dispatch appends [] to the comma-joined pair SigString.
-    assert_eq!(method.signature, "first(uint256,address[])");
-    assert_eq!(method.inputs[0].ty.to_string(), "tuple[]");
-    assert_eq!(method.inputs[0].components.len(), 2);
-    assert_eq!(method.inputs[0].components[0].ty.to_string(), "uint256");
-    assert_eq!(method.inputs[0].components[1].ty.to_string(), "address");
-
-    let abi = contract_abi_json(&db, module, contract).expect("tuple array ABI JSON");
-    assert!(abi.contains("\"type\": \"tuple[]\""), "{abi}");
-    assert!(abi.contains("\"components\": ["), "{abi}");
 }
 
 #[test]
@@ -2402,3 +2356,6 @@ impl Generic<Manual,word> {}
             .is_none()
     );
 }
+
+#[path = "contract_semantics/fixtures.rs"]
+mod fixture_tests;

@@ -1,0 +1,16 @@
+{
+  "diagnostics": {
+    "count": 2,
+    "all_code": "SC0207",
+    "contains": [
+      {
+        "code": "SC0207",
+        "message": "Custom: ABIEncode"
+      },
+      {
+        "code": "SC0207",
+        "message": "ABIDecoder<Custom, MemoryWordReader>: ABIDecode<Custom>"
+      }
+    ]
+  }
+}

@@ -1,0 +1,3 @@
+pragma no /* keep */ -case C;
+pragma no- // keep line
+default C;

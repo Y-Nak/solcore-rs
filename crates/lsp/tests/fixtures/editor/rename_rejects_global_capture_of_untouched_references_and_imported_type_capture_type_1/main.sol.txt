@@ -1,0 +1,1 @@
+import {Target} from math; function id<a>(x: Target, y: a) returns (Target) { return x; }

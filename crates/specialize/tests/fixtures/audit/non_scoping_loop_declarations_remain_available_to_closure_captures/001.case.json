@@ -1,0 +1,15 @@
+{
+  "loader": "bare",
+  "checks": [
+    {
+      "check": "function_parameters",
+      "selector": {
+        "prefix": "__lambda"
+      },
+      "names": [
+        "x"
+      ]
+    }
+  ],
+  "source": "001.sol"
+}

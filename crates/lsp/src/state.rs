@@ -20,7 +20,7 @@ const DETACHED_NAMESPACE_DIR: &str = "__solcore_detached__";
 const DETACHED_NAMESPACE_PREFIX: &str = "/main/__solcore_detached__/";
 
 /// A known text document and its position mapper.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DocumentState {
     line_index: LineIndexExt,
 }
@@ -90,6 +90,22 @@ impl WorldState {
             workspace_namespaced: false,
             next_virtual_document_id: 0,
             entry_uri: None,
+        }
+    }
+
+    /// Builds an independently editable world while retaining every client URI,
+    /// workspace root, open document, and virtual library.
+    pub(crate) fn fork(&self) -> Self {
+        Self {
+            workspace: with_analysis_stack(|| self.workspace.fork()),
+            documents: self.documents.clone(),
+            open_documents: self.open_documents.clone(),
+            client_to_vfs: self.client_to_vfs.clone(),
+            vfs_to_client: self.vfs_to_client.clone(),
+            workspace_roots: self.workspace_roots.clone(),
+            workspace_namespaced: self.workspace_namespaced,
+            next_virtual_document_id: self.next_virtual_document_id,
+            entry_uri: self.entry_uri.clone(),
         }
     }
 
@@ -727,6 +743,39 @@ fn decoded_url_path(uri: &Url) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fork_preserves_open_overlays_and_workspace_uri_mappings() {
+        let root = Url::parse("file:///project/").unwrap();
+        let main = Url::parse("file:///project/main.sol").unwrap();
+        let library = Url::parse("file:///project/math.sol").unwrap();
+        let saved = "function main() returns (word) { return 1; }";
+        let unsaved = "function main() returns (word) { return 2; }";
+        let mut original = WorldState::new();
+        original.load_workspace_documents(
+            root,
+            [
+                (main.clone(), saved.to_owned()),
+                (library.clone(), "function library() {}".to_owned()),
+            ],
+        );
+        assert!(original.open_document(main.clone(), unsaved.to_owned()));
+
+        let mut fork = original.fork();
+        assert_eq!(
+            fork.workspace_document_uris(),
+            original.workspace_document_uris()
+        );
+        assert_eq!(fork.document_text(&main), Some(unsaved));
+        assert!(fork.is_document_open(&main));
+        assert!(!fork.is_document_open(&library));
+        assert_eq!(fork.workspace_roots, original.workspace_roots);
+        assert_eq!(fork.client_to_vfs, original.client_to_vfs);
+        assert_eq!(fork.vfs_to_client, original.vfs_to_client);
+        assert!(fork.change_document(&main, saved.to_owned()));
+        assert_eq!(original.document_text(&main), Some(unsaved));
+        assert_eq!(fork.document_text(&main), Some(saved));
+    }
     use lsp_types::GotoDefinitionResponse;
 
     #[test]
@@ -756,6 +805,23 @@ mod tests {
         world.close_document(&uri);
         assert_eq!(world.document_text(&uri), None);
         assert!(world.line_index(&uri).is_some());
+    }
+
+    #[test]
+    fn oversized_edit_column_stays_on_its_requested_line() {
+        let mut world = WorldState::new();
+        let uri = Url::parse("file:///main/main.sol").expect("uri");
+        assert!(world.open_document(uri.clone(), "a\nbc\n".to_owned()));
+        let position = lsp_types::Position::new(0, 3);
+        assert!(world.apply_document_changes(
+            &uri,
+            vec![TextDocumentContentChangeEvent {
+                range: Some(lsp_types::Range::new(position, position)),
+                range_length: None,
+                text: "!".to_owned(),
+            }]
+        ));
+        assert_eq!(world.document_text(&uri), Some("a!\nbc\n"));
     }
 
     #[test]

@@ -23,14 +23,13 @@ use super::{
     erasure::{
         display_backend_symbol, display_mono_function_name, erase_comptime_ty,
         lambda_ret_is_comptime, param_is_comptime, ty_is_builtin, ty_is_comptime,
-        ty_is_comptime_string, ty_is_function,
+        ty_is_comptime_string,
     },
     ident_text,
     known::{
-        bool_expr, build_type_reg, collect_pat_binders, int_expr, known_bool, known_int,
-        known_pattern_bindings, known_string, literal_from_known_expr, lvalue_root_name,
-        match_arms_with, match_expr_arms_with, remove_assigned, remove_comptime_assigned,
-        string_expr, with_pattern_types,
+        KnownPatternBindings, MatchedArm, bool_expr, build_type_reg, int_expr, known_bool,
+        known_int, known_string, literal_from_known_expr, lvalue_root_name, match_arms_with,
+        match_expr_arms_with, match_known_patterns_with, pattern_bindings, string_expr,
     },
     value::{
         BigInt, bitand_word, bitor_word, bitxor_word, not_word, word_div, word_low_byte, word_mod,
@@ -44,16 +43,36 @@ use crate::{
     ir::{
         MonoArm, MonoCallOrigin, MonoExpr, MonoExprArm, MonoExprKind, MonoFunction, MonoId,
         MonoIntrinsic, MonoItem, MonoModule, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
-        collect_leaking_let_stmts,
-        visit::{Visitor, walk_expr, walk_stmt},
+        visit::{Visitor, walk_stmt},
     },
     specialize::{SpecializeDiagnostic, SpecializeDiagnosticKind},
 };
 
 #[path = "closures.rs"]
 mod closures;
+#[path = "control_flow.rs"]
+mod control_flow;
+#[cfg(test)]
+#[path = "pattern_tests.rs"]
+mod pattern_tests;
+#[path = "staged_patterns.rs"]
+mod staged_patterns;
 
 use closures::{ClosureCloneKey, LiftedClosure};
+
+struct LetInput<'db> {
+    span: Span<'db>,
+    mode: crate::ir::LetMode,
+    id: MonoId<'db>,
+    ty: Option<MonoTy<'db>>,
+    init: Option<MonoExpr<'db>>,
+}
+
+struct MatchInput<'db> {
+    span: Span<'db>,
+    scrutinees: Vec<MonoExpr<'db>>,
+    arms: Vec<MonoArm<'db>>,
+}
 
 enum FoldOutcome<'db> {
     ReturnedKnown(MonoExpr<'db>),
@@ -78,6 +97,38 @@ struct StringCloneKey {
 struct PendingClone<'db> {
     function: MonoFunction<'db>,
     env: VEnv<'db>,
+}
+
+/// Bindings hidden by declarations in one lexical scope. Direct declarations
+/// save the outer binding after evaluating their initializer. Residual control
+/// flow registers its declarations after invalidating possible outer writes,
+/// before evaluating any arm, whose writes may never execute.
+#[derive(Default)]
+struct ScopeBindings<'db> {
+    shadowed: FxHashMap<String, (Option<MonoExpr<'db>>, bool)>,
+}
+
+impl<'db> ScopeBindings<'db> {
+    fn declare(&mut self, name: &str, env: &VEnv<'db>, comptime_env: &CEnv) {
+        self.shadowed
+            .entry(name.to_owned())
+            .or_insert_with(|| (env.get(name).cloned(), comptime_env.contains(name)));
+    }
+
+    fn restore(self, env: &mut VEnv<'db>, comptime_env: &mut CEnv) {
+        for (name, (value, comptime)) in self.shadowed {
+            if let Some(value) = value {
+                env.insert(name.clone(), value);
+            } else {
+                env.remove(&name);
+            }
+            if comptime {
+                comptime_env.insert(name);
+            } else {
+                comptime_env.remove(&name);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,9 +180,13 @@ pub(super) struct Evaluator<'db> {
     clone_names: FxHashMap<StringCloneKey, String>,
     pending_clones: VecDeque<PendingClone<'db>>,
     next_clone_id: usize,
-    closure_clone_names: FxHashMap<ClosureCloneKey, String>,
+    closure_clone_names: FxHashMap<ClosureCloneKey<'db>, String>,
     lifted_closures: Vec<LiftedClosure<'db>>,
     capture_types: TypeReg<'db>,
+    // Fresh symbolic identities for locals whose runtime declaration cannot be
+    // carried out of a folded function. They cannot alias caller-side names.
+    unavailable_values: FxHashSet<String>,
+    if_stmt_spans: FxHashSet<Span<'db>>,
     storage_fields: FxHashSet<String>,
     inline_depth_limit: usize,
     memory: BTreeMap<BigInt, u8>,
@@ -139,56 +194,74 @@ pub(super) struct Evaluator<'db> {
     enforce_comptime: bool,
 }
 
-struct StmtWriteEffectsCollector<'effects> {
+struct StmtEffects {
+    // Writes before a declaration refer to outer bindings.
+    writes: AssignedNames,
+    // Bindings visible after traversal, excluding nested lexical scopes.
+    declarations: FxHashSet<String>,
+}
+
+struct StmtEffectsCollector<'effects, 'db> {
+    db: &'db dyn Db,
     call_effects: &'effects FxHashMap<String, AssignedNames>,
+    storage_fields: &'effects FxHashSet<String>,
+    if_stmt_spans: &'effects FxHashSet<Span<'db>>,
+    locals: FxHashSet<String>,
+    invalidates_memory: bool,
     effects: AssignedNames,
 }
 
-impl<'effects, 'db> Visitor<'db> for StmtWriteEffectsCollector<'effects> {
+impl<'db> Visitor<'db> for StmtEffectsCollector<'_, 'db> {
     fn visit_stmt(&mut self, stmt: &MonoStmt<'db>) {
         match &stmt.kind {
+            MonoStmtKind::Let { id, .. } => {
+                // Initializers see the previous binding.
+                walk_stmt(self, stmt);
+                self.locals.insert(id.name.clone());
+                return;
+            }
             MonoStmtKind::Assign { lhs, .. } => {
                 if let Some(name) = lvalue_root_name(lhs) {
-                    self.effects.insert(name);
+                    if !self.locals.contains(&name) {
+                        self.effects.insert(name);
+                    }
                 } else {
-                    self.effects.merge(AssignedNames::All);
-                }
-            }
-            MonoStmtKind::Assembly(_) => {
-                self.effects.merge(AssignedNames::All);
-            }
-            _ => {}
-        }
-        walk_stmt(self, stmt);
-    }
-
-    fn visit_expr(&mut self, expr: &MonoExpr<'db>) {
-        self.effects.merge(expr_write_effects_from_call_summaries(
-            expr,
-            self.call_effects,
-        ));
-    }
-
-    fn visit_pat(&mut self, _pat: &MonoPat<'db>) {}
-}
-
-// A binder needs a runtime location when source or assembly assigns it.
-// Callees can change runtime state, but cannot rebind the caller's locals.
-struct BindingWrites<'db> {
-    db: &'db dyn Db,
-    names: FxHashSet<String>,
-}
-
-impl<'db> Visitor<'db> for BindingWrites<'db> {
-    fn visit_stmt(&mut self, stmt: &MonoStmt<'db>) {
-        match &stmt.kind {
-            MonoStmtKind::Assign { lhs, .. } => {
-                if let Some(name) = lvalue_root_name(lhs) {
-                    self.names.insert(name);
+                    self.invalidates_memory = true;
                 }
             }
             MonoStmtKind::Assembly(body) => {
-                self.names.extend(yul_written_names(self.db, body));
+                self.invalidates_memory = true;
+                for name in yul_written_names(self.db, body) {
+                    if !self.locals.contains(&name) {
+                        self.effects.insert(name);
+                    }
+                }
+                self.effects
+                    .merge(AssignedNames::Names(self.storage_fields.clone()));
+            }
+            MonoStmtKind::Block(_) => {
+                let locals = self.locals.clone();
+                walk_stmt(self, stmt);
+                self.locals = locals;
+                return;
+            }
+            MonoStmtKind::Match { scrutinees, arms }
+                if !self.if_stmt_spans.contains(&stmt.span) =>
+            {
+                for expr in scrutinees {
+                    self.visit_expr(expr);
+                }
+                let locals = self.locals.clone();
+                for arm in arms {
+                    self.locals = locals.clone();
+                    self.locals
+                        .extend(pattern_bindings(&arm.pats).into_iter().map(|id| id.name));
+                    for stmt in &arm.body {
+                        self.visit_stmt(stmt);
+                    }
+                }
+                self.locals = locals;
+                return;
             }
             _ => {}
         }
@@ -196,50 +269,23 @@ impl<'db> Visitor<'db> for BindingWrites<'db> {
     }
 
     fn visit_expr(&mut self, expr: &MonoExpr<'db>) {
-        // A captured copy still needs an initialized source binding.
-        walk_expr(self, expr);
-    }
-}
-
-#[derive(Default, Clone)]
-struct BindingScope<'db> {
-    hidden: FxHashMap<String, (Option<MonoExpr<'db>>, bool)>,
-}
-
-impl<'db> BindingScope<'db> {
-    fn declare(&mut self, name: &str, env: &VEnv<'db>, comptime: &CEnv) {
-        self.hidden
-            .entry(name.to_owned())
-            .or_insert_with(|| (env.get(name).cloned(), comptime.contains(name)));
-    }
-
-    fn patterns(pats: &[MonoPat<'db>], env: &VEnv<'db>, comptime: &CEnv) -> Self {
-        let mut names = FxHashSet::default();
-        for pat in pats {
-            collect_pat_binders(pat, &mut names);
-        }
-        let mut scope = Self::default();
-        for name in names {
-            scope.declare(&name, env, comptime);
-        }
-        scope
-    }
-
-    fn restore(self, mut env: VEnv<'db>, mut comptime: CEnv) -> (VEnv<'db>, CEnv) {
-        for (name, (value, was_comptime)) in self.hidden {
-            if let Some(value) = value {
-                env.insert(name.clone(), value);
-            } else {
-                env.remove(&name);
+        let effects = expr_write_effects_from_call_summaries(expr, self.call_effects);
+        match effects {
+            AssignedNames::All => {
+                // Calls can change shared storage/memory, but cannot assign
+                // their caller's value bindings (closures capture by value).
+                self.invalidates_memory = true;
+                self.effects
+                    .merge(AssignedNames::Names(self.storage_fields.clone()));
             }
-            if was_comptime {
-                comptime.insert(name);
-            } else {
-                comptime.remove(&name);
+            AssignedNames::Names(mut names) => {
+                names.retain(|name| self.storage_fields.contains(name));
+                self.effects.merge(AssignedNames::Names(names));
             }
         }
-        (env, comptime)
     }
+
+    fn visit_pat(&mut self, _pat: &MonoPat<'db>) {}
 }
 
 impl<'db> Evaluator<'db> {
@@ -278,6 +324,17 @@ impl<'db> Evaluator<'db> {
             closure_clone_names: FxHashMap::default(),
             lifted_closures: Vec::new(),
             capture_types: TypeReg::default(),
+            unavailable_values: FxHashSet::default(),
+            if_stmt_spans: module
+                .frontend_desugar
+                .bodies
+                .iter()
+                .flat_map(|body| &body.transforms)
+                .filter_map(|transform| match transform {
+                    hir_ty::FrontendTransform::IfStmtToMatch { origin, .. } => Some(origin.span),
+                    _ => None,
+                })
+                .collect(),
             storage_fields,
             inline_depth_limit,
             memory: BTreeMap::new(),
@@ -305,14 +362,29 @@ impl<'db> Evaluator<'db> {
         // repeatedly reclaim the same budget.
         self.fuel = self.fuel_limit;
         self.memory.clear();
-        let type_reg = build_type_reg(&function.params, &function.body);
+        let mut type_reg = build_type_reg(&function.params, &[]);
+        // Static specialization removes source parameters from the runtime
+        // signature, but they remain local bindings within the cloned body.
+        type_reg.extend(initial_env.iter().map(|(name, value)| {
+            (
+                name.clone(),
+                MonoId {
+                    name: name.clone(),
+                    ty: value.ty,
+                    span: value.span,
+                },
+            )
+        }));
         let ret_comptime = ty_is_comptime(self.db, function.ret.ty());
         let comptime_env = function
             .params
             .iter()
             .filter(|param| ret_comptime || param_is_comptime(self.db, param))
             .map(|param| param.name.clone())
-            .chain(initial_env.keys().cloned())
+            .chain(initial_env.iter().filter_map(|(name, value)| {
+                self.expr_is_comptime(value, &CEnv::default())
+                    .then_some(name.clone())
+            }))
             .collect::<CEnv>();
         let (_, _, body) = self.eval_stmts(
             &type_reg,
@@ -348,124 +420,217 @@ impl<'db> Evaluator<'db> {
         stmts: Vec<MonoStmt<'db>>,
         ret_comptime: bool,
     ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
-        let mut scope = BindingScope::default();
-        let (env, comptime_env, body) =
-            self.eval_stmts_in_scope(type_reg, env, comptime_env, stmts, ret_comptime, &mut scope);
-        let (env, comptime_env) = scope.restore(env, comptime_env);
+        let saved_types = self.capture_types.clone();
+        self.capture_types.extend(type_reg.clone());
+        let (env, comptime_env, mut body) = self.eval_stmts_in_scope(
+            &mut type_reg.clone(),
+            env,
+            comptime_env,
+            stmts,
+            ret_comptime,
+            &mut ScopeBindings::default(),
+        );
+        self.prune_unused_declarations(&mut body);
+        self.capture_types = saved_types;
         (env, comptime_env, body)
+    }
+
+    fn eval_scoped_stmts(
+        &mut self,
+        type_reg: &TypeReg<'db>,
+        env: VEnv<'db>,
+        comptime_env: CEnv,
+        stmts: Vec<MonoStmt<'db>>,
+        ret_comptime: bool,
+    ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
+        let mut scope = ScopeBindings::default();
+        let saved_types = self.capture_types.clone();
+        self.capture_types.extend(type_reg.clone());
+        let (mut env, mut comptime_env, mut stmts) = self.eval_stmts_in_scope(
+            &mut type_reg.clone(),
+            env,
+            comptime_env,
+            stmts,
+            ret_comptime,
+            &mut scope,
+        );
+        scope.restore(&mut env, &mut comptime_env);
+        self.prune_unused_declarations(&mut stmts);
+        self.capture_types = saved_types;
+        (env, comptime_env, stmts)
     }
 
     fn eval_stmts_in_scope(
         &mut self,
-        type_reg: &TypeReg<'db>,
+        type_reg: &mut TypeReg<'db>,
         mut env: VEnv<'db>,
         mut comptime_env: CEnv,
         stmts: Vec<MonoStmt<'db>>,
         ret_comptime: bool,
-        scope: &mut BindingScope<'db>,
+        scope: &mut ScopeBindings<'db>,
     ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
-        let saved_types = self.capture_types.clone();
-        self.capture_types.extend(type_reg.clone());
+        // Non-scoping control flow shares this registry with its enclosing
+        // sequence. Declarations update it once; lexical scope entry/exit owns
+        // the snapshots, rather than copying every visible binding per statement.
         let mut out = Vec::new();
         for stmt in stmts {
-            if let MonoStmtKind::Let { id, .. } = &stmt.kind {
-                scope.declare(&id.name, &env, &comptime_env);
-            }
             let (next_env, next_comptime_env, mut stmts) =
                 self.eval_stmt(type_reg, env, comptime_env, stmt, ret_comptime, scope);
             env = next_env;
             comptime_env = next_comptime_env;
             out.append(&mut stmts);
         }
-        self.capture_types = saved_types;
         (env, comptime_env, out)
+    }
+
+    fn eval_matched_arm(
+        &mut self,
+        type_reg: &TypeReg<'db>,
+        env: &VEnv<'db>,
+        comptime_env: CEnv,
+        matched: MatchedArm<'db>,
+        ret_comptime: bool,
+    ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
+        let mut scope = ScopeBindings::default();
+        let mut arm_types = type_reg.clone();
+        for id in &matched.bindings {
+            scope.declare(&id.name, env, &comptime_env);
+            arm_types.insert(id.name.clone(), id.clone());
+        }
+        let saved_types = self.capture_types.clone();
+        let mut arm_env = matched.env;
+        let mut captures = Vec::new();
+        // Capture every callable before introducing any source binding, since
+        // patterns bind simultaneously and a closure can reference an outer
+        // variable that another pattern shadows.
+        for id in &matched.bindings {
+            if let Some(value) = arm_env.get(&id.name).cloned() {
+                let (value, mut bindings) = self.capture_closure_value(value);
+                arm_env.insert(id.name.clone(), value);
+                captures.append(&mut bindings);
+            }
+        }
+        self.capture_types.extend(arm_types.clone());
+        let arm_comptime_env = self.with_known_env_bindings_comptime(&arm_env, comptime_env);
+        let (mut next_env, mut next_comptime_env, mut body) = self.eval_stmts_in_scope(
+            &mut arm_types,
+            arm_env.clone(),
+            arm_comptime_env,
+            matched.body,
+            ret_comptime,
+            &mut scope,
+        );
+        self.prune_unused_declarations(&mut body);
+        // Known dictionaries and method lists can contain function values that
+        // have no runtime representation. Residualize a binding only when its
+        // variable survives substitution (including assignment/assembly uses).
+        let used = self
+            .closure_captures(&[], &body)
+            .into_iter()
+            .map(|id| id.name)
+            .collect::<FxHashSet<_>>();
+        for id in matched.bindings {
+            if used.contains(&id.name) {
+                captures.push(MonoStmt {
+                    span: id.span,
+                    kind: MonoStmtKind::Let {
+                        mode: crate::ir::LetMode::Runtime,
+                        ty: Some(id.ty),
+                        init: arm_env.get(&id.name).cloned(),
+                        id,
+                    },
+                });
+            }
+        }
+        captures.append(&mut body);
+        scope.restore(&mut next_env, &mut next_comptime_env);
+        self.capture_types = saved_types;
+        (next_env, next_comptime_env, captures)
+    }
+
+    fn stmts_introduce_bindings(&self, body: &[MonoStmt<'db>]) -> bool {
+        !self.stmts_binding_effects(body).is_empty()
+    }
+
+    /// Source `if` and `for` declarations become visible in source order,
+    /// independently of which runtime branch executes. Explicit blocks and
+    /// actual match arms, in contrast, own their declarations.
+    fn stmts_binding_effects(&self, body: &[MonoStmt<'db>]) -> AssignedNames {
+        let mut bindings = AssignedNames::empty();
+        for stmt in body {
+            match &stmt.kind {
+                MonoStmtKind::Let { id, .. } => bindings.insert(id.name.clone()),
+                MonoStmtKind::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    bindings.merge(self.stmts_binding_effects(then_body));
+                    if let Some(body) = else_body {
+                        bindings.merge(self.stmts_binding_effects(body));
+                    }
+                }
+                MonoStmtKind::For {
+                    init, post, body, ..
+                } => {
+                    bindings.merge(self.stmts_binding_effects(init));
+                    bindings.merge(self.stmts_binding_effects(post));
+                    bindings.merge(self.stmts_binding_effects(body));
+                }
+                MonoStmtKind::Match { arms, .. } if self.if_stmt_spans.contains(&stmt.span) => {
+                    for arm in arms {
+                        bindings.merge(self.stmts_binding_effects(&arm.body));
+                    }
+                }
+                _ => {}
+            }
+        }
+        bindings
+    }
+
+    /// Preserve the bindings hidden by declarations before masking those
+    /// declarations for residual control flow. Only writes to an outer binding
+    /// can invalidate its saved value; writes after a declaration belong to the
+    /// new binding. Evaluate each region before masking its declarations for
+    /// later regions, so earlier expressions still see the outer bindings.
+    fn prepare_control_flow_env(
+        &mut self,
+        env: VEnv<'db>,
+        comptime_env: CEnv,
+        effects: StmtEffects,
+        scope: &mut ScopeBindings<'db>,
+    ) -> (VEnv<'db>, CEnv) {
+        let (env, comptime_env) = self.mask_assigned_env(env, comptime_env, &effects.writes);
+        for name in &effects.declarations {
+            scope.declare(name, &env, &comptime_env);
+        }
+        (env, comptime_env)
     }
 
     fn eval_stmt(
         &mut self,
-        type_reg: &TypeReg<'db>,
+        type_reg: &mut TypeReg<'db>,
         env: VEnv<'db>,
         comptime_env: CEnv,
         stmt: MonoStmt<'db>,
         ret_comptime: bool,
-        scope: &mut BindingScope<'db>,
+        scope: &mut ScopeBindings<'db>,
     ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
         let span = stmt.span;
         match stmt.kind {
-            MonoStmtKind::Let { mode, id, ty, init } => {
-                let comptime = mode.is_comptime();
-                let (init, init_effects) = match init {
-                    Some(expr) if comptime => {
-                        let (expr, effects) = self.with_comptime_mode(|this| {
-                            this.eval_expr_stable(&env, &comptime_env, expr)
-                        });
-                        (Some(expr), effects)
-                    }
-                    Some(expr) => {
-                        let (expr, effects) = self.eval_expr_stable(&env, &comptime_env, expr);
-                        (Some(expr), effects)
-                    }
-                    None => (None, AssignedNames::empty()),
-                };
-                let (init, capture_bindings) = match init {
-                    Some(expr) if ty_is_function(self.db, id.ty.ty()) => {
-                        let (expr, bindings) = self.capture_closure_value(expr);
-                        (Some(expr), bindings)
-                    }
-                    init => (init, Vec::new()),
-                };
-                let mut env = env;
-                let mut comptime_env = comptime_env;
-                self.invalidate_assigned_effects(&init_effects, &mut env, &mut comptime_env);
-                if let Some(expr) = init.as_ref().filter(|expr| self.expr_is_known_value(expr)) {
-                    env.insert(id.name.clone(), expr.clone());
-                } else {
-                    env.remove(&id.name);
-                }
-                let init_is_comptime = init
-                    .as_ref()
-                    .is_some_and(|expr| self.expr_is_comptime(expr, &comptime_env));
-                if comptime || init_is_comptime {
-                    comptime_env.insert(id.name.clone());
-                } else {
-                    comptime_env.remove(&id.name);
-                }
-                if self.enforce_comptime && comptime {
-                    match init.as_ref() {
-                        Some(expr) if self.expr_is_comptime(expr, &comptime_env) => {
-                            if self.expr_is_known_value(expr) {
-                                return (env, comptime_env, Vec::new());
-                            }
-                        }
-                        Some(_) => self.comptime_failed(
-                            format!(
-                                "comptime let '{}' is bound to a runtime expression",
-                                id.name
-                            ),
-                            Some(span),
-                        ),
-                        None => self.comptime_failed(
-                            format!("comptime let '{}' has no initializer", id.name),
-                            Some(span),
-                        ),
-                    }
-                }
-                if ty_is_function(self.db, id.ty.ty())
-                    && init
-                        .as_ref()
-                        .is_some_and(|expr| self.expr_is_known_value(expr))
-                {
-                    return (env, comptime_env, capture_bindings);
-                }
-                (
-                    env,
-                    comptime_env,
-                    vec![MonoStmt {
-                        span,
-                        kind: MonoStmtKind::Let { mode, id, ty, init },
-                    }],
-                )
-            }
+            MonoStmtKind::Let { mode, id, ty, init } => self.eval_let(
+                type_reg,
+                env,
+                comptime_env,
+                LetInput {
+                    span,
+                    mode,
+                    id,
+                    ty,
+                    init,
+                },
+                scope,
+            ),
             MonoStmtKind::Return(expr) => {
                 let expr = expr.map(|expr| self.eval_expr_stable(&env, &comptime_env, expr).0);
                 if let Some(MonoExpr {
@@ -551,9 +716,15 @@ impl<'db> Evaluator<'db> {
             } => {
                 let (lhs, target) = self.eval_lvalue(&env, &comptime_env, lhs);
                 let lhs_effects = self.expr_write_effects(&lhs);
-                let rhs_env = remove_assigned(env.clone(), &lhs_effects);
-                let rhs_comptime_env = remove_comptime_assigned(comptime_env.clone(), &lhs_effects);
+                let (rhs_env, rhs_comptime_env) =
+                    self.mask_assigned_env(env.clone(), comptime_env.clone(), &lhs_effects);
                 let (rhs, rhs_effects) = self.eval_expr_stable(&rhs_env, &rhs_comptime_env, rhs);
+                let (rhs, mut capture_bindings) = self.capture_closure_value(rhs);
+                let static_assignment = matches!(&lhs.kind, MonoExprKind::Var(_))
+                    && target
+                        .as_ref()
+                        .is_some_and(|id| type_reg.contains_key(&id.name))
+                    && self.value_contains_callable(&rhs);
                 let mut env = env;
                 let mut comptime_env = comptime_env;
                 let mut effects = lhs_effects;
@@ -561,7 +732,7 @@ impl<'db> Evaluator<'db> {
                 self.invalidate_assigned_effects(&effects, &mut env, &mut comptime_env);
                 if let Some(id) = target {
                     let rhs_is_comptime = self.expr_is_comptime(&rhs, &comptime_env);
-                    if self.expr_is_known_value(&rhs) {
+                    if self.expr_is_known_value(&rhs) || static_assignment {
                         if matches!(&lhs.kind, MonoExprKind::Var(_)) {
                             env.insert(id.name.clone(), rhs.clone());
                             if rhs_is_comptime {
@@ -582,18 +753,17 @@ impl<'db> Evaluator<'db> {
                         }
                     }
                 }
-                (
-                    env,
-                    comptime_env,
-                    vec![MonoStmt {
+                if !static_assignment {
+                    capture_bindings.push(MonoStmt {
                         span,
                         kind: MonoStmtKind::Assign {
                             op: AssignOp::Plain,
                             lhs,
                             rhs,
                         },
-                    }],
-                )
+                    });
+                }
+                (env, comptime_env, capture_bindings)
             }
             MonoStmtKind::Assign {
                 op:
@@ -620,11 +790,10 @@ impl<'db> Evaluator<'db> {
                 let mut comptime_env = comptime_env;
                 self.invalidate_assigned_effects(&cond_effects, &mut env, &mut comptime_env);
                 if let Some(value) = known_bool(self.db, &cond) {
-                    let selected = if value {
-                        then_body
-                    } else {
-                        else_body.unwrap_or_default()
-                    };
+                    let selected = self.select_source_branch(
+                        [then_body, else_body.unwrap_or_default()],
+                        usize::from(!value),
+                    );
                     return self.eval_stmts_in_scope(
                         type_reg,
                         env,
@@ -634,48 +803,47 @@ impl<'db> Evaluator<'db> {
                         scope,
                     );
                 }
-                let mut assigned = self.stmts_write_effects(&then_body);
-                if let Some(else_body) = else_body.as_deref() {
-                    assigned.merge(self.stmts_write_effects(else_body));
-                }
-                let mut declarations = Vec::new();
-                collect_leaking_let_stmts(&then_body, &mut declarations);
-                if let Some(else_body) = else_body.as_deref() {
-                    collect_leaking_let_stmts(else_body, &mut declarations);
-                }
-                let (branch_env, branch_comptime_env) =
-                    self.mask_assigned_env(env.clone(), comptime_env.clone(), &assigned);
-                for declaration in declarations {
-                    if let MonoStmtKind::Let { id, .. } = &declaration.kind {
-                        scope.declare(&id.name, &branch_env, &branch_comptime_env);
-                        assigned.insert(id.name.clone());
+                let effects = self.collect_stmt_effects(FxHashSet::default(), |collector| {
+                    for stmt in then_body.iter().chain(else_body.iter().flatten()) {
+                        collector.visit_stmt(stmt);
                     }
-                }
-                let mut then_scope = scope.clone();
+                });
+                let (mut branch_env, mut branch_comptime_env) =
+                    self.prepare_control_flow_env(env, comptime_env, effects, scope);
+                let then_bindings = self.stmts_binding_effects(&then_body);
                 let (_, _, then_body) = self.eval_stmts_in_scope(
                     type_reg,
                     branch_env.clone(),
                     branch_comptime_env.clone(),
                     then_body,
                     ret_comptime,
-                    &mut then_scope,
+                    scope,
+                );
+                self.invalidate_assigned_effects(
+                    &then_bindings,
+                    &mut branch_env,
+                    &mut branch_comptime_env,
                 );
                 let else_body = else_body.map(|body| {
-                    let mut else_scope = scope.clone();
+                    let else_bindings = self.stmts_binding_effects(&body);
                     let (_, _, body) = self.eval_stmts_in_scope(
                         type_reg,
                         branch_env.clone(),
                         branch_comptime_env.clone(),
                         body,
                         ret_comptime,
-                        &mut else_scope,
+                        scope,
+                    );
+                    self.invalidate_assigned_effects(
+                        &else_bindings,
+                        &mut branch_env,
+                        &mut branch_comptime_env,
                     );
                     body
                 });
-                let (env, comptime_env) = self.mask_assigned_env(env, comptime_env, &assigned);
                 (
-                    env,
-                    comptime_env,
+                    branch_env,
+                    branch_comptime_env,
                     vec![MonoStmt {
                         span,
                         kind: MonoStmtKind::If {
@@ -691,95 +859,41 @@ impl<'db> Evaluator<'db> {
                 let mut comptime_env = comptime_env;
                 let raw_scrutinees = scrutinees;
                 let mut scrutinees = Vec::with_capacity(raw_scrutinees.len());
+                let mut captures = Vec::new();
                 for scrutinee in raw_scrutinees {
                     let (scrutinee, effects) =
                         self.eval_expr_stable(&env, &comptime_env, scrutinee);
                     self.invalidate_assigned_effects(&effects, &mut env, &mut comptime_env);
+                    let (scrutinee, mut bindings) = self.capture_closure_value(scrutinee);
+                    captures.append(&mut bindings);
                     scrutinees.push(scrutinee);
                 }
                 let arms = arms
                     .into_iter()
                     .map(|arm| self.eval_arm_labels(&env, &comptime_env, arm))
                     .collect::<Vec<_>>();
-                if scrutinees.iter().all(|expr| self.expr_is_known_value(expr)) {
-                    let matched = match_arms_with(&env, &scrutinees, &arms, |expr| {
-                        self.expr_is_known_value(expr)
-                    });
-                    if let Some((matched_env, arm)) = matched
-                        && let Some(mut body) = known_pattern_bindings(
-                            &arm.pats,
-                            &matched_env,
-                            &self.written_pattern_bindings(arm),
-                        )
-                    {
-                        // Selecting a known arm preserves its writable bindings.
-                        body.extend(arm.body.clone());
-                        let matched_comptime_env = self
-                            .with_known_env_bindings_comptime(&matched_env, comptime_env.clone());
-                        let scope = BindingScope::patterns(&arm.pats, &env, &comptime_env);
-                        let arm_types = with_pattern_types(type_reg, &arm.pats);
-                        let (next_env, next_comptime_env, body) = self.eval_stmts(
-                            &arm_types,
-                            matched_env,
-                            matched_comptime_env,
-                            body,
-                            ret_comptime,
-                        );
-                        // Folding selects an arm; it does not remove its scope.
-                        let (env, comptime_env) = scope.restore(next_env, next_comptime_env);
-                        return (
-                            env,
-                            comptime_env,
-                            vec![MonoStmt {
-                                span,
-                                kind: MonoStmtKind::Block(body),
-                            }],
-                        );
-                    }
-                }
-                let mut assigned = AssignedNames::empty();
-                for arm in &arms {
-                    assigned.merge(self.stmts_write_effects(&arm.body));
-                }
-                let arms = arms
-                    .into_iter()
-                    .map(|arm| {
-                        let mut masked = self.stmts_write_effects(&arm.body);
-                        masked.insert_pat_binders(&arm.pats);
-                        let (arm_env, arm_comptime_env) =
-                            self.mask_assigned_env(env.clone(), comptime_env.clone(), &masked);
-                        let arm_types = with_pattern_types(type_reg, &arm.pats);
-                        let (_, _, body) = self.eval_stmts(
-                            &arm_types,
-                            arm_env,
-                            arm_comptime_env,
-                            arm.body,
-                            ret_comptime,
-                        );
-                        MonoArm { body, ..arm }
-                    })
-                    .collect::<Vec<_>>();
-                let (env, comptime_env) = self.mask_assigned_env(env, comptime_env, &assigned);
+                let (scrutinees, arms) = self.expand_callable_match(scrutinees, arms);
+                let (env, comptime_env, mut body) = self.eval_match_input(
+                    type_reg,
+                    env,
+                    comptime_env,
+                    MatchInput {
+                        span,
+                        scrutinees,
+                        arms,
+                    },
+                    ret_comptime,
+                    scope,
+                );
+                captures.append(&mut body);
+                (env, comptime_env, captures)
+            }
+            MonoStmtKind::Block(body) => {
+                let (env, comptime_env, body) =
+                    self.eval_scoped_stmts(type_reg, env, comptime_env, body, ret_comptime);
                 (
                     env,
                     comptime_env,
-                    vec![MonoStmt {
-                        span,
-                        kind: MonoStmtKind::Match { scrutinees, arms },
-                    }],
-                )
-            }
-            MonoStmtKind::Block(body) => {
-                let (next_env, next_comptime_env, body) = self.eval_stmts(
-                    type_reg,
-                    env.clone(),
-                    comptime_env.clone(),
-                    body,
-                    ret_comptime,
-                );
-                (
-                    next_env,
-                    next_comptime_env,
                     vec![MonoStmt {
                         span,
                         kind: MonoStmtKind::Block(body),
@@ -792,34 +906,72 @@ impl<'db> Evaluator<'db> {
                 post,
                 body,
             } => {
+                // A residual loop can execute zero or many times. No particular
+                // iteration's interpreted memory is valid across that boundary.
+                self.memory.clear();
                 // Names written anywhere in the loop (init/cond/post/body)
                 // must not fold to their pre-loop constants.
-                let mut assigned = self.stmts_write_effects(&body);
-                assigned.merge(self.stmts_write_effects(&init));
-                assigned.merge(self.expr_write_effects(&cond));
-                assigned.merge(self.stmts_write_effects(&post));
-                let (loop_env, loop_comptime_env) =
-                    self.mask_assigned_env(env.clone(), comptime_env.clone(), &assigned);
-                let (_, _, init) = self.eval_stmts(
+                let effects = self.collect_stmt_effects(FxHashSet::default(), |collector| {
+                    for stmt in &init {
+                        collector.visit_stmt(stmt);
+                    }
+                    collector.visit_expr(&cond);
+                    for stmt in post.iter().chain(&body) {
+                        collector.visit_stmt(stmt);
+                    }
+                });
+                let (mut loop_env, mut loop_comptime_env) =
+                    self.prepare_control_flow_env(env, comptime_env, effects, scope);
+                let init_bindings = self.stmts_binding_effects(&init);
+                let post_bindings = self.stmts_binding_effects(&post);
+                let body_bindings = self.stmts_binding_effects(&body);
+                let (_, _, init) = self.eval_stmts_in_scope(
                     type_reg,
                     loop_env.clone(),
                     loop_comptime_env.clone(),
                     init,
                     ret_comptime,
+                    scope,
                 );
+                self.invalidate_assigned_effects(
+                    &init_bindings,
+                    &mut loop_env,
+                    &mut loop_comptime_env,
+                );
+                self.memory.clear();
                 let cond = self.eval_expr(&loop_env, &loop_comptime_env, cond);
-                let (_, _, post) = self.eval_stmts(
+                self.memory.clear();
+                let (_, _, post) = self.eval_stmts_in_scope(
                     type_reg,
                     loop_env.clone(),
                     loop_comptime_env.clone(),
                     post,
                     ret_comptime,
+                    scope,
                 );
-                let (_, _, body) =
-                    self.eval_stmts(type_reg, loop_env, loop_comptime_env, body, ret_comptime);
+                self.invalidate_assigned_effects(
+                    &post_bindings,
+                    &mut loop_env,
+                    &mut loop_comptime_env,
+                );
+                self.memory.clear();
+                let (_, _, body) = self.eval_stmts_in_scope(
+                    type_reg,
+                    loop_env.clone(),
+                    loop_comptime_env.clone(),
+                    body,
+                    ret_comptime,
+                    scope,
+                );
+                self.invalidate_assigned_effects(
+                    &body_bindings,
+                    &mut loop_env,
+                    &mut loop_comptime_env,
+                );
+                self.memory.clear();
                 (
-                    VEnv::default(),
-                    CEnv::default(),
+                    loop_env,
+                    loop_comptime_env,
                     vec![MonoStmt {
                         span,
                         kind: MonoStmtKind::For {
@@ -855,7 +1007,8 @@ impl<'db> Evaluator<'db> {
                     // arbitrary assembly may execute sstore or an external call.
                     let mut env = env;
                     let mut comptime_env = comptime_env;
-                    for name in written.iter().chain(self.storage_fields.iter()) {
+                    let storage_fields = self.visible_storage_fields();
+                    for name in written.iter().chain(storage_fields.iter()) {
                         env.remove(name);
                         comptime_env.remove(name);
                     }
@@ -896,6 +1049,318 @@ impl<'db> Evaluator<'db> {
         }
     }
 
+    fn eval_let(
+        &mut self,
+        type_reg: &mut TypeReg<'db>,
+        env: VEnv<'db>,
+        comptime_env: CEnv,
+        input: LetInput<'db>,
+        scope: &mut ScopeBindings<'db>,
+    ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
+        let LetInput {
+            span,
+            mode,
+            id,
+            ty,
+            init,
+        } = input;
+        let comptime = mode.is_comptime();
+        let (init, init_effects) = match init {
+            Some(expr) if comptime => {
+                let (expr, effects) = self
+                    .with_comptime_mode(|this| this.eval_expr_stable(&env, &comptime_env, expr));
+                (Some(expr), effects)
+            }
+            Some(expr) => {
+                let (expr, effects) = self.eval_expr_stable(&env, &comptime_env, expr);
+                (Some(expr), effects)
+            }
+            None => (None, AssignedNames::empty()),
+        };
+        let (init, capture_bindings) = match init {
+            Some(expr) => {
+                let (expr, bindings) = self.capture_closure_value(expr);
+                (Some(expr), bindings)
+            }
+            init => (init, Vec::new()),
+        };
+        let mut env = env;
+        let mut comptime_env = comptime_env;
+        self.invalidate_assigned_effects(&init_effects, &mut env, &mut comptime_env);
+        scope.declare(&id.name, &env, &comptime_env);
+        type_reg.insert(id.name.clone(), id.clone());
+        self.capture_types.insert(id.name.clone(), id.clone());
+        if let Some(expr) = init
+            .as_ref()
+            .filter(|expr| self.expr_is_known_value(expr) || self.value_contains_callable(expr))
+        {
+            env.insert(id.name.clone(), expr.clone());
+        } else {
+            env.remove(&id.name);
+        }
+        let init_is_comptime = init
+            .as_ref()
+            .is_some_and(|expr| self.expr_is_comptime(expr, &comptime_env));
+        if comptime || init_is_comptime {
+            comptime_env.insert(id.name.clone());
+        } else {
+            comptime_env.remove(&id.name);
+        }
+        if self.enforce_comptime && comptime {
+            match init.as_ref() {
+                Some(expr) if self.expr_is_comptime(expr, &comptime_env) => {
+                    if self.expr_is_known_value(expr) {
+                        return (env, comptime_env, capture_bindings);
+                    }
+                }
+                Some(_) => self.comptime_failed(
+                    format!(
+                        "comptime let '{}' is bound to a runtime expression",
+                        id.name
+                    ),
+                    Some(span),
+                ),
+                None => self.comptime_failed(
+                    format!("comptime let '{}' has no initializer", id.name),
+                    Some(span),
+                ),
+            }
+        }
+        if init
+            .as_ref()
+            .is_some_and(|expr| self.value_contains_callable(expr))
+        {
+            return (env, comptime_env, capture_bindings);
+        }
+        let mut out = capture_bindings;
+        out.push(MonoStmt {
+            span,
+            kind: MonoStmtKind::Let { mode, id, ty, init },
+        });
+        (env, comptime_env, out)
+    }
+
+    fn eval_match_input(
+        &mut self,
+        type_reg: &mut TypeReg<'db>,
+        env: VEnv<'db>,
+        comptime_env: CEnv,
+        input: MatchInput<'db>,
+        ret_comptime: bool,
+        scope: &mut ScopeBindings<'db>,
+    ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
+        let MatchInput {
+            span,
+            scrutinees,
+            arms,
+        } = input;
+        if scrutinees.iter().all(|expr| self.expr_is_known_value(expr)) {
+            let matched = match_arms_with(&env, &scrutinees, &arms, |expr| {
+                self.expr_is_known_value(expr)
+            });
+            if let Some(matched) = matched {
+                // Source `if` is desugared to a match, but does not
+                // introduce an arm scope in the source language.
+                if self.if_stmt_spans.contains(&span) {
+                    let body = self
+                        .select_source_branch(arms.into_iter().map(|arm| arm.body), matched.index);
+                    return self.eval_stmts_in_scope(
+                        type_reg,
+                        matched.env,
+                        comptime_env,
+                        body,
+                        ret_comptime,
+                        scope,
+                    );
+                }
+                let (env, comptime_env, body) =
+                    self.eval_matched_arm(type_reg, &env, comptime_env, matched, ret_comptime);
+                // A folded arm needs a runtime scope only when one of
+                // its bindings survives evaluation. Elide empty scopes
+                // instead of building deep block chains while unfolding
+                // compile-time lists such as dispatch dictionaries.
+                if !self.stmts_introduce_bindings(&body) {
+                    return (env, comptime_env, body);
+                }
+                return (
+                    env,
+                    comptime_env,
+                    vec![MonoStmt {
+                        span,
+                        kind: MonoStmtKind::Block(body),
+                    }],
+                );
+            }
+        }
+        self.eval_residual_match(
+            type_reg,
+            env,
+            comptime_env,
+            MatchInput {
+                span,
+                scrutinees,
+                arms,
+            },
+            ret_comptime,
+            scope,
+        )
+    }
+
+    fn eval_residual_match(
+        &mut self,
+        type_reg: &mut TypeReg<'db>,
+        env: VEnv<'db>,
+        comptime_env: CEnv,
+        input: MatchInput<'db>,
+        ret_comptime: bool,
+        scope: &mut ScopeBindings<'db>,
+    ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
+        let MatchInput {
+            span,
+            scrutinees,
+            arms,
+        } = input;
+        // Desugared source `if` arms can introduce bindings visible
+        // after the statement, including from an unexecuted branch.
+        // Only actual matches can discard their static columns here.
+        let source_if = self.if_stmt_spans.contains(&span);
+        let specialize_columns = !source_if
+            && scrutinees
+                .iter()
+                .any(|expr| !self.expr_is_known_value(expr));
+        let mut arms = arms
+            .into_iter()
+            .filter_map(|arm| {
+                let known = if specialize_columns {
+                    match_known_patterns_with(&arm.pats, &scrutinees, |expr| {
+                        self.expr_is_known_value(expr)
+                    })?
+                } else {
+                    KnownPatternBindings::default()
+                };
+                Some((arm, known))
+            })
+            .collect::<Vec<_>>();
+        let mut captures = Vec::new();
+        // A static column is evaluated before any runtime pattern
+        // binder exists. Freeze callable captures at that same point,
+        // even when the callable appears directly inside a constructor.
+        for (_, known) in &mut arms {
+            for id in &known.bindings {
+                if let Some(value) = known.env.get(&id.name).cloned() {
+                    let (value, mut bindings) = self.capture_closure_value(value);
+                    known.env.insert(id.name.clone(), value);
+                    captures.append(&mut bindings);
+                }
+            }
+        }
+        let (mut env, mut comptime_env, assigned) = if source_if {
+            let effects = self.collect_stmt_effects(FxHashSet::default(), |collector| {
+                for (arm, _) in &arms {
+                    for stmt in &arm.body {
+                        collector.visit_stmt(stmt);
+                    }
+                }
+            });
+            let (env, comptime_env) =
+                self.prepare_control_flow_env(env, comptime_env, effects, scope);
+            (env, comptime_env, AssignedNames::empty())
+        } else {
+            let mut assigned = AssignedNames::empty();
+            for (arm, _) in &arms {
+                assigned.merge(self.arm_write_effects(arm));
+            }
+            (env, comptime_env, assigned)
+        };
+        let arms = arms
+            .into_iter()
+            .map(|(arm, known)| {
+                let introduced = if source_if {
+                    self.stmts_binding_effects(&arm.body)
+                } else {
+                    AssignedNames::empty()
+                };
+                let (mut arm_env, mut arm_comptime_env) = if source_if {
+                    // Earlier arms' declarations are visible here, even if
+                    // those arms do not execute. This arm's declarations only
+                    // hide the previous bindings after their initializers.
+                    (env.clone(), comptime_env.clone())
+                } else {
+                    let masked = self.arm_write_effects(&arm);
+                    self.mask_assigned_env(env.clone(), comptime_env.clone(), &masked)
+                };
+                // Patterns bind simultaneously, using the scrutinees'
+                // values before the arm body can assign outer names.
+                self.bind_residual_patterns(
+                    &arm.pats,
+                    &scrutinees,
+                    &comptime_env,
+                    &mut arm_env,
+                    &mut arm_comptime_env,
+                );
+                let (_, _, body) = if source_if {
+                    self.eval_stmts_in_scope(
+                        type_reg,
+                        arm_env,
+                        arm_comptime_env,
+                        arm.body,
+                        ret_comptime,
+                        scope,
+                    )
+                } else {
+                    let mut arm_types = type_reg.clone();
+                    for id in pattern_bindings(&arm.pats) {
+                        arm_types.insert(id.name.clone(), id);
+                    }
+                    if known.bindings.is_empty() {
+                        self.eval_stmts(
+                            &arm_types,
+                            arm_env,
+                            arm_comptime_env,
+                            arm.body,
+                            ret_comptime,
+                        )
+                    } else {
+                        let mut matched_env = arm_env.clone();
+                        matched_env.extend(known.env);
+                        self.eval_matched_arm(
+                            &arm_types,
+                            &arm_env,
+                            arm_comptime_env,
+                            MatchedArm {
+                                index: 0,
+                                env: matched_env,
+                                bindings: known.bindings,
+                                body: arm.body,
+                            },
+                            ret_comptime,
+                        )
+                    }
+                };
+                self.invalidate_assigned_effects(&introduced, &mut env, &mut comptime_env);
+                let pats = arm
+                    .pats
+                    .into_iter()
+                    .zip(&scrutinees)
+                    .filter_map(|(pat, scrutinee)| {
+                        (!specialize_columns || !self.expr_is_known_value(scrutinee)).then_some(pat)
+                    })
+                    .collect();
+                MonoArm { body, pats, ..arm }
+            })
+            .collect::<Vec<_>>();
+        let scrutinees = scrutinees
+            .into_iter()
+            .filter(|expr| !specialize_columns || !self.expr_is_known_value(expr))
+            .collect();
+        let (env, comptime_env) = self.mask_assigned_env(env, comptime_env, &assigned);
+        captures.push(MonoStmt {
+            span,
+            kind: MonoStmtKind::Match { scrutinees, arms },
+        });
+        (env, comptime_env, captures)
+    }
+
     fn eval_compound_assign(
         &mut self,
         env: VEnv<'db>,
@@ -907,8 +1372,8 @@ impl<'db> Evaluator<'db> {
     ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
         let (lhs, target) = self.eval_lvalue(&env, &comptime_env, lhs);
         let lhs_effects = self.expr_write_effects(&lhs);
-        let rhs_env = remove_assigned(env.clone(), &lhs_effects);
-        let rhs_comptime_env = remove_comptime_assigned(comptime_env.clone(), &lhs_effects);
+        let (rhs_env, rhs_comptime_env) =
+            self.mask_assigned_env(env.clone(), comptime_env.clone(), &lhs_effects);
         let (rhs, rhs_effects) = self.eval_expr_stable(&rhs_env, &rhs_comptime_env, rhs);
         let mut env = env;
         let mut comptime_env = comptime_env;
@@ -938,54 +1403,14 @@ impl<'db> Evaluator<'db> {
         comptime_env
     }
 
-    fn preserve_comptime_known_env(&self, env: VEnv<'db>, comptime_env: CEnv) -> (VEnv<'db>, CEnv) {
-        let mut kept_env = VEnv::default();
-        let mut kept_comptime_env = CEnv::default();
-        for (name, expr) in env {
-            if comptime_env.contains(&name) && self.expr_survives_unknown_write(&expr) {
-                kept_comptime_env.insert(name.clone());
-                kept_env.insert(name, expr);
-            }
-        }
-        (kept_env, kept_comptime_env)
-    }
-
-    fn expr_survives_unknown_write(&self, expr: &MonoExpr<'db>) -> bool {
-        match &expr.kind {
-            // A compile-time string has no mutable runtime location. Keep a
-            // clone binding across unknown callees; the assembly path removes
-            // names explicitly written by that block before carrying it on.
-            MonoExprKind::Lit(LitKind::String(_))
-            | MonoExprKind::Proxy(_)
-            | MonoExprKind::Lambda { .. } => true,
-            MonoExprKind::Var(id) => self.functions.contains_key(&id.name),
-            MonoExprKind::Tuple(elems) => elems
-                .iter()
-                .all(|expr| self.expr_survives_unknown_write(expr)),
-            MonoExprKind::Con { args, .. } => args
-                .iter()
-                .all(|expr| self.expr_survives_unknown_write(expr)),
-            MonoExprKind::TypeAnnot { expr, .. } => self.expr_survives_unknown_write(expr),
-            _ => false,
-        }
-    }
-
     fn mask_assigned_env(
         &mut self,
-        env: VEnv<'db>,
-        comptime_env: CEnv,
+        mut env: VEnv<'db>,
+        mut comptime_env: CEnv,
         assigned: &AssignedNames,
     ) -> (VEnv<'db>, CEnv) {
-        match assigned {
-            AssignedNames::All => {
-                self.memory.clear();
-                self.preserve_comptime_known_env(env, comptime_env)
-            }
-            AssignedNames::Names(_) => (
-                remove_assigned(env, assigned),
-                remove_comptime_assigned(comptime_env, assigned),
-            ),
-        }
+        self.invalidate_assigned_effects(assigned, &mut env, &mut comptime_env);
+        (env, comptime_env)
     }
 
     fn invalidate_assigned_effects(
@@ -996,12 +1421,13 @@ impl<'db> Evaluator<'db> {
     ) {
         if matches!(assigned, AssignedNames::All) {
             self.memory.clear();
-            let old_env = std::mem::take(env);
-            let old_comptime_env = std::mem::take(comptime_env);
-            let (kept_env, kept_comptime_env) =
-                self.preserve_comptime_known_env(old_env, old_comptime_env);
-            *env = kept_env;
-            *comptime_env = kept_comptime_env;
+            // Unknown callees can mutate shared state, not caller-local value
+            // bindings. Explicit source/assembly assignments are collected
+            // separately, with their lexical binding names.
+            for name in &self.visible_storage_fields() {
+                env.remove(name);
+                comptime_env.remove(name);
+            }
         } else {
             invalidate_assigned(assigned, env, comptime_env);
         }
@@ -1137,22 +1563,8 @@ impl<'db> Evaluator<'db> {
                 ty,
                 kind: expr.kind,
             },
-            MonoExprKind::Lambda { name, params, body } => {
-                let type_reg = build_type_reg(&params, &body);
-                let ret_comptime = lambda_ret_is_comptime(self.db, ty.ty());
-                let mut env = env.clone();
-                let mut comptime_env = comptime_env.clone();
-                for param in &params {
-                    env.remove(&param.name);
-                    comptime_env.remove(&param.name);
-                }
-                let (_, _, body) =
-                    self.eval_stmts(&type_reg, env, comptime_env, body, ret_comptime);
-                MonoExpr {
-                    span,
-                    ty,
-                    kind: MonoExprKind::Lambda { name, params, body },
-                }
+            kind @ MonoExprKind::Lambda { .. } => {
+                self.eval_lambda(env, comptime_env, MonoExpr { span, ty, kind })
             }
             MonoExprKind::Tuple(elems) => MonoExpr {
                 span,
@@ -1165,7 +1577,7 @@ impl<'db> Evaluator<'db> {
                 ),
             },
             MonoExprKind::Call {
-                callee,
+                mut callee,
                 args,
                 origin,
             } => {
@@ -1189,6 +1601,25 @@ impl<'db> Evaluator<'db> {
                     if let Some(result) = self.try_clone_closure_call(&callee, &args, ty, span) {
                         return result;
                     }
+                    if let Some(function) = self.functions.get(&callee.name)
+                        && function.params.len() == args.len()
+                    {
+                        // The declaration owns a named callee's signature.
+                        // Call-site inference may have retained comptime
+                        // argument qualifiers that its runtime parameters do
+                        // not have. Preserve every declared qualifier and the
+                        // comptime obligations checked above.
+                        callee.ty = MonoTy::new_unchecked(hir_ty::Ty::function(
+                            self.db,
+                            function.params.iter().map(|param| param.ty.ty()).collect(),
+                            function.ret.ty(),
+                        ));
+                    }
+                } else {
+                    // Intrinsic signatures can be inferred from the source
+                    // arguments. Reflect materialized values in that signature,
+                    // without changing named functions' comptime parameters.
+                    callee.ty = self.materialized_argument_types(callee.ty, &args);
                 }
                 MonoExpr {
                     span,
@@ -1205,27 +1636,7 @@ impl<'db> Evaluator<'db> {
                     .into_iter()
                     .map(|arg| self.eval_expr(env, comptime_env, arg))
                     .collect::<Vec<_>>();
-                // A materialized argument also loses its source comptime
-                // marker in the constructor signature. Keep unknown arguments
-                // and the result type intact for the erasure checks.
-                if !self.comptime_mode
-                    && let TyKind::Function { params, ret } = ctor.ty.ty().kind(self.db)
-                    && params.len() == args.len()
-                {
-                    let params = params
-                        .iter()
-                        .zip(&args)
-                        .map(|(param, arg)| {
-                            let runtime = erase_comptime_ty(self.db, *param);
-                            if self.expr_is_known_value(arg) && arg.ty.ty() == runtime {
-                                runtime
-                            } else {
-                                *param
-                            }
-                        })
-                        .collect();
-                    ctor.ty = MonoTy::new_unchecked(hir_ty::Ty::function(self.db, params, *ret));
-                }
+                ctor.ty = self.materialized_argument_types(ctor.ty, &args);
                 MonoExpr {
                     span,
                     ty,
@@ -1392,28 +1803,54 @@ impl<'db> Evaluator<'db> {
                     .into_iter()
                     .map(|arm| self.eval_expr_arm_labels(env, comptime_env, arm))
                     .collect::<Vec<_>>();
-                if self.expr_is_known_value(&scrutinee)
-                    && let Some((matched_env, expr)) =
+                if (self.expr_is_known_value(&scrutinee)
+                    || (self.value_contains_callable(&scrutinee)
+                        && expr_is_pure(&scrutinee, &self.comptime_pure_funs)))
+                    && let Some((matched_env, expr, bindings)) =
                         match_expr_arms_with(env, &scrutinee, &arms, |expr| {
                             self.expr_is_known_value(expr)
                         })
                 {
+                    let mut matched_comptime_env = comptime_env.clone();
+                    for id in &bindings {
+                        matched_comptime_env.remove(&id.name);
+                    }
                     let matched_comptime_env =
-                        self.with_known_env_bindings_comptime(&matched_env, comptime_env.clone());
-                    return self.eval_expr(&matched_env, &matched_comptime_env, expr);
+                        self.with_known_env_bindings_comptime(&matched_env, matched_comptime_env);
+                    let saved_types = self.capture_types.clone();
+                    self.capture_types
+                        .extend(bindings.into_iter().map(|id| (id.name.clone(), id)));
+                    let result = self.eval_expr(&matched_env, &matched_comptime_env, expr);
+                    self.capture_types = saved_types;
+                    return result;
                 }
+                let arms = arms
+                    .into_iter()
+                    .map(|arm| {
+                        let mut arm_env = env.clone();
+                        let mut arm_comptime_env = comptime_env.clone();
+                        let saved_types = self.capture_types.clone();
+                        self.bind_residual_patterns(
+                            std::slice::from_ref(&arm.pat),
+                            std::slice::from_ref(&scrutinee),
+                            comptime_env,
+                            &mut arm_env,
+                            &mut arm_comptime_env,
+                        );
+                        for id in pattern_bindings(std::slice::from_ref(&arm.pat)) {
+                            self.capture_types.insert(id.name.clone(), id);
+                        }
+                        let expr = self.eval_expr(&arm_env, &arm_comptime_env, arm.expr);
+                        self.capture_types = saved_types;
+                        MonoExprArm { expr, ..arm }
+                    })
+                    .collect();
                 MonoExpr {
                     span,
                     ty,
                     kind: MonoExprKind::Match {
                         scrutinee: Box::new(scrutinee),
-                        arms: arms
-                            .into_iter()
-                            .map(|arm| MonoExprArm {
-                                expr: self.eval_expr(env, comptime_env, arm.expr),
-                                ..arm
-                            })
-                            .collect(),
+                        arms,
                     },
                 }
             }
@@ -1443,6 +1880,36 @@ impl<'db> Evaluator<'db> {
         }
     }
 
+    fn materialized_argument_types(
+        &self,
+        callee_ty: MonoTy<'db>,
+        args: &[MonoExpr<'db>],
+    ) -> MonoTy<'db> {
+        // Only erase a parameter marker when its known argument has already
+        // materialized at that runtime type. Unknown arguments and the result
+        // remain unchanged for the erasure checks.
+        if !self.comptime_mode
+            && let TyKind::Function { params, ret } = callee_ty.ty().kind(self.db)
+            && params.len() == args.len()
+        {
+            let params = params
+                .iter()
+                .zip(args)
+                .map(|(param, arg)| {
+                    let runtime = erase_comptime_ty(self.db, *param);
+                    if self.expr_is_known_value(arg) && arg.ty.ty() == runtime {
+                        runtime
+                    } else {
+                        *param
+                    }
+                })
+                .collect();
+            MonoTy::new_unchecked(hir_ty::Ty::function(self.db, params, *ret))
+        } else {
+            callee_ty
+        }
+    }
+
     fn eval_expr_stable(
         &mut self,
         env: &VEnv<'db>,
@@ -1462,36 +1929,111 @@ impl<'db> Evaluator<'db> {
     }
 
     fn expr_write_effects(&self, expr: &MonoExpr<'db>) -> AssignedNames {
-        expr_write_effects_from_call_summaries(expr, &self.write_effects)
+        let mut effects = expr_write_effects_from_call_summaries(expr, &self.write_effects);
+        if let AssignedNames::Names(names) = &mut effects {
+            // Callee summaries describe shared storage, not assignments to
+            // same-named lexical bindings in the caller.
+            names.retain(|name| !self.capture_types.contains_key(name));
+        }
+        effects
     }
 
-    fn stmts_write_effects(&self, stmts: &[MonoStmt<'db>]) -> AssignedNames {
-        let mut collector = StmtWriteEffectsCollector {
+    fn visible_storage_fields(&self) -> FxHashSet<String> {
+        self.storage_fields
+            .iter()
+            .filter(|name| !self.capture_types.contains_key(*name))
+            .cloned()
+            .collect()
+    }
+
+    fn stmts_write_effects(&mut self, stmts: &[MonoStmt<'db>]) -> AssignedNames {
+        self.scoped_stmts_write_effects(stmts, FxHashSet::default())
+    }
+
+    fn arm_write_effects(&mut self, arm: &MonoArm<'db>) -> AssignedNames {
+        let locals = pattern_bindings(&arm.pats)
+            .into_iter()
+            .map(|id| id.name)
+            .collect();
+        self.scoped_stmts_write_effects(&arm.body, locals)
+    }
+
+    fn scoped_stmts_write_effects(
+        &mut self,
+        stmts: &[MonoStmt<'db>],
+        locals: FxHashSet<String>,
+    ) -> AssignedNames {
+        self.collect_stmt_effects(locals, |collector| {
+            for stmt in stmts {
+                collector.visit_stmt(stmt);
+            }
+        })
+        .writes
+    }
+
+    fn collect_stmt_effects(
+        &mut self,
+        locals: FxHashSet<String>,
+        collect: impl FnOnce(&mut StmtEffectsCollector<'_, 'db>),
+    ) -> StmtEffects {
+        let storage_fields = self.visible_storage_fields();
+        let mut collector = StmtEffectsCollector {
+            db: self.db,
             call_effects: &self.write_effects,
+            storage_fields: &storage_fields,
+            if_stmt_spans: &self.if_stmt_spans,
+            locals,
+            invalidates_memory: false,
             effects: AssignedNames::empty(),
         };
-        for stmt in stmts {
-            collector.visit_stmt(stmt);
+        collect(&mut collector);
+        if collector.invalidates_memory {
+            self.memory.clear();
         }
-        collector.effects
+        StmtEffects {
+            writes: collector.effects,
+            declarations: collector.locals,
+        }
     }
 
-    fn written_pattern_bindings(&self, arm: &MonoArm<'db>) -> FxHashSet<String> {
-        let mut binders = FxHashSet::default();
-        for pat in &arm.pats {
-            collect_pat_binders(pat, &mut binders);
+    /// Pattern bindings inherit the availability of their corresponding
+    /// scrutinee. Compute every scrutinee's status in the outer scope before
+    /// introducing any binder, including when names shadow one another.
+    fn pattern_binding_availability(
+        &self,
+        pats: &[MonoPat<'db>],
+        scrutinees: &[MonoExpr<'db>],
+        comptime_env: &CEnv,
+    ) -> Vec<(MonoId<'db>, bool)> {
+        pats.iter()
+            .zip(scrutinees)
+            .flat_map(|(pat, scrutinee)| {
+                let comptime = self.expr_is_comptime(scrutinee, comptime_env);
+                pattern_bindings(std::slice::from_ref(pat))
+                    .into_iter()
+                    .map(move |id| (id, comptime))
+            })
+            .collect()
+    }
+
+    fn bind_residual_patterns(
+        &self,
+        pats: &[MonoPat<'db>],
+        scrutinees: &[MonoExpr<'db>],
+        outer_comptime_env: &CEnv,
+        env: &mut VEnv<'db>,
+        comptime_env: &mut CEnv,
+    ) {
+        for (id, comptime) in
+            self.pattern_binding_availability(pats, scrutinees, outer_comptime_env)
+        {
+            env.remove(&id.name);
+            if comptime {
+                comptime_env.insert(id.name);
+            } else {
+                comptime_env.remove(&id.name);
+            }
         }
-        if binders.is_empty() {
-            return binders;
-        }
-        let mut writes = BindingWrites {
-            db: self.db,
-            names: FxHashSet::default(),
-        };
-        for stmt in &arm.body {
-            writes.visit_stmt(stmt);
-        }
-        writes.names.intersection(&binders).cloned().collect()
     }
 
     fn eval_closure_dispatch(
@@ -1917,15 +2459,20 @@ impl<'db> Evaluator<'db> {
         let mut env = VEnv::default();
         let mut comptime_env = CEnv::default();
         for (param, arg) in function.params.iter().zip(args) {
-            if self.expr_is_known_value(arg) {
-                env.insert(param.name.clone(), arg.clone());
-            }
+            // Pure arguments may remain symbolic. Keeping their caller-side
+            // identity is necessary when a returned closure captures them;
+            // ordinary runtime return values still stop constant evaluation.
+            env.insert(param.name.clone(), arg.clone());
             if ret_comptime || param_is_comptime(self.db, param) || self.expr_is_known_value(arg) {
                 comptime_env.insert(param.name.clone());
             }
         }
-        let type_reg = build_type_reg(&function.params, &function.body);
+        let type_reg = build_type_reg(&function.params, &[]);
+        // A named function has its own lexical scope. Only lambdas inherit the
+        // enclosing registry; caller locals must not shadow callee storage.
+        let saved_types = std::mem::replace(&mut self.capture_types, type_reg.clone());
         let result = self.eval_fun_body(&type_reg, env, comptime_env, function.body);
+        self.capture_types = saved_types;
         let frame = self.inline_stack.pop();
         debug_assert!(frame.is_some_and(|frame| frame.name == name));
         match result {
@@ -2127,8 +2674,10 @@ impl<'db> Evaluator<'db> {
             env.insert(param.name.clone(), arg.clone());
             comptime_env.insert(param.name.clone());
         }
-        let type_reg = build_type_reg(&function.params, &function.body);
+        let type_reg = build_type_reg(&function.params, &[]);
+        let saved_types = std::mem::replace(&mut self.capture_types, type_reg.clone());
         let (_, _, mut body) = self.eval_stmts(&type_reg, env, comptime_env, function.body, false);
+        self.capture_types = saved_types;
         let frame = self.inline_stack.pop();
         debug_assert!(frame.is_some_and(|frame| frame.name == callee.name));
         let normalized = self.normalize_inlined_unit_body(&mut body);
@@ -2311,28 +2860,30 @@ impl<'db> Evaluator<'db> {
         comptime_env: CEnv,
         body: Vec<MonoStmt<'db>>,
     ) -> FoldOutcome<'db> {
-        let mut scope = BindingScope::default();
-        match self.eval_fun_body_in_scope(type_reg, env, comptime_env, body, &mut scope) {
-            FoldOutcome::FellThroughContinue(env, comptime_env) => {
-                let (env, comptime_env) = scope.restore(env, comptime_env);
+        let mut scope = ScopeBindings::default();
+        let saved_types = self.capture_types.clone();
+        self.capture_types.extend(type_reg.clone());
+        let outcome =
+            self.eval_fun_body_in_scope(&mut type_reg.clone(), env, comptime_env, body, &mut scope);
+        self.capture_types = saved_types;
+        match outcome {
+            FoldOutcome::FellThroughContinue(mut env, mut comptime_env) => {
+                scope.restore(&mut env, &mut comptime_env);
                 FoldOutcome::FellThroughContinue(env, comptime_env)
             }
-            outcome => outcome,
+            returned => returned,
         }
     }
 
     fn eval_fun_body_in_scope(
         &mut self,
-        type_reg: &TypeReg<'db>,
+        type_reg: &mut TypeReg<'db>,
         mut env: VEnv<'db>,
         mut comptime_env: CEnv,
         body: Vec<MonoStmt<'db>>,
-        scope: &mut BindingScope<'db>,
+        scope: &mut ScopeBindings<'db>,
     ) -> FoldOutcome<'db> {
         for stmt in body {
-            if let MonoStmtKind::Let { id, .. } = &stmt.kind {
-                scope.declare(&id.name, &env, &comptime_env);
-            }
             match stmt.kind {
                 MonoStmtKind::Let { id, mode, init, .. } => {
                     let comptime = mode.is_comptime();
@@ -2340,10 +2891,15 @@ impl<'db> Evaluator<'db> {
                     let init_is_comptime = init
                         .as_ref()
                         .is_some_and(|expr| self.expr_is_comptime(expr, &comptime_env));
-                    if let Some(expr) = init.filter(|expr| self.expr_is_known_value(expr)) {
+                    scope.declare(&id.name, &env, &comptime_env);
+                    type_reg.insert(id.name.clone(), id.clone());
+                    self.capture_types.insert(id.name.clone(), id.clone());
+                    if let Some(expr) =
+                        init.filter(|expr| expr_is_pure(expr, &self.comptime_pure_funs))
+                    {
                         env.insert(id.name.clone(), expr);
                     } else {
-                        env.remove(&id.name);
+                        env.insert(id.name.clone(), self.unavailable_value(id.ty, id.span));
                     }
                     if comptime || init_is_comptime {
                         comptime_env.insert(id.name);
@@ -2360,7 +2916,7 @@ impl<'db> Evaluator<'db> {
                     let rhs = self.eval_expr(&env, &comptime_env, rhs);
                     if let Some(id) = target {
                         let rhs_is_comptime = self.expr_is_comptime(&rhs, &comptime_env);
-                        if self.expr_is_known_value(&rhs) {
+                        if expr_is_pure(&rhs, &self.comptime_pure_funs) {
                             if matches!(&lhs.kind, MonoExprKind::Var(_)) {
                                 env.insert(id.name.clone(), rhs);
                                 if rhs_is_comptime {
@@ -2369,11 +2925,11 @@ impl<'db> Evaluator<'db> {
                                     comptime_env.remove(&id.name);
                                 }
                             } else {
-                                env.remove(&id.name);
+                                env.insert(id.name.clone(), self.unavailable_value(id.ty, id.span));
                                 comptime_env.remove(&id.name);
                             }
                         } else {
-                            env.remove(&id.name);
+                            env.insert(id.name.clone(), self.unavailable_value(id.ty, id.span));
                             if rhs_is_comptime && matches!(&lhs.kind, MonoExprKind::Var(_)) {
                                 comptime_env.insert(id.name);
                             } else {
@@ -2387,7 +2943,11 @@ impl<'db> Evaluator<'db> {
                     else {
                         return FoldOutcome::ReturnedUnknownAbort;
                     };
-                    return if self.expr_is_known_value(&expr) {
+                    // A folded function erases its local declarations. Only
+                    // caller values and available locals may escape with it.
+                    return if !self.value_is_unavailable(&expr)
+                        && (self.expr_is_known_value(&expr) || self.value_contains_callable(&expr))
+                    {
                         FoldOutcome::ReturnedKnown(expr)
                     } else {
                         FoldOutcome::ReturnedUnknownAbort
@@ -2403,19 +2963,59 @@ impl<'db> Evaluator<'db> {
                         .into_iter()
                         .map(|arm| self.eval_arm_labels(&env, &comptime_env, arm))
                         .collect::<Vec<_>>();
-                    if scrutinees.iter().all(|expr| self.expr_is_known_value(expr)) {
+                    if scrutinees.iter().all(|expr| {
+                        self.expr_is_known_value(expr)
+                            || (self.value_contains_callable(expr)
+                                && expr_is_pure(expr, &self.comptime_pure_funs))
+                    }) {
                         let matched = match_arms_with(&env, &scrutinees, &arms, |expr| {
                             self.expr_is_known_value(expr)
                         });
-                        if let Some((matched_env, arm)) = matched {
-                            let scope = BindingScope::patterns(&arm.pats, &env, &comptime_env);
-                            let arm_types = with_pattern_types(type_reg, &arm.pats);
-                            match self.eval_fun_body(
-                                &arm_types,
-                                matched_env,
-                                comptime_env.clone(),
-                                arm.body.clone(),
-                            ) {
+                        if let Some(matched) = matched {
+                            let result = if self.if_stmt_spans.contains(&stmt.span) {
+                                let body = self.select_source_branch(
+                                    arms.into_iter().map(|arm| arm.body),
+                                    matched.index,
+                                );
+                                self.eval_fun_body_in_scope(
+                                    type_reg,
+                                    matched.env,
+                                    comptime_env.clone(),
+                                    body,
+                                    scope,
+                                )
+                            } else {
+                                let mut arm_scope = ScopeBindings::default();
+                                let mut arm_types = type_reg.clone();
+                                let mut arm_comptime_env = comptime_env.clone();
+                                for id in matched.bindings {
+                                    arm_scope.declare(&id.name, &env, &comptime_env);
+                                    arm_comptime_env.remove(&id.name);
+                                    arm_types.insert(id.name.clone(), id);
+                                }
+                                let arm_comptime_env = self.with_known_env_bindings_comptime(
+                                    &matched.env,
+                                    arm_comptime_env,
+                                );
+                                let saved_types = self.capture_types.clone();
+                                self.capture_types.extend(arm_types.clone());
+                                let outcome = self.eval_fun_body_in_scope(
+                                    &mut arm_types,
+                                    matched.env,
+                                    arm_comptime_env,
+                                    matched.body,
+                                    &mut arm_scope,
+                                );
+                                self.capture_types = saved_types;
+                                match outcome {
+                                    FoldOutcome::FellThroughContinue(mut env, mut comptime_env) => {
+                                        arm_scope.restore(&mut env, &mut comptime_env);
+                                        FoldOutcome::FellThroughContinue(env, comptime_env)
+                                    }
+                                    returned => returned,
+                                }
+                            };
+                            match result {
                                 FoldOutcome::ReturnedKnown(expr) => {
                                     return FoldOutcome::ReturnedKnown(expr);
                                 }
@@ -2423,10 +3023,12 @@ impl<'db> Evaluator<'db> {
                                     return FoldOutcome::ReturnedUnknownAbort;
                                 }
                                 FoldOutcome::FellThroughContinue(next_env, next_comptime_env) => {
-                                    (env, comptime_env) =
-                                        scope.restore(next_env, next_comptime_env);
+                                    env = next_env;
+                                    comptime_env = next_comptime_env;
                                 }
                             }
+                        } else {
+                            return FoldOutcome::ReturnedUnknownAbort;
                         }
                     } else {
                         return FoldOutcome::ReturnedUnknownAbort;
@@ -2441,11 +3043,10 @@ impl<'db> Evaluator<'db> {
                     let Some(cond) = known_bool(self.db, &cond) else {
                         return FoldOutcome::ReturnedUnknownAbort;
                     };
-                    let body = if cond {
-                        then_body
-                    } else {
-                        else_body.unwrap_or_default()
-                    };
+                    let body = self.select_source_branch(
+                        [then_body, else_body.unwrap_or_default()],
+                        usize::from(!cond),
+                    );
                     match self.eval_fun_body_in_scope(
                         type_reg,
                         env.clone(),
@@ -2592,9 +3193,17 @@ impl<'db> Evaluator<'db> {
             MonoExprKind::TypeAnnot { expr, .. } => self.expr_is_comptime(expr, comptime_env),
             MonoExprKind::Match { scrutinee, arms } => {
                 self.expr_is_comptime(scrutinee, comptime_env)
-                    && arms
-                        .iter()
-                        .all(|arm| self.expr_is_comptime(&arm.expr, comptime_env))
+                    && arms.iter().all(|arm| {
+                        let mut arm_comptime_env = comptime_env.clone();
+                        // The scrutinee is static, so all bindings introduced
+                        // by this pattern are available in its expression.
+                        arm_comptime_env.extend(
+                            pattern_bindings(std::slice::from_ref(&arm.pat))
+                                .into_iter()
+                                .map(|id| id.name),
+                        );
+                        self.expr_is_comptime(&arm.expr, &arm_comptime_env)
+                    })
             }
             MonoExprKind::If {
                 cond,

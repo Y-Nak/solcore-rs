@@ -203,13 +203,13 @@ pub(super) fn lower_pragma<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
     leading_comments: Vec<ParsedSourceComment<'_>>,
-    name: SpannedStr<'_>,
+    name: (String, LexSpan),
     items: Vec<SpannedStr<'_>>,
 ) -> item::Pragma<'db> {
-    let pragma_def = ctx.alloc_def_with_location(DefKind::Pragma, Some(name.0), span.start);
+    let pragma_def = ctx.alloc_def_with_location(DefKind::Pragma, Some(&name.0), span.start);
 
     let anchor = AnchorId::def(ctx.db, pragma_def);
-    let name = lower_spanned_ident(ctx.db, anchor, span.start, name);
+    let name = lower_spanned_ident(ctx.db, anchor, span.start, (&name.0, name.1));
     let items = items
         .into_iter()
         .map(|segment| lower_spanned_ident(ctx.db, anchor, span.start, segment))

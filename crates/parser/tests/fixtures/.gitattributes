@@ -1,0 +1,2 @@
+# Parser and formatter fixtures assert the exact input and output bytes.
+*.txt -text

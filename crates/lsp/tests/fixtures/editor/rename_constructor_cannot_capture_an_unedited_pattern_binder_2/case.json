@@ -1,0 +1,28 @@
+{
+  "documents": [
+    "main.sol",
+    "math.sol"
+  ],
+  "checks": [
+    {
+      "kind": "rename",
+      "at": {
+        "needle": "Pick",
+        "document": "math.sol"
+      },
+      "new_name": "value",
+      "accepted": false,
+      "no_errors_before": true
+    },
+    {
+      "kind": "rename",
+      "at": {
+        "needle": "Pick",
+        "document": "math.sol"
+      },
+      "new_name": "Renamed",
+      "accepted": true,
+      "no_errors_before": true
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "source": "nested_scope.sol",
+  "loader": "fixture",
+  "frontend_clean": true,
+  "checks": [
+    {
+      "check": "main_return_number",
+      "value": "7"
+    }
+  ]
+}

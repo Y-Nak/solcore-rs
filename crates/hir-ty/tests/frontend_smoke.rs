@@ -182,6 +182,30 @@ impl nameres::Db for TestDb {
 #[salsa::db]
 impl solcore_hir_ty::Db for TestDb {}
 
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/../../std", glob: "*.sol")]
+fn standard_library_sources_pass_normal_frontend_checks(fixture: dir_test::Fixture<&str>) {
+    let path = Path::new(fixture.path())
+        .canonicalize()
+        .expect("standard source path");
+    solcore_test_utils::run_in_large_stack(move || {
+        let std_root = repo_root().join("std").canonicalize().expect("std root");
+        // Treat each real standard source as a user entry. Imported Std modules
+        // are trusted by type checking, so checking only their consumers would
+        // miss invalid instance declarations in the standard library itself.
+        let outcome = run_frontend_with_roots(&path, &std_root, &std_root, BTreeMap::new());
+        assert!(
+            outcome.unresolved_imports.is_empty()
+                && outcome.frontend_error_diagnostics.is_empty()
+                && outcome.typeck_error_diagnostics.is_empty(),
+            "{} failed normal frontend checks\n  unresolved imports: {:#?}\n  frontend errors: {:#?}\n  typeck errors: {:#?}",
+            path.display(),
+            outcome.unresolved_imports,
+            outcome.frontend_error_diagnostics,
+            outcome.typeck_error_diagnostics,
+        );
+    });
+}
+
 #[test]
 fn std_solc_frontend_typecheck_triage() {
     let repo = repo_root();

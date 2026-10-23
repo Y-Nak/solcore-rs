@@ -1,0 +1,14 @@
+{
+  "loader": "bare",
+  "checks": [
+    {
+      "check": "function_count",
+      "max": 9
+    }
+  ],
+  "source": "005.sol",
+  "max_depth": 16,
+  "forbidden_diagnostics": [
+    "instantiation_depth_exceeded"
+  ]
+}

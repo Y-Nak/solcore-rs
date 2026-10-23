@@ -1,0 +1,9 @@
+{
+  "source": "001.sol",
+  "loader": "bare",
+  "diagnostics": [
+    {
+      "kind": "free_type_variable"
+    }
+  ]
+}

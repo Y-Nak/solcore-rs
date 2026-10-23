@@ -595,44 +595,46 @@ impl<'db> Emitter<'db> {
         match tree {
             DecisionTree::Leaf { bindings, body } => self.with_scope(|this| {
                 let mut materialized = Vec::new();
+                let mut captured = Vec::new();
+                // Pattern bindings are simultaneous: every initializer must
+                // read the scrutinees before any source name is shadowed.
                 for (name, occurrence) in bindings {
                     if let Some(expr) = occurrences.get(occurrence).cloned() {
-                        let rhs = if super::emitter::expr_reads_var(&expr, name) {
-                            let temp = this.fresh_temp("match_bind");
-                            materialized.push(Stmt {
-                                span,
-                                kind: StmtKind::Let {
-                                    name: temp.clone().into(),
-                                    ty: expr.ty.clone(),
-                                },
-                            });
-                            materialized.push(Stmt {
-                                span,
-                                kind: StmtKind::Assign {
-                                    lhs: Expr::var(span, temp.clone(), expr.ty.clone()),
-                                    rhs: expr.clone(),
-                                },
-                            });
-                            Expr::var(span, temp, expr.ty.clone())
-                        } else {
-                            expr.clone()
-                        };
+                        let temp = this.fresh_temp("match_bind");
                         materialized.push(Stmt {
                             span,
                             kind: StmtKind::Let {
-                                name: name.clone().into(),
+                                name: temp.clone().into(),
                                 ty: expr.ty.clone(),
                             },
                         });
                         materialized.push(Stmt {
                             span,
                             kind: StmtKind::Assign {
-                                lhs: Expr::var(span, name.clone(), expr.ty.clone()),
-                                rhs,
+                                lhs: Expr::var(span, temp.clone(), expr.ty.clone()),
+                                rhs: expr.clone(),
                             },
                         });
-                        this.bind_expr(name.clone(), Expr::var(span, name.clone(), expr.ty));
+                        captured.push((name, Expr::var(span, temp, expr.ty)));
                     }
+                }
+                for (name, rhs) in captured {
+                    materialized.push(Stmt {
+                        span,
+                        kind: StmtKind::Let {
+                            name: name.clone().into(),
+                            ty: rhs.ty.clone(),
+                        },
+                    });
+                    let lhs = Expr::var(span, name.clone(), rhs.ty.clone());
+                    materialized.push(Stmt {
+                        span,
+                        kind: StmtKind::Assign {
+                            lhs: lhs.clone(),
+                            rhs,
+                        },
+                    });
+                    this.bind_expr(name.clone(), lhs);
                 }
                 materialized.extend(this.emit_stmts(body));
                 // The arm's binders and locals belong to this lexical scope,

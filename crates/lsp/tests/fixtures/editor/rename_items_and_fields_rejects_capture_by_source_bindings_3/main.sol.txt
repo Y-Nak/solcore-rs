@@ -1,0 +1,1 @@
+import * from std; import * from std.dispatch; contract C { target: word; function read() returns (word) { let renamed: word = 2; return target; } }

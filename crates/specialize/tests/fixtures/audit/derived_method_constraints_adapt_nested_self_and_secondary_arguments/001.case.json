@@ -1,0 +1,11 @@
+{
+  "loader": "std",
+  "checks": [
+    {
+      "check": "main_return_number",
+      "value": "7"
+    }
+  ],
+  "source": "001.sol",
+  "frontend_clean": true
+}

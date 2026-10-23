@@ -21,17 +21,24 @@ pub(super) struct BodyCtx<'a, 'db> {
     pub(super) locals: FxHashMap<String, Ty<'db>>,
 }
 
+/// A value expression and the function or class whose dictionary it requires.
+type ValueEvidenceKey<'db> = (FuncBody<'db>, Id<Expr<'db>>, DefId<'db>);
+type LogicalEvidenceBindings<'db> = Vec<(Pred<'db>, LogicalEvidence<'db>)>;
+
 pub(super) struct BodyIndex<'db> {
-    closure_tys: FxHashMap<DefId<'db>, Ty<'db>>,
     expr_tys: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), Ty<'db>>,
+    closure_tys: FxHashMap<DefId<'db>, Ty<'db>>,
     pat_tys: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), Ty<'db>>,
     let_tys: FxHashMap<(FuncBody<'db>, Id<Stmt<'db>>), Ty<'db>>,
     expr_resolutions: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), hir_nameres::Resolution<'db>>,
     pat_resolutions: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), hir_nameres::Resolution<'db>>,
-    call_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, Id<Expr<'db>>), CallSiteEvidence<'db>>,
-    class_method_value_evidence:
-        FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, DefId<'db>), Evidence<'db>>,
-    string_coercion_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), Evidence<'db>>,
+    call_evidence:
+        FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, Id<Expr<'db>>), Vec<CallSiteEvidence<'db>>>,
+    function_value_evidence: FxHashMap<ValueEvidenceKey<'db>, LogicalEvidenceBindings<'db>>,
+    class_method_value_evidence: FxHashMap<ValueEvidenceKey<'db>, LogicalEvidence<'db>>,
+    class_method_value_bindings:
+        FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), LogicalEvidenceBindings<'db>>,
+    string_coercion_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), LogicalEvidence<'db>>,
     first_builtin_int_evidence: Option<CallSiteEvidence<'db>>,
     comptime_let_stmts: FxHashSet<(FuncBody<'db>, Id<Stmt<'db>>)>,
     comptime_obligations: FxHashMap<FuncBody<'db>, Vec<ComptimeObligation<'db>>>,
@@ -44,14 +51,16 @@ impl<'db> BodyIndex<'db> {
         body_map: &hir_nameres::BodyResolutionMap<'db>,
     ) -> Self {
         let mut index = Self {
-            closure_tys: result.closure_tys.iter().copied().collect(),
             expr_tys: FxHashMap::default(),
+            closure_tys: result.closure_tys.iter().copied().collect(),
             pat_tys: FxHashMap::default(),
             let_tys: FxHashMap::default(),
             expr_resolutions: FxHashMap::default(),
             pat_resolutions: FxHashMap::default(),
             call_evidence: FxHashMap::default(),
+            function_value_evidence: FxHashMap::default(),
             class_method_value_evidence: FxHashMap::default(),
+            class_method_value_bindings: FxHashMap::default(),
             string_coercion_evidence: FxHashMap::default(),
             first_builtin_int_evidence: None,
             comptime_let_stmts: FxHashSet::default(),
@@ -101,7 +110,8 @@ impl<'db> BodyIndex<'db> {
             index
                 .call_evidence
                 .entry((evidence.body, evidence.call_expr, evidence.callee_expr))
-                .or_insert_with(|| evidence.clone());
+                .or_default()
+                .push(evidence.clone());
             if index.first_builtin_int_evidence.is_none()
                 && matches!(
                     evidence.callee,
@@ -117,6 +127,19 @@ impl<'db> BodyIndex<'db> {
             let Some(obligation) = result.obligations.get(solved.obligation) else {
                 continue;
             };
+            if let hir_ty::ObligationSource::FunctionValue {
+                body,
+                expr,
+                function,
+            } = obligation.source
+            {
+                index
+                    .function_value_evidence
+                    .entry((body, expr, function))
+                    .or_default()
+                    .push((obligation.pred, solved.evidence.clone()));
+                continue;
+            }
             if let hir_ty::ObligationSource::StringCoercion { body, expr } = obligation.source {
                 index
                     .string_coercion_evidence
@@ -127,6 +150,11 @@ impl<'db> BodyIndex<'db> {
             let hir_ty::ObligationSource::ClassMethod { body, expr } = obligation.source else {
                 continue;
             };
+            index
+                .class_method_value_bindings
+                .entry((body, expr))
+                .or_default()
+                .push((obligation.pred, solved.evidence.clone()));
             let PredKind::InClass {
                 class: ClassId::User(class),
                 ..
@@ -262,9 +290,10 @@ pub(super) struct BinOpExpr<'db> {
 }
 
 impl<'a, 'db> BodyCtx<'a, 'db> {
-    pub(super) fn specialize_evidence(&self, evidence: Evidence<'db>) -> Evidence<'db> {
+    pub(super) fn specialize_evidence(&mut self, evidence: LogicalEvidence<'db>) -> Evidence<'db> {
         let evidence = self.subst.apply_evidence(self.driver.db, evidence);
-        replay_evidence_bindings(evidence, &self.evidence_bindings)
+        self.driver
+            .elaborate_evidence(self.info.module, evidence, &self.evidence_bindings)
     }
 
     pub(super) fn stmt(&mut self, stmt_id: Id<Stmt<'db>>) -> Option<MonoStmt<'db>> {
@@ -332,30 +361,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     span,
                 )?)
             }
-            StmtKind::Assign { op, lhs, rhs }
-                if *op == hir::ast::function::AssignOp::Plain
-                    && self.is_storage_index_lhs(*lhs) =>
-            {
-                MonoStmtKind::Block(self.storage_index_store(*lhs, *rhs, span)?)
-            }
             StmtKind::Assign { op, lhs, rhs } if self.is_storage_index_lhs(*lhs) => {
-                let ExprKind::Index { base, index } =
-                    &self.body.exprs(self.driver.db).get(*lhs).kind
-                else {
-                    unreachable!("storage index lhs was checked above")
-                };
-                let result_ty = self.expr_ty(*lhs)?;
-                MonoStmtKind::Assign {
-                    op: *op,
-                    // Compound storage assignments deliberately retain the
-                    // raw indexed-value form. Hull recognizes it as an
-                    // lvalue, evaluates the checked slot once, then performs
-                    // the load/operator/store sequence. Plain assignment is
-                    // routed through CanStore above so strings and nested
-                    // collections keep their storage representation.
-                    lhs: self.storage_index_value(*base, *index, result_ty, span)?,
-                    rhs: self.expr(*rhs)?,
-                }
+                MonoStmtKind::Block(self.storage_index_store(*lhs, *rhs, op.binary_op(), span)?)
             }
             StmtKind::Assign { op, lhs, rhs }
                 if *op == hir::ast::function::AssignOp::Plain
@@ -582,6 +589,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                                     )
                                 });
                             if let Some(specialized) = evidence.and_then(|evidence| {
+                                let evidence = self.method_value_evidence(expr_id, evidence);
                                 self.driver.resolve_class_method_call(
                                     &name, evidence, ty, expr.span, self.depth,
                                 )
@@ -610,7 +618,12 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                                 def.name(self.driver.db)
                                     .unwrap_or_else(|| format!("{:?}", def.kind(self.driver.db)))
                             } else {
-                                self.specialize_direct_function(def, mono_ty.ty(), expr.span)
+                                self.specialize_function_value(
+                                    def,
+                                    expr_id,
+                                    mono_ty.ty(),
+                                    expr.span,
+                                )
                             };
                             MonoExprKind::Var(MonoId {
                                 name,
@@ -772,7 +785,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     def.name(self.driver.db)
                         .unwrap_or_else(|| format!("{:?}", def.kind(self.driver.db)))
                 } else {
-                    self.specialize_direct_function(def, ty.ty(), span)
+                    self.specialize_function_value(def, expr_id, ty.ty(), span)
                 };
                 MonoExprKind::Var(MonoId { name, ty, span })
             }
@@ -800,8 +813,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         } = ty.kind(self.driver.db)
         else {
             self.driver.diagnostics.push(SpecializeDiagnostic {
-                kind: SpecializeDiagnosticKind::MissingEvidence {
-                    context: "lambda callable signature".to_owned(),
+                kind: SpecializeDiagnosticKind::MissingResolution {
+                    context: format!("missing callable signature for lambda '{name}'"),
                 },
                 span: Some(span),
             });
@@ -809,8 +822,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         };
         if params.len() != param_tys.len() {
             self.driver.diagnostics.push(SpecializeDiagnostic {
-                kind: SpecializeDiagnosticKind::MissingEvidence {
-                    context: "lambda parameter signature".to_owned(),
+                kind: SpecializeDiagnosticKind::MissingResolution {
+                    context: format!("parameter count does not match lambda '{name}' signature"),
                 },
                 span: Some(span),
             });
@@ -1281,21 +1294,105 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         self.index
             .call_evidence
             .get(&(self.body, call_expr, callee_expr))
+            .and_then(|evidence| evidence.first())
             .cloned()
+    }
+
+    pub(super) fn call_evidence_bindings(
+        &mut self,
+        call_expr: Id<Expr<'db>>,
+        callee_expr: Id<Expr<'db>>,
+    ) -> Vec<(Pred<'db>, Evidence<'db>)> {
+        let evidence = self
+            .index
+            .call_evidence
+            .get(&(self.body, call_expr, callee_expr))
+            .cloned()
+            .unwrap_or_default();
+        evidence
+            .into_iter()
+            .filter_map(|solved| {
+                let obligation = self.result.obligations.get(solved.obligation)?;
+                Some((
+                    self.subst.apply_pred(self.driver.db, obligation.pred),
+                    self.specialize_evidence(solved.evidence.clone()),
+                ))
+            })
+            .collect()
+    }
+
+    pub(super) fn method_call_evidence(
+        &mut self,
+        call_expr: Id<Expr<'db>>,
+        callee_expr: Id<Expr<'db>>,
+        dictionary: Evidence<'db>,
+    ) -> MethodEvidence<'db> {
+        MethodEvidence {
+            dictionary,
+            bindings: self.call_evidence_bindings(call_expr, callee_expr),
+        }
+    }
+
+    fn method_value_evidence(
+        &mut self,
+        expr: Id<Expr<'db>>,
+        dictionary: Evidence<'db>,
+    ) -> MethodEvidence<'db> {
+        let proofs = self
+            .index
+            .class_method_value_bindings
+            .get(&(self.body, expr))
+            .cloned()
+            .unwrap_or_default();
+        let bindings = proofs
+            .into_iter()
+            .map(|(pred, proof)| {
+                (
+                    self.subst.apply_pred(self.driver.db, pred),
+                    self.specialize_evidence(proof),
+                )
+            })
+            .collect();
+        MethodEvidence {
+            dictionary,
+            bindings,
+        }
+    }
+
+    pub(super) fn function_value_evidence_bindings(
+        &mut self,
+        expr: Id<Expr<'db>>,
+        function: DefId<'db>,
+    ) -> Vec<(Pred<'db>, Evidence<'db>)> {
+        let evidence = self
+            .index
+            .function_value_evidence
+            .get(&(self.body, expr, function))
+            .cloned()
+            .unwrap_or_default();
+        evidence
+            .into_iter()
+            .map(|(pred, evidence)| {
+                (
+                    self.subst.apply_pred(self.driver.db, pred),
+                    self.specialize_evidence(evidence),
+                )
+            })
+            .collect()
     }
 
     fn class_method_value_evidence(
         &self,
         expr: Id<Expr<'db>>,
         class: DefId<'db>,
-    ) -> Option<Evidence<'db>> {
+    ) -> Option<LogicalEvidence<'db>> {
         self.index
             .class_method_value_evidence
             .get(&(self.body, expr, class))
             .cloned()
     }
 
-    fn string_coercion_evidence(&self, expr: Id<Expr<'db>>) -> Option<Evidence<'db>> {
+    fn string_coercion_evidence(&self, expr: Id<Expr<'db>>) -> Option<LogicalEvidence<'db>> {
         self.index
             .string_coercion_evidence
             .get(&(self.body, expr))
@@ -2083,6 +2180,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         &mut self,
         lhs: Id<Expr<'db>>,
         rhs: Id<Expr<'db>>,
+        op: Option<BinOp>,
         span: Span<'db>,
     ) -> Option<Vec<MonoStmt<'db>>> {
         let ExprKind::Index { base, index } = &self.body.exprs(self.driver.db).get(lhs).kind else {
@@ -2101,9 +2199,51 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             kind: MonoExprKind::Var(slot_id.clone()),
         };
         let mut value = self.expr(rhs)?;
+        // Desugaring preserves the original LHS span on its cloned read. Match
+        // the slot operation too: a surrounding CanStore.load can share both
+        // span and type when the element itself is a storage-array handle.
         replace_desugared_read_at_span(&mut value, lhs_span, slot.ty, &slot_var, |kind| {
-            matches!(kind, MonoExprKind::StorageIndex { .. })
+            match (&slot.kind, kind) {
+                (
+                    MonoExprKind::StorageIndex {
+                        storage_kind: left, ..
+                    },
+                    MonoExprKind::StorageIndex {
+                        storage_kind: right,
+                        ..
+                    },
+                ) => left == right,
+                (
+                    MonoExprKind::Call { callee: left, .. },
+                    MonoExprKind::Call { callee: right, .. },
+                ) => left.name == right.name && left.ty == right.ty,
+                _ => false,
+            }
         });
+        if let Some(op) = op {
+            let result_ty = self.expr_ty(lhs)?;
+            let result_ty = self.subst.apply_ty(self.driver.db, result_ty);
+            let loaded = self.resolved_class_call(
+                "CanStore",
+                "load",
+                vec![slot_var.clone()],
+                result_ty,
+                span,
+            )?;
+            value = if let Some((class, method)) = overloaded_operator_method(op) {
+                self.resolved_class_call(class, method, vec![loaded, value], result_ty, span)?
+            } else {
+                MonoExpr {
+                    span,
+                    ty: loaded.ty,
+                    kind: MonoExprKind::BinOp {
+                        lhs: Box::new(loaded),
+                        op,
+                        rhs: Box::new(value),
+                    },
+                }
+            };
+        }
         let store = self.resolved_class_call(
             "CanStore",
             "store",
@@ -2138,6 +2278,12 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         let base_ty = self.normalize_body_ty(self.subst.apply_ty(self.driver.db, base_ty));
         let ref_ty = storage_collection_element_ref_ty(self.driver.db, base_ty)?;
         let base = self.storage_collection_ref_expr(base, span)?;
+        if ty_is_storage_array(self.driver.db, base_ty) {
+            let index = self.expr(index)?;
+            // Array layout and bounds belong to the selected standard-library
+            // instance, including element types occupying several slots.
+            return self.synthetic_std_call("lidx", vec![base, index], ref_ty, span);
+        }
         let base = self.typedef_rep(base, span)?;
         let index = self.expr(index)?;
         let index = self.typedef_rep(index, span)?;
@@ -2147,11 +2293,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 .driver
                 .mono_ty(ref_ty, "storage element reference", span)?,
             kind: MonoExprKind::StorageIndex {
-                storage_kind: if ty_is_storage_array(self.driver.db, base_ty) {
-                    MonoStorageIndexKind::Array
-                } else {
-                    MonoStorageIndexKind::Mapping
-                },
+                storage_kind: MonoStorageIndexKind::Mapping,
                 base: Box::new(base),
                 index: Box::new(index),
             },
@@ -2182,37 +2324,6 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             }
             _ => self.expr(expr),
         }
-    }
-
-    fn storage_index_value(
-        &mut self,
-        base: Id<Expr<'db>>,
-        index: Id<Expr<'db>>,
-        result_ty: Ty<'db>,
-        span: Span<'db>,
-    ) -> Option<MonoExpr<'db>> {
-        let base_ty = self.expr_ty(base)?;
-        let base_ty = self.normalize_body_ty(self.subst.apply_ty(self.driver.db, base_ty));
-        let result_ty = self.normalize_body_ty(self.subst.apply_ty(self.driver.db, result_ty));
-        let base = self.expr(base)?;
-        let base = self.typedef_rep(base, span)?;
-        let index = self.expr(index)?;
-        let index = self.typedef_rep(index, span)?;
-        Some(MonoExpr {
-            span,
-            ty: self
-                .driver
-                .mono_ty(result_ty, "storage indexed value", span)?,
-            kind: MonoExprKind::StorageIndex {
-                storage_kind: if ty_is_storage_array(self.driver.db, base_ty) {
-                    MonoStorageIndexKind::Array
-                } else {
-                    MonoStorageIndexKind::Mapping
-                },
-                base: Box::new(base),
-                index: Box::new(index),
-            },
-        })
     }
 
     fn memory_array_index(
@@ -2447,7 +2558,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             result_ty,
         );
         let callee = MonoId {
-            name: self.specialize_direct_function(def, callee_ty, span),
+            name: self.specialize_synthetic_std_function(def, callee_ty, span),
             ty: self
                 .driver
                 .mono_ty(callee_ty, "array helper callee", span)?,
@@ -2717,7 +2828,7 @@ fn replace_desugared_read_at_span<'db>(
     target_span: Span<'db>,
     target_ty: MonoTy<'db>,
     saved: &MonoExpr<'db>,
-    matches_kind: fn(&MonoExprKind<'db>) -> bool,
+    matches_kind: impl Fn(&MonoExprKind<'db>) -> bool + Copy,
 ) {
     if expr.span == target_span && expr.ty == target_ty && matches_kind(&expr.kind) {
         *expr = saved.clone();

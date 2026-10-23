@@ -229,6 +229,9 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
                 return None;
             };
             let class = AbiClass::from_def(db, *class)?;
+            if class.owns_instance(db, *instance) {
+                return None;
+            }
             let generic_adt = if class == AbiClass::Generic {
                 match main.kind(db) {
                     TyKind::Named {
@@ -420,8 +423,9 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
 }
 
 /// Follows selected dictionaries, including representation and superclass
-/// subproofs. Signature roots own SigString evidence for method selectors and
-/// variant tags; execution roots own encoding, decoding, and layout evidence.
+/// subproofs. Signature roots own SigString and ABITypeString evidence for method
+/// selectors and variant tags; execution roots own encoding, decoding, and
+/// layout evidence, including ABIElementAttribs for array value layouts.
 /// All roots of one declaration share the same visited set and proof budget.
 struct ManualAbiEvidence<'db, 'a> {
     db: &'db dyn Db,

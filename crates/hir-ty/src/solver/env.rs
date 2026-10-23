@@ -221,6 +221,53 @@ pub fn trait_env_with_givens<'db>(
     )
 }
 
+/// Instantiates the declared direct superclasses of a class predicate without
+/// selecting any instances. Method-body assumptions and executable dictionary
+/// capture must agree on this same superclass surface.
+#[salsa::tracked]
+pub fn direct_superclass_predicates<'db>(
+    db: &'db dyn Db,
+    base: BaseTraitEnvId<'db>,
+    predicate: Pred<'db>,
+) -> Vec<Pred<'db>> {
+    let PredKind::InClass {
+        class: ClassId::User(class),
+        ..
+    } = predicate.kind(db)
+    else {
+        return Vec::new();
+    };
+    let mut predicates = Vec::new();
+    let clause_sets = match base.source(db) {
+        BaseTraitEnvSource::Module(source) => source
+            .superclass_modules
+            .iter()
+            .map(|module| module_superclass_clause_set(db, *module))
+            .collect::<Vec<_>>(),
+        BaseTraitEnvSource::Resolved { clause_sets } => clause_sets.clone(),
+    };
+    for clause in clause_sets.iter().flat_map(|set| set.clauses(db)) {
+        if clause.origin != ClauseOrigin::Superclass(*class) {
+            continue;
+        }
+        let [child] = clause.conditions.as_slice() else {
+            continue;
+        };
+        // The solver clause projects Parent from Child. Reverse its shape only
+        // to instantiate Parent with Child's type arguments; no solving occurs.
+        let projection = ProgramClause {
+            binder_count: clause.binder_count,
+            head: *child,
+            conditions: vec![clause.head],
+            origin: ClauseOrigin::Builtin,
+        };
+        if let Some(parents) = clause_conditions_for_goal(db, &projection, predicate) {
+            predicates.extend(parents);
+        }
+    }
+    unique_preds(predicates)
+}
+
 #[salsa::tracked(returns(ref))]
 pub(super) fn base_trait_env_clauses<'db>(
     db: &'db dyn Db,
@@ -235,7 +282,7 @@ pub(super) fn base_trait_env_clauses<'db>(
             }
             for origin in &source.instance_origins {
                 if let Some(fact) = instance_fact_for_origin(db, origin.module, origin.def_id) {
-                    clauses.push(fact.clause());
+                    clauses.push(fact.clause(db));
                 }
             }
             if let Some(source) = source.derived_generic {
@@ -414,7 +461,6 @@ impl<'db> TraitClauseBuilder<'db> {
                 self.add_builtin_ground_instance(str_class, memory_string);
             }
         }
-        self.add_builtin_function_invokables();
     }
 
     fn add_builtin_ground_instance(&mut self, class: ClassId<'db>, ty: Ty<'db>) {
@@ -426,50 +472,48 @@ impl<'db> TraitClauseBuilder<'db> {
         });
     }
 
-    fn add_builtin_function_invokables(&mut self) {
+    fn add_builtin_function_invokables(&mut self, arity: u32) {
         let invokable = ClassId::Builtin(BuiltinClassId::Invokable);
-        for arity in 0..=8 {
-            let params = (0..arity)
-                .map(|index| Ty::bound(self.db, index))
-                .collect::<Vec<_>>();
-            let ret = Ty::bound(self.db, arity);
-            let main = Ty::function(self.db, params.clone(), ret);
+        let params = (0..arity)
+            .map(|index| Ty::bound(self.db, index))
+            .collect::<Vec<_>>();
+        let ret = Ty::bound(self.db, arity);
+        let main = Ty::function(self.db, params.clone(), ret);
+        self.clauses.push(ProgramClause {
+            binder_count: arity + 1,
+            head: Pred::in_class(
+                self.db,
+                invokable,
+                main,
+                vec![invokable_arg_ty(self.db, params.clone()), ret],
+            ),
+            conditions: Vec::new(),
+            origin: ClauseOrigin::Builtin,
+        });
+        if arity > 1 {
             self.clauses.push(ProgramClause {
                 binder_count: arity + 1,
                 head: Pred::in_class(
                     self.db,
                     invokable,
                     main,
-                    vec![invokable_arg_ty(self.db, params.clone()), ret],
+                    vec![Ty::tuple(self.db, params.clone()), ret],
                 ),
                 conditions: Vec::new(),
                 origin: ClauseOrigin::Builtin,
             });
-            if arity > 1 {
+            if arity > 2 {
                 self.clauses.push(ProgramClause {
                     binder_count: arity + 1,
                     head: Pred::in_class(
                         self.db,
                         invokable,
                         main,
-                        vec![Ty::tuple(self.db, params.clone()), ret],
+                        vec![nested_tuple_arg_ty(self.db, params), ret],
                     ),
                     conditions: Vec::new(),
                     origin: ClauseOrigin::Builtin,
                 });
-                if arity > 2 {
-                    self.clauses.push(ProgramClause {
-                        binder_count: arity + 1,
-                        head: Pred::in_class(
-                            self.db,
-                            invokable,
-                            main,
-                            vec![nested_tuple_arg_ty(self.db, params), ret],
-                        ),
-                        conditions: Vec::new(),
-                        origin: ClauseOrigin::Builtin,
-                    });
-                }
             }
         }
     }
@@ -540,15 +584,16 @@ impl<'db> TraitClauseBuilder<'db> {
             binder_count: type_vars.len() as u32,
             head,
             conditions,
-            origin: ClauseOrigin::Instance {
-                def: instance.def_id_value(self.db),
-                default: instance.default_kw(self.db).is_some(),
-            },
+            origin: ClauseOrigin::instance(
+                self.db,
+                instance.def_id_value(self.db),
+                instance.default_kw(self.db).is_some(),
+            ),
         });
     }
 
     fn add_instance_fact(&mut self, fact: &InstanceFact<'db>) {
-        self.clauses.push(fact.clause());
+        self.clauses.push(fact.clause(self.db));
     }
 
     fn add_local_derived_generic_instances(
@@ -758,32 +803,56 @@ fn canonical_std_string_types<'db>(db: &'db dyn Db) -> Vec<(Ty<'db>, Option<Ty<'
         .collect()
 }
 
+/// Instantiate the structural function-call rules at the arities present in
+/// this goal, rather than imposing a maximum source-language function arity.
+pub(super) fn builtin_function_invokables<'db>(
+    db: &'db dyn Db,
+    goal: Pred<'db>,
+) -> Vec<ProgramClause<'db>> {
+    let PredKind::InClass {
+        class: ClassId::Builtin(BuiltinClassId::Invokable),
+        main,
+        ..
+    } = goal.kind(db)
+    else {
+        return Vec::new();
+    };
+    let unstage = |mut ty: Ty<'db>| {
+        while let TyKind::Comptime(inner) = ty.kind(db) {
+            ty = *inner;
+        }
+        ty
+    };
+    // Main-type matching is one-way: a still-open function main is deferred
+    // until inference determines it, rather than inferred from its arguments.
+    let TyKind::Function { params, .. } = unstage(*main).kind(db) else {
+        return Vec::new();
+    };
+    let mut builder = TraitClauseBuilder::new(db);
+    if let Ok(arity) = u32::try_from(params.len()) {
+        builder.add_builtin_function_invokables(arity);
+    }
+    builder.clauses
+}
+
 fn invokable_arg_ty<'db>(db: &'db dyn Db, params: Vec<Ty<'db>>) -> Ty<'db> {
-    let mut params = params.into_iter();
-    let Some(first) = params.next() else {
+    let mut params = params.into_iter().rev();
+    let Some(last) = params.next() else {
         return Ty::unit(db);
     };
-    let rest = params.collect::<Vec<_>>();
-    if rest.is_empty() {
-        first
-    } else {
+    params.fold(last, |tail, head| {
         Ty::named(
             db,
             TyCtor::Builtin(crate::BuiltinTyCtor::Pair),
-            vec![first, invokable_arg_ty(db, rest)],
+            vec![head, tail],
         )
-    }
+    })
 }
 
 fn nested_tuple_arg_ty<'db>(db: &'db dyn Db, params: Vec<Ty<'db>>) -> Ty<'db> {
-    let mut params = params.into_iter();
-    let Some(first) = params.next() else {
+    let mut params = params.into_iter().rev();
+    let Some(last) = params.next() else {
         return Ty::unit(db);
     };
-    let rest = params.collect::<Vec<_>>();
-    if rest.is_empty() {
-        first
-    } else {
-        Ty::tuple(db, vec![first, nested_tuple_arg_ty(db, rest)])
-    }
+    params.fold(last, |tail, head| Ty::tuple(db, vec![head, tail]))
 }

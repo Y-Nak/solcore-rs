@@ -3,15 +3,15 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/ergo_lambda_missing_parens/main.sol
 ---
-error[SC0001]: parse error: unexpected `;`
- --> /main/main.sol:2:29
+error[SC0001]: parse error: unexpected identifier `x`
+ --> /main/main.sol:2:17
   |
 1 | function f() returns (word) {
 2 |     let g = lam x { return x; };
-  |                             ^ unexpected token
+  |                 ^ unexpected token
 3 |     return g(1);
   |
-  = note: expecting `&&`, `&`, `(`, `.`, `?`, `[`, `^`, `|`, or `||`
+  = note: expecting `(`
 ---
 
 error[SC0001]: parse error: unexpected `}`

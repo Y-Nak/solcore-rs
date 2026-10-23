@@ -297,82 +297,6 @@ fn qualified_derive_target_uses_the_exact_imported_class_path() {
 }
 
 #[test]
-fn parse_recovery_suppression_policy_silences_name_lookup_cascades() {
-    let cases = [
-        (
-            "body_expr_error",
-            "function f() returns (word) {
-               let x = ;
-               return missing;
-             }",
-        ),
-        (
-            "lost_function_signature",
-            // syntax-migration: preserve-next-literal
-            "lost(x: word) returns (word) { return 0; }
-             function caller() returns (word) { return lost(0); }",
-        ),
-        (
-            "broken_import",
-            "impoort util;
-             function caller() returns (word) { return missing; }",
-        ),
-        (
-            "broken_type_annotation",
-            "typeish Alias = word;
-             function caller(x: Alias) returns (word) { return 0; }",
-        ),
-        (
-            "top_level_item_error",
-            "function first() {}
-             unknown nonsense tokens
-             function second() {}
-             function caller() returns (word) { return missing; }",
-        ),
-        (
-            "broken_contract_member",
-            "contract C {
-               broken :
-               function get() returns (word) { return broken; }
-             }",
-        ),
-    ];
-
-    for (name, src) in cases {
-        let db = TestDb::default();
-        let (file, module) = parse_and_module(&db, name, src);
-        let parse_count = parse_diagnostics(&db, file).len();
-        assert!(parse_count > 0, "probe `{name}` should have parse errors");
-        let scope = item_scope(&db, module);
-        let imports = EmptyImportedNames;
-        let resolution = resolve_module_with_imports_and_policy(
-            &db,
-            module,
-            scope,
-            &imports,
-            NameresDiagnosticPolicy::SuppressForParseErrors,
-        );
-        assert!(
-            resolution.diagnostics.is_empty(),
-            "parse-broken probe `{name}` should not publish nameres diagnostics"
-        );
-        if name == "body_expr_error" {
-            assert!(
-                resolution
-                    .bodies
-                    .iter()
-                    .flat_map(|map| &map.exprs)
-                    .any(|entry| {
-                        matches!(&entry.body.exprs(&db).get(entry.expr).kind, ExprKind::Error)
-                            && matches!(entry.resolution, Resolution::Err)
-                    }),
-                "recovered expression errors should resolve to Resolution::Err"
-            );
-        }
-    }
-}
-
-#[test]
 fn undefined_name_kind_distinguishes_bare_terms_from_path_lookups() {
     let db = TestDb::default();
     let (file, module) = parse_and_module(
@@ -1135,3 +1059,6 @@ fn definite_same_name_constructor_beats_unknown_wildcard_import() {
     );
     assert!(resolution.diagnostics.is_empty());
 }
+
+#[path = "nameres/fixtures.rs"]
+mod fixture_tests;

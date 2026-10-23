@@ -221,7 +221,14 @@ impl<'db> InferCtx<'db> {
             hir_nameres::Resolution::Def {
                 def,
                 kind: hir_nameres::DefResolutionKind::Function,
-            } => self.instantiate_function(def, source.unwrap_or(ObligationSource::Scheme)),
+            } => self.instantiate_function(
+                def,
+                source.unwrap_or(ObligationSource::FunctionValue {
+                    body,
+                    expr,
+                    function: def,
+                }),
+            ),
             hir_nameres::Resolution::Field(field) => self.instantiate_field_read(
                 body,
                 expr,
@@ -442,8 +449,27 @@ impl<'db> InferCtx<'db> {
             return InferTy::Error;
         };
         match self.ctor_for_expected(name, expected.clone()) {
-            DotCtorLookup::Match { ty, callee } => {
-                self.apply_ctor_expr_scheme(body, expr, ty, args, expected, Some(callee))
+            DotCtorLookup::Match { ty, constructor } => {
+                // Calls with a deferred bare constructor name are inferred at
+                // the call, but the semantic occurrence belongs to its callee.
+                let occurrence = match body.exprs(self.db).get(expr).kind {
+                    ExprKind::Call { callee, .. } => callee,
+                    _ => expr,
+                };
+                self.inferred_expr_resolutions
+                    .push(hir_nameres::BodyExprResolution {
+                        body,
+                        expr: occurrence,
+                        resolution: constructor.resolution(),
+                    });
+                self.apply_ctor_expr_scheme(
+                    body,
+                    expr,
+                    ty,
+                    args,
+                    expected,
+                    Some(constructor.callee()),
+                )
             }
             DotCtorLookup::NoExpected => {
                 for arg in args {
@@ -593,8 +619,7 @@ impl<'db> InferCtx<'db> {
     }
 
     fn ctor_for_expected(&mut self, name: &str, expected: InferTy<'db>) -> DotCtorLookup<'db> {
-        let expected = self.engine.resolve(expected);
-        let expected = self.normalize_aliases(expected);
+        let expected = self.expected_shape_ty(expected);
         let expected = self.expand_infer_aliases(expected, &mut FxHashSet::default());
         let InferTy::Named {
             ctor:
@@ -610,7 +635,11 @@ impl<'db> InferCtx<'db> {
             }
             return DotCtorLookup::NoExpected;
         };
-        let matches = self.lookup_adt_ctor_schemes_by_name(*def, name);
+        let matches = self
+            .lookup_adt_ctor_schemes_by_name(*def, name)
+            .into_iter()
+            .filter(|entry| self.is_adt_ctor_visible(entry.ty, entry.index))
+            .collect::<Vec<_>>();
         match matches.as_slice() {
             [] => DotCtorLookup::NoMatch,
             [entry] => {
@@ -618,7 +647,7 @@ impl<'db> InferCtx<'db> {
                 let ctor_ty = self.accept_instantiated(instantiated);
                 DotCtorLookup::Match {
                     ty: ctor_ty,
-                    callee: CallSiteCallee::AdtCtor {
+                    constructor: ConstructorIdentity::Adt {
                         ty: entry.ty,
                         index: entry.index,
                     },
@@ -738,7 +767,7 @@ impl<'db> InferCtx<'db> {
             let ctor_ty = self.accept_instantiated(instantiated);
             DotCtorLookup::Match {
                 ty: ctor_ty,
-                callee: CallSiteCallee::Builtin(kind),
+                constructor: ConstructorIdentity::Builtin(kind),
             }
         } else {
             DotCtorLookup::NoMatch
@@ -776,8 +805,7 @@ impl<'db> InferCtx<'db> {
         let product = self.tuple_expr_product_shape(body, expr, elems);
         let elems = product.to_vec();
         let expected_elems = expected.as_ref().and_then(|expected| {
-            let expected = self.normalize_aliases(expected.clone());
-            let expected = self.engine.resolve(expected);
+            let expected = self.expected_shape_ty(expected.clone());
             if elems.len() == 1 {
                 return Some(vec![expected]);
             }
@@ -834,8 +862,7 @@ impl<'db> InferCtx<'db> {
         let product = self.tuple_pat_product_shape(body, pat, elems);
         let elems = product.to_vec();
         let expected_elems = expected.as_ref().and_then(|expected| {
-            let expected = self.normalize_aliases(expected.clone());
-            let expected = self.engine.resolve(expected);
+            let expected = self.expected_shape_ty(expected.clone());
             if elems.len() == 1 {
                 return Some(vec![expected]);
             }
@@ -900,16 +927,26 @@ impl<'db> InferCtx<'db> {
         ty
     }
 
+    /// Staging qualifies values without changing their constructor or product
+    /// shape. Keep the original expected type for unification and comptime
+    /// checking, but inspect its underlying shape when destructuring it.
+    pub(super) fn expected_shape_ty(&mut self, ty: InferTy<'db>) -> InferTy<'db> {
+        let ty = self.engine.resolve(ty);
+        let ty = self.normalize_aliases(ty);
+        match self.engine.resolve(ty) {
+            InferTy::Comptime(inner) => self.expected_shape_ty(*inner),
+            ty => ty,
+        }
+    }
+
     fn tuple_expected_elems(
         &mut self,
         expected: InferTy<'db>,
         arity: usize,
         span: Span<'db>,
     ) -> Option<Vec<InferTy<'db>>> {
-        let mut elems = product_elems_for_arity_by(expected, arity, |ty| {
-            let ty = self.engine.resolve(ty);
-            self.normalize_aliases(ty)
-        })?;
+        let mut elems =
+            product_elems_for_arity_by(expected, arity, |ty| self.expected_shape_ty(ty))?;
         // A polymorphic product tail is still open, rather than evidence that
         // the tuple has fewer fields. For example, `f<a>(x: (word, a))` accepts
         // `(x, y, z)` by inferring `a = (typeof(y), typeof(z))`.
@@ -965,7 +1002,13 @@ impl<'db> InferCtx<'db> {
                     return InferTy::Error;
                 };
                 match self.ctor_for_expected(name, expected.clone()) {
-                    DotCtorLookup::Match { ty, .. } => {
+                    DotCtorLookup::Match { ty, constructor } => {
+                        self.inferred_pat_resolutions
+                            .push(hir_nameres::BodyPatResolution {
+                                body,
+                                pat,
+                                resolution: constructor.resolution(),
+                            });
                         self.apply_ctor_pat_scheme(body, pat, args, ty, expected)
                     }
                     DotCtorLookup::NoExpected => {

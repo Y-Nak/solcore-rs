@@ -10,9 +10,23 @@
 //! construction, and answer identity. The library owns table allocation,
 //! generator/consumer scheduling, duplicate suppression, and fixpoint
 //! detection. Local givens, instances, superclass projections, and fallback
-//! defaults retain their existing resolution order.
+//! defaults retain their resolution order. Defaults supplied by applications
+//! and external libraries take precedence over standard-library defaults.
+//! A standard fallback remains available when needed for a finite proof.
 //!
-//! Because every subgoal is solved once and shared, diamond-shaped constraint
+//! Logical discovery shares answers by substitution, clause origin, and local
+//! given provenance. If different dictionaries share a logical answer, a
+//! second pass retains dictionary identity while pruning lower-priority choices
+//! justified by finite witnesses. A witness is safe in a consuming context when
+//! its non-leaf dictionary roots cannot repeat an ancestor. Known type
+//! instantiations are distinguished; open roots conservatively retain their
+//! clause origins. Shared proof recipes answer finite-witness queries without
+//! enumerating every prerequisite combination. This keeps necessary
+//! recursive seeds inside cycles without multiplying dominated uses outside
+//! them. Superclass paths to the same predicate from one local given identify
+//! one dictionary. Both passes share the same work budget.
+//!
+//! Because repeated subgoals are shared within each pass, diamond-shaped constraint
 //! graphs are resolved without the exponential blow-up of naive backtracking,
 //! and cyclic instance dependencies saturate instead of diverging: re-entering
 //! an in-progress subgoal only registers another consumer on its existing table
@@ -101,7 +115,7 @@ use derived_storage::{
 use display::{display_scheme_source, display_vars};
 use engine::{Answer, TabledEngine};
 pub use env::{
-    trait_env_for_module, trait_env_from_module_resolution,
+    direct_superclass_predicates, trait_env_for_module, trait_env_from_module_resolution,
     trait_env_from_module_resolution_and_imports, trait_env_with_givens,
 };
 use evidence::{apply_evidence, clause_evidence, solution_from_answers};
@@ -222,7 +236,7 @@ pub struct ProgramClause<'db> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum ClauseOrigin<'db> {
     /// User-defined instance declaration.
-    Instance { def: DefId<'db>, default: bool },
+    Instance { def: DefId<'db>, kind: InstanceKind },
     /// Compiler-defined fact.
     Builtin,
     /// Compiler-synthesized instance-like clause.
@@ -233,9 +247,36 @@ pub enum ClauseOrigin<'db> {
     Superclass(DefId<'db>),
 }
 
+/// Instance selection policy, classified once when a clause is constructed.
+/// Standard defaults are library fallbacks; application and dependency
+/// defaults share a higher tier without privileging any particular trait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum InstanceKind {
+    Regular,
+    Default,
+    StandardDefault,
+}
+
 impl<'db> ClauseOrigin<'db> {
+    fn instance(db: &'db dyn Db, def: DefId<'db>, default: bool) -> Self {
+        let kind = if !default {
+            InstanceKind::Regular
+        } else if crate::support::is_std_definition(db, def) {
+            InstanceKind::StandardDefault
+        } else {
+            InstanceKind::Default
+        };
+        Self::Instance { def, kind }
+    }
+
     pub(crate) fn is_default(&self) -> bool {
-        matches!(self, ClauseOrigin::Instance { default: true, .. })
+        matches!(
+            self,
+            Self::Instance {
+                kind: InstanceKind::Default | InstanceKind::StandardDefault,
+                ..
+            }
+        )
     }
 }
 
@@ -524,6 +565,19 @@ fn solve_goal<'db>(
     report.fuel_remaining = solver.fuel;
     report.stats = solver.stats;
     report
+}
+
+#[cfg(test)]
+pub(crate) fn solve_report_with_fuel<'db>(
+    db: &'db dyn Db,
+    env: TraitEnvId<'db>,
+    goal: CanonicalGoal<'db>,
+    fuel: usize,
+) -> SolverReport<'db> {
+    Solver::new(db, env, fuel).solve_pred_with_allowed(
+        goal.pred(db),
+        &goal.allowed_vars(db).iter().copied().collect(),
+    )
 }
 
 impl<'db> SolverReport<'db> {

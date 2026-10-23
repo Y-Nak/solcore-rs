@@ -1,0 +1,1 @@
+export {read}; function read() returns (word) { return 42; }

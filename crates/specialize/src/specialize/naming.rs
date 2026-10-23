@@ -276,6 +276,7 @@ fn hash_evidence<'db>(db: &'db dyn Db, evidence: &Evidence<'db>, state: &mut Def
             instance,
             args,
             sub_evidence,
+            superclasses,
         } => {
             0u8.hash(state);
             hash_def_id(db, *instance, state);
@@ -284,10 +285,21 @@ fn hash_evidence<'db>(db: &'db dyn Db, evidence: &Evidence<'db>, state: &mut Def
             for evidence in sub_evidence {
                 hash_evidence(db, evidence, state);
             }
+            hash_superclasses(db, superclasses, state);
         }
         Evidence::Builtin { pred } => {
             1u8.hash(state);
             hash_pred(db, *pred, state);
+        }
+        Evidence::Unavailable {
+            pred,
+            failure,
+            source,
+        } => {
+            5u8.hash(state);
+            hash_pred(db, *pred, state);
+            failure.hash(state);
+            hash_evidence(db, source, state);
         }
         Evidence::Superclass { class, pred, child } => {
             2u8.hash(state);
@@ -299,53 +311,138 @@ fn hash_evidence<'db>(db: &'db dyn Db, evidence: &Evidence<'db>, state: &mut Def
             kind,
             pred,
             sub_evidence,
+            superclasses,
         } => {
             3u8.hash(state);
-            match kind {
-                DerivedClauseKind::Generic { adt } => {
-                    0u8.hash(state);
-                    hash_def_id(db, *adt, state);
-                }
-                DerivedClauseKind::AbiAttribs { adt } => {
-                    3u8.hash(state);
-                    hash_def_id(db, *adt, state);
-                }
-                DerivedClauseKind::AbiEncode { adt } => {
-                    7u8.hash(state);
-                    hash_def_id(db, *adt, state);
-                }
-                DerivedClauseKind::AbiDecode { adt, word_reader } => {
-                    4u8.hash(state);
-                    hash_def_id(db, *adt, state);
-                    hash_def_id(db, *word_reader, state);
-                }
-                DerivedClauseKind::StorageSize { adt } => {
-                    5u8.hash(state);
-                    hash_def_id(db, *adt, state);
-                }
-                DerivedClauseKind::CanStore { adt, storage_size } => {
-                    6u8.hash(state);
-                    hash_def_id(db, *adt, state);
-                    hash_def_id(db, *storage_size, state);
-                }
-                DerivedClauseKind::Class {
-                    adt,
-                    class,
-                    target_index,
-                } => {
-                    1u8.hash(state);
-                    hash_def_id(db, *adt, state);
-                    hash_def_id(db, *class, state);
-                    target_index.hash(state);
-                }
-                DerivedClauseKind::Closure => 2u8.hash(state),
-            }
+            hash_derived_kind(db, kind, state);
             hash_pred(db, *pred, state);
             sub_evidence.len().hash(state);
             for evidence in sub_evidence {
                 hash_evidence(db, evidence, state);
             }
+            hash_superclasses(db, superclasses, state);
         }
+    }
+}
+
+fn hash_superclasses<'db>(
+    db: &'db dyn Db,
+    superclasses: &[(Pred<'db>, dictionary::SuperclassRecipe<'db>)],
+    state: &mut DefaultHasher,
+) {
+    if !superclasses.is_empty() {
+        4u8.hash(state);
+        superclasses.len().hash(state);
+        for (pred, recipe) in superclasses {
+            hash_pred(db, *pred, state);
+            hash_def_id(db, recipe.module.def_id_value(db), state);
+            match &recipe.selection {
+                Ok(proof) => {
+                    0u8.hash(state);
+                    hash_logical_evidence(db, proof, state);
+                }
+                Err(failure) => {
+                    1u8.hash(state);
+                    failure.hash(state);
+                }
+            }
+            recipe.bindings.len().hash(state);
+            for (given, evidence) in &recipe.bindings {
+                hash_pred(db, *given, state);
+                hash_evidence(db, evidence, state);
+            }
+        }
+    }
+}
+
+fn hash_logical_evidence<'db>(
+    db: &'db dyn Db,
+    proof: &LogicalEvidence<'db>,
+    state: &mut DefaultHasher,
+) {
+    match proof {
+        LogicalEvidence::Instance {
+            instance,
+            args,
+            sub_evidence,
+        } => {
+            0u8.hash(state);
+            hash_def_id(db, *instance, state);
+            hash_tys(db, args, state);
+            sub_evidence.len().hash(state);
+            for proof in sub_evidence {
+                hash_logical_evidence(db, proof, state);
+            }
+        }
+        LogicalEvidence::Builtin { pred } => {
+            1u8.hash(state);
+            hash_pred(db, *pred, state);
+        }
+        LogicalEvidence::Superclass { class, pred, child } => {
+            2u8.hash(state);
+            hash_def_id(db, *class, state);
+            hash_pred(db, *pred, state);
+            hash_logical_evidence(db, child, state);
+        }
+        LogicalEvidence::Derived {
+            kind,
+            pred,
+            sub_evidence,
+        } => {
+            3u8.hash(state);
+            hash_derived_kind(db, kind, state);
+            hash_pred(db, *pred, state);
+            sub_evidence.len().hash(state);
+            for proof in sub_evidence {
+                hash_logical_evidence(db, proof, state);
+            }
+        }
+    }
+}
+
+fn hash_derived_kind<'db>(
+    db: &'db dyn Db,
+    kind: &DerivedClauseKind<'db>,
+    state: &mut DefaultHasher,
+) {
+    match kind {
+        DerivedClauseKind::Generic { adt } => {
+            0u8.hash(state);
+            hash_def_id(db, *adt, state);
+        }
+        DerivedClauseKind::AbiAttribs { adt } => {
+            3u8.hash(state);
+            hash_def_id(db, *adt, state);
+        }
+        DerivedClauseKind::AbiEncode { adt } => {
+            7u8.hash(state);
+            hash_def_id(db, *adt, state);
+        }
+        DerivedClauseKind::AbiDecode { adt, word_reader } => {
+            4u8.hash(state);
+            hash_def_id(db, *adt, state);
+            hash_def_id(db, *word_reader, state);
+        }
+        DerivedClauseKind::StorageSize { adt } => {
+            5u8.hash(state);
+            hash_def_id(db, *adt, state);
+        }
+        DerivedClauseKind::CanStore { adt, storage_size } => {
+            6u8.hash(state);
+            hash_def_id(db, *adt, state);
+            hash_def_id(db, *storage_size, state);
+        }
+        DerivedClauseKind::Class {
+            adt,
+            class,
+            target_index,
+        } => {
+            1u8.hash(state);
+            hash_def_id(db, *adt, state);
+            hash_def_id(db, *class, state);
+            target_index.hash(state);
+        }
+        DerivedClauseKind::Closure => 2u8.hash(state),
     }
 }
 

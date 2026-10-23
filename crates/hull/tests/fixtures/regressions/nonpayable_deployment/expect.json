@@ -1,0 +1,32 @@
+{
+  "source": "crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/nonpayable_ctor.sol",
+  "checks": {
+    "regions": [
+      {
+        "before": "object \"NonPayableCtor\" {",
+        "checks": {
+          "contains": [
+            "object \"NonPayableCtorDeploy\"",
+            "mstore(64, memoryguard(128))",
+            "datasize(\"NonPayableCtorDeploy\")",
+            "if callvalue()",
+            "0xb5988ea3",
+            "codecopy(0, dataoffset(\"NonPayableCtor\"), size)",
+            "return(0, size)"
+          ],
+          "min_count": {
+            "_start": 2
+          }
+        }
+      },
+      {
+        "after": "object \"NonPayableCtor\" {",
+        "checks": {
+          "not_contains": [
+            "_start"
+          ]
+        }
+      }
+    ]
+  }
+}

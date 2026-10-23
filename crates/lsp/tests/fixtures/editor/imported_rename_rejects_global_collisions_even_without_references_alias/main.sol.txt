@@ -1,0 +1,1 @@
+import {target as kept} from math; function renamed() returns (word) { return 2; } function main() returns (word) { return kept(); }

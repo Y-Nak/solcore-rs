@@ -596,15 +596,44 @@ pub struct BodyPatResolution<'db> {
     pub resolution: Resolution<'db>,
 }
 
+/// A source-variable reference inside inline assembly.
+///
+/// Yul locals and function names have their own scopes. Only occurrences that
+/// cross the assembly boundary into the enclosing source scope are recorded.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct BodyAssemblyResolution<'db> {
+    /// Span of the identifier being read or assigned.
+    pub span: Span<'db>,
+    /// Enclosing source binding selected at this occurrence.
+    pub resolution: Resolution<'db>,
+}
+
+/// A body binding and its source visibility, recorded by lexical resolution.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct ScopedBodyBinding<'db> {
+    /// Source spelling of the binding.
+    pub name: String,
+    /// Semantic identity of the binding.
+    pub resolution: Resolution<'db>,
+    /// Lexical scope in which the binding is visible.
+    pub scope: Span<'db>,
+    /// Syntax evaluated before introducing this binding.
+    pub introduced_after: Span<'db>,
+}
+
 /// Name-resolution results for one function body.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update, Default)]
 pub struct BodyResolutionMap<'db> {
+    /// Local and parameter bindings with lexical visibility information.
+    pub scoped_bindings: Vec<ScopedBodyBinding<'db>>,
     /// Expression resolutions.
     pub exprs: Vec<BodyExprResolution<'db>>,
     /// Statement binder resolutions.
     pub stmt_bindings: Vec<BodyStmtResolution<'db>>,
     /// Pattern resolutions.
     pub pats: Vec<BodyPatResolution<'db>>,
+    /// Inline-assembly references to enclosing source variables.
+    pub assembly: Vec<BodyAssemblyResolution<'db>>,
     /// Type references used in the body.
     pub types: Vec<TypeResolution<'db>>,
     /// Predicate references used in the body.
@@ -841,12 +870,6 @@ impl<'db> ItemScopeFacts<'db> {
             .iter()
             .flat_map(|list| &list.ctors)
             .any(|ctor| ctor.name == leaf)
-            || self
-                .contracts
-                .iter()
-                .flat_map(|scope| &scope.ctor_lists)
-                .flat_map(|list| &list.ctors)
-                .any(|ctor| ctor.name == leaf)
     }
 }
 

@@ -1,0 +1,16 @@
+{
+  "surface": {
+    "contract": "C",
+    "diagnostics": {
+      "contains": [
+        {
+          "code": "SC0231",
+          "message": "explicit unit"
+        }
+      ]
+    },
+    "abi": {
+      "valid": false
+    }
+  }
+}

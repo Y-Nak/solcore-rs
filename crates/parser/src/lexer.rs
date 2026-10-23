@@ -8,6 +8,12 @@ use std::ops::Range;
 
 use logos::Logos;
 
+/// Iterates source tokens with byte ranges, skipping whitespace and comments.
+/// Editor consumers use the same lexical boundaries as the parser.
+pub fn tokens(text: &str) -> impl Iterator<Item = (Result<Token<'_>, LexError>, Range<usize>)> {
+    Token::lexer(text).spanned()
+}
+
 /// Additional state collected while lexing.
 ///
 /// Comments remain skipped tokens as far as the parser grammar is concerned,
@@ -321,12 +327,9 @@ pub enum Token<'a> {
     #[regex(r#""([^"\\]|\\.)*""#, string_literal)]
     String(&'a str),
 
-    /// Identifier or pragma-name text.
-    ///
-    /// The lexer accepts hyphens so pragma names such as
-    /// `no-bounded-variable-condition` tokenize as one item. The parser rejects
-    /// hyphenated text in normal identifier positions.
-    #[regex(r"\p{L}[\p{L}\p{N}_]*(-\p{L}[\p{L}\p{N}_]*)*", |lex| lex.slice())]
+    /// Ordinary identifier text. Hyphenated pragma names are assembled by the
+    /// pragma grammar so subtraction never depends on whitespace.
+    #[regex(r"\p{L}[\p{L}\p{N}_]*", |lex| lex.slice())]
     Ident(&'a str),
 
     /// Line comment skipped by the lexer.
@@ -336,6 +339,49 @@ pub enum Token<'a> {
     /// Block comment skipped by the lexer.
     #[token("/*", block_comment)]
     BlockComment,
+}
+
+impl<'a> Token<'a> {
+    /// Source spelling of an identifier or reserved word. Compound names such
+    /// as pragma names may contain keyword segments without treating the whole
+    /// compound as a keyword.
+    pub fn word_text(&self) -> Option<&'a str> {
+        Some(match self {
+            Self::Ident(text) => text,
+            Self::Contract => "contract",
+            Self::Import => "import",
+            Self::Export => "export",
+            Self::As => "as",
+            Self::Let => "let",
+            Self::Data => "data",
+            Self::Class => "class",
+            Self::Forall => "forall",
+            Self::Instance => "instance",
+            Self::If => "if",
+            Self::Else => "else",
+            Self::For => "for",
+            Self::Switch => "switch",
+            Self::Type => "type",
+            Self::Case => "case",
+            Self::Default => "default",
+            Self::Match => "match",
+            Self::Public => "public",
+            Self::Payable => "payable",
+            Self::Function => "function",
+            Self::Constructor => "constructor",
+            Self::Fallback => "fallback",
+            Self::Return => "return",
+            Self::Leave => "leave",
+            Self::Continue => "continue",
+            Self::Break => "break",
+            Self::Lam => "lam",
+            Self::Assembly => "assembly",
+            Self::Pragma => "pragma",
+            Self::True => "true",
+            Self::False => "false",
+            _ => return None,
+        })
+    }
 }
 
 /// Skips a line comment starting with `//` by consuming all characters until
@@ -620,25 +666,6 @@ mod tests {
         ] {
             assert_eq!(tokenize(identifier), vec![Token::Ident(identifier)]);
         }
-    }
-
-    #[test]
-    fn test_hyphenated_identifiers() {
-        // Hyphenated identifiers (used for pragma names).
-        assert_eq!(
-            tokenize("no-bounded-variable-condition"),
-            vec![Token::Ident("no-bounded-variable-condition")]
-        );
-        assert_eq!(
-            tokenize("no-patterson-condition"),
-            vec![Token::Ident("no-patterson-condition")]
-        );
-        assert_eq!(tokenize("foo-bar"), vec![Token::Ident("foo-bar")]);
-        // Regular identifiers with underscores.
-        assert_eq!(tokenize("foo_bar"), vec![Token::Ident("foo_bar")]);
-        // Mixed underscores and hyphens.
-        assert_eq!(tokenize("foo_bar-baz"), vec![Token::Ident("foo_bar-baz")]);
-        assert_eq!(tokenize("comptime"), vec![Token::Ident("comptime")]);
     }
 
     #[test]

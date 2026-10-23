@@ -1,0 +1,15 @@
+{
+  "source": "crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/payable_ctor.sol",
+  "checks": {
+    "regions": [
+      {
+        "before": "object \"PayableCtor\" {",
+        "checks": {
+          "not_contains": [
+            "0xb5988ea3"
+          ]
+        }
+      }
+    ]
+  }
+}

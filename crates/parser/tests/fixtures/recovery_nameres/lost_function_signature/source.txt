@@ -1,0 +1,2 @@
+lost(x: word) returns (word) { return 0; }
+             function caller() returns (word) { return lost(0); }

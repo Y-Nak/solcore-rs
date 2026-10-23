@@ -30,6 +30,8 @@ pub(super) struct InferCtx<'db> {
     pub(super) expected_expr_displays: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), String>,
     pub(super) expr_tys: Vec<(FuncBody<'db>, Id<Expr<'db>>, InferTy<'db>)>,
     pub(super) pat_tys: Vec<(FuncBody<'db>, Id<Pat<'db>>, InferTy<'db>)>,
+    pub(super) inferred_expr_resolutions: Vec<hir_nameres::BodyExprResolution<'db>>,
+    pub(super) inferred_pat_resolutions: Vec<hir_nameres::BodyPatResolution<'db>>,
     pub(super) pending: Vec<PendingObligation<'db>>,
     pub(super) comptime_obligations: Vec<ComptimeObligation<'db>>,
     pub(super) pending_comptime_lets: Vec<PendingComptimeLet<'db>>,
@@ -107,6 +109,8 @@ impl<'db> InferCtx<'db> {
             expected_expr_displays: FxHashMap::default(),
             expr_tys: Vec::new(),
             pat_tys: Vec::new(),
+            inferred_expr_resolutions: Vec::new(),
+            inferred_pat_resolutions: Vec::new(),
             pending: Vec::new(),
             comptime_obligations: Vec::new(),
             pending_comptime_lets: Vec::new(),
@@ -158,16 +162,6 @@ impl<'db> InferCtx<'db> {
                 });
             }
         }
-        let closure_tys = std::mem::take(&mut self.closure_sigs)
-            .into_iter()
-            .map(|(def, sig)| {
-                let ty = self.engine.ground_ty(InferTy::Function {
-                    params: sig.params,
-                    ret: Box::new(sig.ret),
-                });
-                (def, ty)
-            })
-            .collect();
         let expr_tys = self
             .expr_tys
             .into_iter()
@@ -223,12 +217,27 @@ impl<'db> InferCtx<'db> {
                 }
             })
             .collect();
+        let closure_tys = self
+            .closure_sigs
+            .into_iter()
+            .map(|(def, sig)| {
+                (
+                    def,
+                    self.engine.ground_ty(InferTy::Function {
+                        params: sig.params,
+                        ret: Box::new(sig.ret),
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
         let mut result = InferenceResult {
             root_scheme,
             expr_tys,
-            pat_tys,
-            let_tys,
             closure_tys,
+            pat_tys,
+            inferred_expr_resolutions: self.inferred_expr_resolutions,
+            inferred_pat_resolutions: self.inferred_pat_resolutions,
+            let_tys,
             obligations,
             obligation_evidence: solved.evidence,
             call_site_evidence: solved.call_site_evidence,
@@ -490,6 +499,7 @@ impl<'db> InferCtx<'db> {
         match source {
             ObligationSource::IntegerLiteral { body, expr }
             | ObligationSource::StringCoercion { body, expr }
+            | ObligationSource::FunctionValue { body, expr, .. }
             | ObligationSource::ClassMethod { body, expr } => self.expr_label_span(*body, *expr),
             ObligationSource::CallSite {
                 body, call_expr, ..

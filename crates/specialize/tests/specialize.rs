@@ -3004,50 +3004,6 @@ function main() returns (Never) {
 }
 
 #[test]
-fn generic_abi_decoder_evidence_specializes_for_internal_sum_adt() {
-    let output = specialize_src_with_std(
-        r#"
-import * from std;
-import * from std.Generic;
-import * from std.ABIGeneric;
-
-enum Choice {Left(uint256) , Right(address)}
-
-contract C {
-  function main() returns (word) {
-    let buf = allocate_zeroed_memory(64);
-    let rdr : MemoryWordReader = MemoryWordReader(buf);
-    let dec : ABIDecoder<Choice, MemoryWordReader> =
-        ABIDecoder(rdr) ;
-    let value : Choice = decode(dec, 0);
-    match (value) {
-      case Choice.Left(x) {
-        return Typedef.rep(x);
-      }
-      case Choice.Right(_) {
-        return 0;
-      }
-    }
-  }
-}
-"#,
-    );
-
-    assert_eq!(output.diagnostics, Vec::new());
-    let names = function_names(&output);
-    assert!(
-        names.iter().any(|name| name.starts_with("Generic_to_d")),
-        "{names:?}"
-    );
-    assert!(
-        names
-            .iter()
-            .any(|name| name.starts_with("ABIDecode_decode_d")),
-        "{names:?}"
-    );
-}
-
-#[test]
 fn snapshot_small_specialized_module() {
     let (db, output) = specialize_src(
         r#"
@@ -4354,6 +4310,13 @@ fn folds_qualified_constructor_matches_before_wildcard_defaults() {
 }
 
 fn main_return_expr<'a, 'db>(output: &'a SpecializeOutput<'db>) -> Option<&'a MonoExpr<'db>> {
+    fn returned_expr<'a, 'db>(stmts: &'a [MonoStmt<'db>]) -> Option<&'a MonoExpr<'db>> {
+        stmts.iter().find_map(|stmt| match &stmt.kind {
+            MonoStmtKind::Return(Some(expr)) => Some(expr),
+            MonoStmtKind::Block(body) => returned_expr(body),
+            _ => None,
+        })
+    }
     let mut main_names = output
         .module
         .items
@@ -4388,15 +4351,7 @@ fn main_return_expr<'a, 'db>(output: &'a SpecializeOutput<'db>) -> Option<&'a Mo
         };
         main_names
             .contains(&function.name)
-            .then(|| return_expr_in_stmts(&function.body))?
-    })
-}
-
-fn return_expr_in_stmts<'a, 'db>(stmts: &'a [MonoStmt<'db>]) -> Option<&'a MonoExpr<'db>> {
-    stmts.iter().find_map(|stmt| match &stmt.kind {
-        MonoStmtKind::Return(Some(expr)) => Some(expr),
-        MonoStmtKind::Block(body) => return_expr_in_stmts(body),
-        _ => None,
+            .then(|| returned_expr(&function.body))?
     })
 }
 
@@ -4524,6 +4479,7 @@ fn stmts_have_storage_array_index(stmts: &[MonoStmt<'_>]) -> bool {
 
 fn expr_has_storage_array_index(expr: &MonoExpr<'_>) -> bool {
     match &expr.kind {
+        MonoExprKind::Call { callee, .. } if callee.name.contains("_lidx_") => true,
         MonoExprKind::StorageIndex {
             storage_kind: MonoStorageIndexKind::Array,
             ..
@@ -4639,6 +4595,12 @@ fn collect_storage_indexes<'a, 'db>(
     indexes: &mut Vec<(MonoStorageIndexKind, &'a MonoExpr<'db>)>,
 ) {
     match &expr.kind {
+        MonoExprKind::Call { callee, args, .. } if callee.name.contains("_lidx_") => {
+            indexes.push((MonoStorageIndexKind::Array, &args[0]));
+            for arg in args {
+                collect_storage_indexes(arg, indexes);
+            }
+        }
         MonoExprKind::StorageIndex {
             storage_kind,
             base,
@@ -5089,6 +5051,12 @@ fn count_returns_in_stmts(stmts: &[MonoStmt<'_>]) -> usize {
 }
 
 fn specialize_fixture(path: &Path) -> SpecializeOutput<'static> {
+    specialize_fixture_with_db(path).2
+}
+
+fn specialize_fixture_with_db(
+    path: &Path,
+) -> (&'static TestDb, SourceFile, SpecializeOutput<'static>) {
     let db = Box::leak(Box::new(TestDb::default()));
     let main_root = path.parent().expect("fixture parent").to_path_buf();
     let repo = repo_root();
@@ -5115,7 +5083,8 @@ fn specialize_fixture(path: &Path) -> SpecializeOutput<'static> {
     let unresolved = load_reachable_modules(db, key.clone());
     assert!(unresolved.is_empty(), "{unresolved:?}");
     let module = parse_file_to_hir(db, file).module(db);
-    specialize_module(db, module, SpecializeOptions::default())
+    let output = specialize_module(db, module, SpecializeOptions::default());
+    (db, file, output)
 }
 
 fn module_fs_snapshot_for_roots<'a>(
@@ -6265,3 +6234,6 @@ fn contract_field_calls_use_definition_module_evidence() {
         loads[0]
     );
 }
+
+#[path = "support/audit_fixtures.rs"]
+mod audit_fixtures;

@@ -1,0 +1,10 @@
+{
+  "loader": "std_current",
+  "source": "../../../../../../tests/e2e/abi-byte-memory/main.sol",
+  "frontend_clean": true,
+  "checks": [
+    {
+      "check": "entry_exists"
+    }
+  ]
+}

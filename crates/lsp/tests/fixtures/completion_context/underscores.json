@@ -1,0 +1,7 @@
+{
+  "source": "foo_bar.member_prefix",
+  "expected": [
+    "foo_bar",
+    "member_prefix"
+  ]
+}

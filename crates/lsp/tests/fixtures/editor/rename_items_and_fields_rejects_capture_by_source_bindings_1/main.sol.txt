@@ -1,0 +1,1 @@
+function target() returns (word) { return 1; } function main() returns (word) { let renamed = lam () -> word { return 2; }; return target(); }

@@ -16,11 +16,16 @@ function caller() returns (address) {
 function myrevert(msg: (word, word)) {
     match (msg) {
         case (str, len) {
-            let str1 = str;
-            let len1 = len;
+            // A runtime-sized payload needs its own buffer; scratch memory only
+            // guarantees room for a fixed number of bytes.
+            let capacity = len;
+            if (capacity < 32) {
+                capacity = 32;
+            }
+            let payload = allocate_zeroed_memory(capacity);
             assembly {
-                mstore(0, str1)
-                revert(0, len1)
+                mstore(payload, str)
+                revert(payload, len)
             }
         }
     }
@@ -88,5 +93,23 @@ contract Uint {
         transferFrom(owner, msg_sender, uint256(42));
 
         return balances[msg_sender];
+    }
+
+    // The helper accepts runtime lengths on both sides of the word boundary.
+    // #[(0) -> revert(0x)]
+    // #[(1) -> revert(0xab)]
+    // #[(31) -> revert(0xababababababababababababababababababababababababababababababab)]
+    // #[(32) -> revert(0xabababababababababababababababababababababababababababababababab)]
+    // #[(33) -> revert(0xabababababababababababababababababababababababababababababababab00)]
+    // #[(65) -> revert(0xabababababababababababababababababababababababababababababababab000000000000000000000000000000000000000000000000000000000000000000)]
+    function failWithLength(length: uint256) public {
+        myrevert((0xabababababababababababababababababababababababababababababababab,
+                Typedef.rep(length)));
+    }
+
+    // Preserve the original helper's right-aligned word representation.
+    // #[() -> revert(0x0000000000000000000000000000)]
+    function failOriginalMessage() public {
+        require1(false);
     }
 }

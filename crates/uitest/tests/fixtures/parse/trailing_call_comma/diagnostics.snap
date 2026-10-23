@@ -3,16 +3,6 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/trailing_call_comma/main.sol
 ---
-error[SC0001]: parse error: unexpected `,`
- --> /main/main.sol:2:41
-  |
-1 | function g(x: word) returns (word) { return x; }
-2 | function f() returns (word) { return g(1,); }
-  |                                         ^ unexpected token
-  |
-  = note: expecting `&&`, `&`, `(`, `.`, `?`, `[`, `^`, `|`, or `||`
----
-
 error[SC0001]: parse error: unexpected `)`
  --> /main/main.sol:2:42
   |

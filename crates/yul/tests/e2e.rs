@@ -19,7 +19,7 @@ use solcore_test_utils::{
     e2e::{
         AbiShape, COMMAND_TIMEOUT, E2eExecution, E2eFailure, FailureKind, ResolvedE2eCall,
         command_available, e2e_enabled, e2e_pipeline_only, looks_like_hex, parse_e2e_directive,
-        resolve_e2e_comments, run_command, source_e2e_scenario, with_shared_evm_harness,
+        resolve_e2e_comments, run_command, source_e2e_scenario, with_evm_harness,
     },
     load_fixture_case_with_file_urls, load_reachable_modules_with_file_urls,
     repo_root_from_manifest, run_in_large_stack,
@@ -69,7 +69,7 @@ fn run_fixture(path: &Path) -> Result<(), E2eFailure> {
         .unwrap_or(path.as_os_str());
     let evm_version = rendered.execution.effective_evm_version();
     let bytecode = compile_yul(&solc, label, &rendered.yul, &evm_version)?;
-    with_shared_evm_harness(|harness| {
+    with_evm_harness(|harness| {
         let Some(harness) = harness else {
             return Ok(());
         };
@@ -336,7 +336,7 @@ fn abi_shape(param: &AbiParam) -> AbiShape {
             _ => AbiShape::Unsupported(name.clone()),
         },
         AbiType::String => AbiShape::Unsupported("string".to_owned()),
-        AbiType::Unsupported => AbiShape::Unsupported(param.ty.to_string()),
+        AbiType::Array(_) | AbiType::Unsupported => AbiShape::Unsupported(param.ty.to_string()),
     }
 }
 

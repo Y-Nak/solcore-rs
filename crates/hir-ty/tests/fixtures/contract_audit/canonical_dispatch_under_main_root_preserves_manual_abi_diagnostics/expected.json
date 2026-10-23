@@ -1,0 +1,28 @@
+{
+  "roots": [
+    "main_only",
+    "shared"
+  ],
+  "nameres_empty": true,
+  "diagnostics": {
+    "contains": [
+      {
+        "code": "SC0231",
+        "message": "manual `ABIAttribs`"
+      },
+      {
+        "code": "SC0231",
+        "message": "manual `ABIEncode`"
+      },
+      {
+        "code": "SC0231",
+        "message": "manual `ABIDecode`"
+      },
+      {
+        "code": "SC0231",
+        "message": "manual `SigString`"
+      }
+    ],
+    "count": 4
+  }
+}

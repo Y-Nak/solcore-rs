@@ -1,0 +1,6 @@
+// 日本語 🦀: source offsets must survive UTF-16 conversion.
+enum Choice { Pick(word), Other }
+function main() returns (word) {
+let x: Choice = Choice.Pick(7);
+match (x) { case .Pick(n) { return n; } default { return 0; } }
+}

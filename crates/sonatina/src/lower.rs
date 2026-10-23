@@ -47,11 +47,39 @@ use sonatina_verifier::{VerificationLevel, VerifierConfig, verify_module};
 
 use crate::TranslationError;
 
+mod reachability;
+
+use reachability::Reachability;
+
 pub(super) fn translate_hull_program<'db>(
     db: &'db dyn HirDb,
     program: &HullProgram<'db>,
 ) -> Result<Module, TranslationError> {
     Translator::new(db).translate(program)
+}
+
+pub(super) fn translate_hull_program_returning_runtime_entry<'db>(
+    db: &'db dyn HirDb,
+    program: &HullProgram<'db>,
+    entry: &str,
+) -> Result<Module, TranslationError> {
+    let [object] = program.objects.as_slice() else {
+        return Err(TranslationError::new(format!(
+            "a runtime entry wrapper requires exactly one top-level object, found {}",
+            program.objects.len()
+        )));
+    };
+    if object.inners.len() != 1 {
+        return Err(TranslationError::new(format!(
+            "object `{}` must have exactly one runtime object",
+            object.name
+        )));
+    }
+    let mut translator = Translator::new(db);
+    translator
+        .returning_entries
+        .insert("object0.inner0.init".to_owned(), entry.to_owned());
+    translator.translate(program)
 }
 
 fn evm_isa() -> Evm {
@@ -105,6 +133,7 @@ struct Translator<'db> {
     functions: HashMap<String, FuncRef>,
     function_returns: HashMap<String, HullTy<'db>>,
     entries: HashMap<String, FuncRef>,
+    returning_entries: HashMap<String, String>,
     section_objects: HashMap<String, String>,
     next_type: usize,
     next_yul_function: usize,
@@ -123,6 +152,7 @@ impl<'db> Translator<'db> {
             functions: HashMap::new(),
             function_returns: HashMap::new(),
             entries: HashMap::new(),
+            returning_entries: HashMap::new(),
             section_objects: HashMap::new(),
             next_type: 0,
             next_yul_function: 0,
@@ -135,10 +165,42 @@ impl<'db> Translator<'db> {
 
     fn translate(mut self, program: &HullProgram<'db>) -> Result<Module, TranslationError> {
         if program.objects.is_empty() {
+            let entry_function = match program.entry_points.as_slice() {
+                [] => None,
+                [entry] => {
+                    let function = program
+                        .functions
+                        .iter()
+                        .find(|function| function.name == *entry)
+                        .ok_or_else(|| {
+                            TranslationError::new(format!(
+                                "object-less Hull entry `{entry}` has no function body"
+                            ))
+                        })?;
+                    if !function.args.is_empty() {
+                        return Err(TranslationError::new(format!(
+                            "object-less Hull entry `{entry}` must not take arguments"
+                        )));
+                    }
+                    Some(function)
+                }
+                entries => {
+                    return Err(TranslationError::new(format!(
+                        "object-less Hull program must have at most one entry point, found {}",
+                        entries.len()
+                    )));
+                }
+            };
             self.section_objects
                 .insert("root.runtime".to_owned(), "Output".to_owned());
             self.declare_code("root.runtime", &program.functions, &[], program.span)?;
-            self.lower_code("root.runtime", &program.functions, &[], program.span)?;
+            self.lower_code(
+                "root.runtime",
+                &program.functions,
+                &[],
+                program.span,
+                entry_function,
+            )?;
             let entry = self.entry("root.runtime")?;
             let mut object = ObjectBuilder::new("OutputDeploy");
             object.section("init").entry(entry);
@@ -192,11 +254,35 @@ impl<'db> Translator<'db> {
         object: &HullObject<'db>,
         scope: &str,
     ) -> Result<(), TranslationError> {
+        let section = format!("{scope}.init");
+        let entry_function = if let Some(entry) = self.returning_entries.get(&section) {
+            let function = object
+                .code
+                .functions
+                .iter()
+                .find(|function| function.name.as_str() == entry)
+                .ok_or_else(|| {
+                    TranslationError::new(format!(
+                        "runtime entry `{entry}` has no function body in object `{}`",
+                        object.name
+                    ))
+                })?;
+            if !function.args.is_empty() || !self.lower_ty(&function.ret)?.is_integral() {
+                return Err(TranslationError::new(format!(
+                    "runtime entry `{}` must take no arguments and return a scalar word",
+                    function.name
+                )));
+            }
+            Some(function)
+        } else {
+            None
+        };
         self.lower_code(
-            &format!("{scope}.init"),
+            &section,
             &object.code.functions,
             &object.code.stmts,
             object.code.span,
+            entry_function,
         )?;
         for (index, inner) in object.inners.iter().enumerate() {
             self.lower_object_code(inner, &format!("{scope}.inner{index}"))?;
@@ -296,11 +382,12 @@ impl<'db> Translator<'db> {
         functions: &[HullFunction<'db>],
         stmts: &[hull::Stmt<'db>],
         span: hir::span::Span<'db>,
+        entry_function: Option<&HullFunction<'db>>,
     ) -> Result<(), TranslationError> {
         for function in functions {
             self.lower_function(scope, function)?;
         }
-        self.lower_entry(scope, functions, stmts, span)
+        self.lower_entry(scope, stmts, span, entry_function)
     }
 
     fn entry(&self, scope: &str) -> Result<FuncRef, TranslationError> {
@@ -405,29 +492,21 @@ impl<'db> Translator<'db> {
     fn lower_entry(
         &mut self,
         scope: &str,
-        functions: &[HullFunction<'db>],
         stmts: &[hull::Stmt<'db>],
         span: hir::span::Span<'db>,
+        entry_function: Option<&HullFunction<'db>>,
     ) -> Result<(), TranslationError> {
         let func_ref = self.entry(scope)?;
         let unit = HullTy::unit(span);
         let mut lowerer = FunctionLowerer::new(self, scope, func_ref, unit);
         let mut terminated = lowerer.lower_stmts(stmts)?;
-        if !terminated
-            && stmts.is_empty()
-            && let Some(main) = functions.iter().find(|function| {
-                function.args.is_empty()
-                    && (function.name.as_str() == "main"
-                        || function.name.as_str().starts_with("main_")
-                        || function.name.as_str().contains("_main_"))
-            })
-        {
+        if !terminated && let Some(main) = entry_function {
             let callee = lowerer
                 .module
                 .functions
                 .get(&key(scope, main.name.as_str()))
                 .copied()
-                .ok_or_else(|| TranslationError::new("missing main declaration"))?;
+                .ok_or_else(|| TranslationError::new("missing entry declaration"))?;
             let ret = lowerer.module.lower_ty(&main.ret)?;
             let call = Call::new(lowerer.module.inst_set(), callee, SmallVec::new());
             if ret == Type::Unit {
@@ -452,7 +531,14 @@ impl<'db> Translator<'db> {
                 }
             }
         }
-        lowerer.finish(terminated)
+        if !terminated {
+            // Object sections are entered by the EVM, not an internal call.
+            // Falling through must halt rather than pop a return address.
+            lowerer
+                .fb
+                .insert_inst_no_result(EvmStop::new(lowerer.module.inst_set()));
+        }
+        lowerer.finish(true)
     }
 }
 
@@ -485,6 +571,7 @@ struct FunctionLowerer<'a, 'db> {
     module: &'a mut Translator<'db>,
     scope: String,
     fb: FunctionBuilder<InstInserter>,
+    reachability: Reachability,
     scopes: Vec<HashMap<String, Binding<'db>>>,
     ret: HullTy<'db>,
     break_targets: Vec<BlockId>,
@@ -507,6 +594,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             module,
             scope: scope.to_owned(),
             fb,
+            reachability: Reachability::new(entry),
             scopes: vec![HashMap::new()],
             ret,
             break_targets: Vec::new(),
@@ -712,8 +800,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     .last()
                     .copied()
                     .ok_or_else(|| TranslationError::new("break outside loop"))?;
-                self.fb
-                    .insert_inst_no_result(Jump::new(self.module.inst_set(), target));
+                self.emit_jump(target);
                 Ok(true)
             }
             StmtKind::Continue => {
@@ -722,8 +809,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     .last()
                     .copied()
                     .ok_or_else(|| TranslationError::new("continue outside loop"))?;
-                self.fb
-                    .insert_inst_no_result(Jump::new(self.module.inst_set(), target));
+                self.emit_jump(target);
                 Ok(true)
             }
             StmtKind::Match {
@@ -912,26 +998,62 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let else_block = self.fb.append_block();
         let done = self.fb.append_block();
         let cond = self.lower_condition(cond)?;
+        self.emit_branch(cond, then_block, else_block);
+        self.fb.switch_to_block(then_block);
+        let then_value = self.lower_expr(then_expr)?;
+        let then_value = self.coerce(then_value, ty)?;
+        self.fb.def_var(result, then_value);
+        self.emit_jump(done);
+        self.fb.switch_to_block(else_block);
+        let else_value = self.lower_expr(else_expr)?;
+        let else_value = self.coerce(else_value, ty)?;
+        self.fb.def_var(result, else_value);
+        self.emit_jump(done);
+        self.fb.switch_to_block(done);
+        Ok(self.fb.use_var(result))
+    }
+
+    /// Record edges at their single emission point so continuation reachability
+    /// stays current without rescanning the function under construction.
+    fn emit_jump(&mut self, target: BlockId) {
+        let source = self
+            .fb
+            .current_block()
+            .expect("lowering has a current block");
+        self.reachability.add_edge(source, target);
+        self.fb
+            .insert_inst_no_result(Jump::new(self.module.inst_set(), target));
+    }
+
+    fn emit_branch(&mut self, cond: ValueId, then_block: BlockId, else_block: BlockId) {
+        let source = self
+            .fb
+            .current_block()
+            .expect("lowering has a current block");
+        self.reachability.add_edge(source, then_block);
+        self.reachability.add_edge(source, else_block);
         self.fb.insert_inst_no_result(Br::new(
             self.module.inst_set(),
             cond,
             then_block,
             else_block,
         ));
-        self.fb.switch_to_block(then_block);
-        let then_value = self.lower_expr(then_expr)?;
-        let then_value = self.coerce(then_value, ty)?;
-        self.fb.def_var(result, then_value);
-        self.fb
-            .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
-        self.fb.switch_to_block(else_block);
-        let else_value = self.lower_expr(else_expr)?;
-        let else_value = self.coerce(else_value, ty)?;
-        self.fb.def_var(result, else_value);
-        self.fb
-            .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
-        self.fb.switch_to_block(done);
-        Ok(self.fb.use_var(result))
+    }
+
+    /// Enter a continuation only when a path from the function entry reaches
+    /// it. A terminating body can still have `continue` edges, while a merge
+    /// block with predecessors can itself be unreachable. Neither syntactic
+    /// fallthrough nor predecessor count alone describes that distinction.
+    fn switch_to_reachable_block(&mut self, block: BlockId) -> bool {
+        let reachable = self.reachability.contains(block);
+        self.fb.switch_to_block(block);
+        if !reachable {
+            // Keep the allocated block well formed without constructing SSA
+            // uses for locals that have no reaching definition on this path.
+            self.fb
+                .insert_inst_no_result(Unreachable::new_unchecked(self.module.inst_set()));
+        }
+        reachable
     }
 
     fn lower_for(
@@ -950,12 +1072,10 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let body_block = self.fb.append_block();
         let post_block = self.fb.append_block();
         let done = self.fb.append_block();
-        self.fb
-            .insert_inst_no_result(Jump::new(self.module.inst_set(), header));
+        self.emit_jump(header);
         self.fb.switch_to_block(header);
         let cond = self.lower_condition(cond)?;
-        self.fb
-            .insert_inst_no_result(Br::new(self.module.inst_set(), cond, body_block, done));
+        self.emit_branch(cond, body_block, done);
         self.fb.switch_to_block(body_block);
         self.break_targets.push(done);
         self.continue_targets.push(post_block);
@@ -963,14 +1083,10 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         self.continue_targets.pop();
         self.break_targets.pop();
         if !body_terminated {
-            self.fb
-                .insert_inst_no_result(Jump::new(self.module.inst_set(), post_block));
+            self.emit_jump(post_block);
         }
-        self.fb.switch_to_block(post_block);
-        let post_terminated = self.lower_stmts(post)?;
-        if !post_terminated {
-            self.fb
-                .insert_inst_no_result(Jump::new(self.module.inst_set(), header));
+        if self.switch_to_reachable_block(post_block) && !self.lower_stmts(post)? {
+            self.emit_jump(header);
         }
         self.fb.switch_to_block(done);
         self.pop_scope();
@@ -985,7 +1101,6 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
     ) -> Result<bool, TranslationError> {
         let value = self.lower_expr(scrutinee)?;
         let done = self.fb.append_block();
-        let mut has_fallthrough = false;
         let mut exhaustive = false;
         for alt in alts {
             let arm = self.fb.append_block();
@@ -993,19 +1108,13 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             let next = (!catch_all).then(|| self.fb.append_block());
             if catch_all {
                 exhaustive = true;
-                self.fb
-                    .insert_inst_no_result(Jump::new(self.module.inst_set(), arm));
+                self.emit_jump(arm);
             } else {
                 match &alt.pat.kind {
                     PatKind::Wildcard | PatKind::Var(_) => unreachable!(),
                     pat => {
                         let cond = self.pattern_condition(value, target, pat)?;
-                        self.fb.insert_inst_no_result(Br::new(
-                            self.module.inst_set(),
-                            cond,
-                            arm,
-                            next.expect("non-catch-all has a next block"),
-                        ));
+                        self.emit_branch(cond, arm, next.expect("non-catch-all has a next block"));
                     }
                 }
             }
@@ -1019,9 +1128,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             let terminated = self.lower_stmts(&alt.body)?;
             self.pop_scope();
             if !terminated {
-                has_fallthrough = true;
-                self.fb
-                    .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
+                self.emit_jump(done);
             }
             if let Some(next) = next {
                 self.fb.switch_to_block(next);
@@ -1030,18 +1137,9 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             }
         }
         if !exhaustive {
-            has_fallthrough = true;
-            self.fb
-                .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
+            self.emit_jump(done);
         }
-        self.fb.switch_to_block(done);
-        if has_fallthrough {
-            Ok(false)
-        } else {
-            self.fb
-                .insert_inst_no_result(Unreachable::new_unchecked(self.module.inst_set()));
-            Ok(true)
-        }
+        Ok(!self.switch_to_reachable_block(done))
     }
 
     fn pattern_condition(
@@ -1158,19 +1256,16 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         let not_right = self.fb.append_block();
         let done = self.fb.append_block();
         let is_right = self.is_variant(value, target, 1)?;
-        self.fb
-            .insert_inst_no_result(Br::new(self.module.inst_set(), is_right, right, not_right));
+        self.emit_branch(is_right, right, not_right);
         self.fb.switch_to_block(right);
         let (rhs, nested) = self.extract_variant(value, target, 1)?;
         let nested_cond = self.in_k_condition(nested, &rhs, index - 1)?;
         self.fb.def_var(result, nested_cond);
-        self.fb
-            .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
+        self.emit_jump(done);
         self.fb.switch_to_block(not_right);
         let false_value = self.fb.make_imm_value(false);
         self.fb.def_var(result, false_value);
-        self.fb
-            .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
+        self.emit_jump(done);
         self.fb.switch_to_block(done);
         Ok(self.fb.use_var(result))
     }
@@ -1559,17 +1654,11 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                 let done = self.fb.append_block();
                 let cond = self.lower_yul_expr(cond)?;
                 let cond = self.condition_value(cond)?;
-                self.fb.insert_inst_no_result(Br::new(
-                    self.module.inst_set(),
-                    cond,
-                    body_block,
-                    done,
-                ));
+                self.emit_branch(cond, body_block, done);
                 self.fb.switch_to_block(body_block);
                 let terminated = self.lower_yul_stmts(body)?;
                 if !terminated {
-                    self.fb
-                        .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
+                    self.emit_jump(done);
                 }
                 self.fb.switch_to_block(done);
                 Ok(false)
@@ -1594,17 +1683,11 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                 let body_block = self.fb.append_block();
                 let post_block = self.fb.append_block();
                 let done = self.fb.append_block();
-                self.fb
-                    .insert_inst_no_result(Jump::new(self.module.inst_set(), header));
+                self.emit_jump(header);
                 self.fb.switch_to_block(header);
                 let cond = self.lower_yul_expr(cond)?;
                 let cond = self.condition_value(cond)?;
-                self.fb.insert_inst_no_result(Br::new(
-                    self.module.inst_set(),
-                    cond,
-                    body_block,
-                    done,
-                ));
+                self.emit_branch(cond, body_block, done);
                 self.fb.switch_to_block(body_block);
                 self.break_targets.push(done);
                 self.continue_targets.push(post_block);
@@ -1612,14 +1695,10 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                 self.continue_targets.pop();
                 self.break_targets.pop();
                 if !body_terminated {
-                    self.fb
-                        .insert_inst_no_result(Jump::new(self.module.inst_set(), post_block));
+                    self.emit_jump(post_block);
                 }
-                self.fb.switch_to_block(post_block);
-                let post_terminated = self.lower_yul_stmts(post)?;
-                if !post_terminated {
-                    self.fb
-                        .insert_inst_no_result(Jump::new(self.module.inst_set(), header));
+                if self.switch_to_reachable_block(post_block) && !self.lower_yul_stmts(post)? {
+                    self.emit_jump(header);
                 }
                 self.fb.switch_to_block(done);
                 self.yul_functions.pop();
@@ -1641,28 +1720,23 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                         Eq::new(self.module.inst_set(), scrutinee, expected),
                         Type::I1,
                     );
-                    self.fb
-                        .insert_inst_no_result(Br::new(self.module.inst_set(), cond, arm, next));
+                    self.emit_branch(cond, arm, next);
                     self.fb.switch_to_block(arm);
                     let terminated = self.lower_yul_stmts(&case.body)?;
                     if !terminated {
-                        self.fb
-                            .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
+                        self.emit_jump(done);
                     }
                     self.fb.switch_to_block(next);
                 }
                 if let Some(default) = default {
                     let terminated = self.lower_yul_stmts(default)?;
                     if !terminated {
-                        self.fb
-                            .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
+                        self.emit_jump(done);
                     }
                 } else {
-                    self.fb
-                        .insert_inst_no_result(Jump::new(self.module.inst_set(), done));
+                    self.emit_jump(done);
                 }
-                self.fb.switch_to_block(done);
-                Ok(false)
+                Ok(!self.switch_to_reachable_block(done))
             }
             // Definitions are declared and lowered on entry to their lexical block.
             YulStmtKind::FunctionDef { .. } => Ok(false),
@@ -1676,8 +1750,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     .last()
                     .copied()
                     .ok_or_else(|| TranslationError::new("inline Yul break outside loop"))?;
-                self.fb
-                    .insert_inst_no_result(Jump::new(self.module.inst_set(), target));
+                self.emit_jump(target);
                 Ok(true)
             }
             YulStmtKind::Continue => {
@@ -1686,8 +1759,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     .last()
                     .copied()
                     .ok_or_else(|| TranslationError::new("inline Yul continue outside loop"))?;
-                self.fb
-                    .insert_inst_no_result(Jump::new(self.module.inst_set(), target));
+                self.emit_jump(target);
                 Ok(true)
             }
             YulStmtKind::Error => Ok(false),
@@ -1850,10 +1922,8 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
             YulLitKind::Number(value) | YulLitKind::Hex(value) => self.word_value(value),
             YulLitKind::Bool(value) => Ok(self.fb.make_imm_value(I256::from(u8::from(*value)))),
             YulLitKind::String(value) => {
-                let value = value
-                    .strip_prefix('"')
-                    .and_then(|value| value.strip_suffix('"'))
-                    .unwrap_or(value);
+                let value = hir::string_literal::decode_string_literal(value)
+                    .ok_or_else(|| TranslationError::new("invalid inline Yul string literal"))?;
                 if value.len() > 32 {
                     return Err(TranslationError::new(
                         "inline Yul string literal exceeds one EVM word",
@@ -2603,13 +2673,9 @@ fn is_terminal_evm_builtin(name: &str) -> bool {
 
 fn yul_symbol(expr: &YulExpr<'_>) -> Option<String> {
     match &expr.kind {
-        YulExprKind::Lit(YulLitKind::String(value)) => Some(
-            value
-                .strip_prefix('"')
-                .and_then(|value| value.strip_suffix('"'))
-                .unwrap_or(value)
-                .to_owned(),
-        ),
+        YulExprKind::Lit(YulLitKind::String(value)) => {
+            hir::string_literal::decode_string_literal(value)
+        }
         _ => None,
     }
 }

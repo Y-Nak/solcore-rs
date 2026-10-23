@@ -1,0 +1,11 @@
+{
+  "loader": "bare",
+  "checks": [],
+  "source": "001.sol",
+  "diagnostics": [
+    {
+      "kind": "comptime_evaluation_failed",
+      "context_contains": "runtime value passed to comptime parameter"
+    }
+  ]
+}

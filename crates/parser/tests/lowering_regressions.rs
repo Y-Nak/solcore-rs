@@ -1333,3 +1333,6 @@ fn derive_targets_reject_reserved_identifiers() {
         })
         .expect("enum declaration survives malformed attribute");
 }
+
+#[path = "lowering_regressions/fixtures.rs"]
+mod fixture_tests;

@@ -1,0 +1,12 @@
+{
+  "loader": "bare",
+  "checks": [
+    {
+      "check": "binding",
+      "name": "value",
+      "count": 1,
+      "builtin": "bool"
+    }
+  ],
+  "source": "003.sol"
+}

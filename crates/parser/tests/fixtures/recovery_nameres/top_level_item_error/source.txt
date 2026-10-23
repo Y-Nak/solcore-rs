@@ -1,0 +1,4 @@
+function first() {}
+             unknown nonsense tokens
+             function second() {}
+             function caller() returns (word) { return missing; }

@@ -2,13 +2,17 @@
 
 use std::collections::HashSet;
 
+mod rename_semantics;
+
+pub(crate) use rename_semantics::preserves_resolutions;
+
 use hir::{
     anchor::{DefId, resolve_def_location},
     ast::{
         function::{Expr, ExprKind, FuncBody, FuncParam, Pat, PatCtorHead, PatKind, StmtKind},
         item::{
             AdtDef, ClassDef, ConstructorSelector, ContractDef, ContractItem, ExportKind,
-            ExportedName, FunctionDef, ImportSelector, Item, Module, SelectedName,
+            ExportedName, FunctionDef, Import, ImportSelector, Item, Module, SelectedName,
         },
         ty::{PredRef, TypeRef, TypeRefKind},
     },
@@ -28,6 +32,18 @@ use crate::{
     resolve::{function_owning_offset, innermost_expr, module_id_for_uri},
     state::WorldState,
 };
+
+// Count actual body-resolution work in directory fixtures. A deterministic
+// bound catches workspace-wide scans without depending on machine speed.
+#[cfg(test)]
+thread_local! {
+    static RESOLVED_BODIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_resolved_body_count() -> usize {
+    RESOLVED_BODIES.with(|count| count.replace(0))
+}
 
 /// Semantic identity used by references, highlights, and future rename support.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -117,6 +133,9 @@ pub fn reference_target_at<'db>(
     }
 
     for context in function_contexts(db, module) {
+        if !span_contains_offset(db, context.function.span(db), file, offset) {
+            continue;
+        }
         if let Some(target) = function_param_target_at(db, &context, file, offset) {
             return Some(target);
         }
@@ -141,7 +160,10 @@ pub fn reference_target_at<'db>(
 
     let scope = hir_nameres::item_scope_facts(db, module);
     let item_facts = hir_nameres::resolve_item_type_facts_with_imports(db, module, &scope, &env);
-    item_resolution_target_at(db, file, offset, &item_facts, &env)
+    impl_method_occurrences(db, module, &item_facts)
+        .into_iter()
+        .find_map(|(target, span)| span_contains_offset(db, span, file, offset).then_some(target))
+        .or_else(|| item_resolution_target_at(db, file, offset, &item_facts, &env))
         .or_else(|| item_scope_target_at(db, file, offset, &scope))
         .or_else(|| import_export_target_at(world, uri, position))
 }
@@ -173,40 +195,57 @@ pub fn collect_reference_locations<'db>(
     let db = world.db();
     let mut locations = Vec::new();
 
-    for module_id in reference_search_modules(world, db) {
-        let Some(file) = db.module_file(module_id) else {
-            continue;
-        };
-        let module = parser::parse_file_to_hir(db, file).module(db);
+    if let Some((module, context)) = local_reference_context(world, target) {
+        let module_id = nameres::module_id_for_source_file(db, module.def_id_value(db).file(db))
+            .expect("reference target belongs to a workspace module");
         let env = nameres::module_env(db, module_id);
-        let scope = hir_nameres::item_scope(db, module);
-        let module_map = hir_nameres::resolve_module_with_imports_and_policy(
+        let body = body_resolution_map(
             db,
             module,
-            scope,
+            context.function,
+            context.root_body,
+            context.enclosing_contract,
+            context.inherited_type_vars,
             &env,
-            hir_nameres::NameresDiagnosticPolicy::Emit,
         );
+        collect_body_reference_locations(world, db, &body, &env, target, &mut locations);
+    } else {
+        for module_id in reference_search_modules(world, db) {
+            let Some(file) = db.module_file(module_id) else {
+                continue;
+            };
+            let module = parser::parse_file_to_hir(db, file).module(db);
+            let env = nameres::module_env(db, module_id);
+            let scope = hir_nameres::item_scope(db, module);
+            let module_map = module_reference_resolutions(db, module, scope, &env);
 
-        collect_item_resolution_locations(
-            world,
-            db,
-            &module_map.item_resolutions.facts,
-            &env,
-            target,
-            &mut locations,
-        );
-        collect_import_export_reference_locations(
-            world,
-            db,
-            module,
-            module_id,
-            &module_map.item_scope.facts,
-            target,
-            &mut locations,
-        );
-        for body_map in &module_map.bodies {
-            collect_body_reference_locations(world, db, body_map, &env, target, &mut locations);
+            collect_item_resolution_locations(
+                world,
+                db,
+                &module_map.item_resolutions.facts,
+                &env,
+                target,
+                &mut locations,
+            );
+            collect_import_export_reference_locations(
+                world,
+                db,
+                module,
+                module_id,
+                &module_map.item_scope.facts,
+                target,
+                &mut locations,
+            );
+            for body_map in &module_map.bodies {
+                collect_body_reference_locations(world, db, body_map, &env, target, &mut locations);
+            }
+            for (method_target, span) in
+                impl_method_occurrences(db, module, &module_map.item_resolutions.facts)
+            {
+                if &method_target == target {
+                    push_span_location(world, db, span, &mut locations);
+                }
+            }
         }
     }
 
@@ -219,6 +258,39 @@ pub fn collect_reference_locations<'db>(
 
     sort_dedup_locations(&mut locations);
     locations
+}
+
+/// Value bindings cannot escape their enclosing function's source scope, even
+/// when a closure captures their values. References, highlights and rename
+/// validation therefore share this boundary instead of resolving other bodies.
+fn target_body<'db>(target: &ReferenceTarget<'db>) -> Option<FuncBody<'db>> {
+    match target {
+        ReferenceTarget::Param(param) => Some(param.body),
+        ReferenceTarget::Local(
+            LocalBinding::Let { body, .. } | LocalBinding::Pattern { body, .. },
+        ) => Some(*body),
+        _ => None,
+    }
+}
+
+fn local_reference_context<'db>(
+    world: &'db WorldState,
+    target: &ReferenceTarget<'db>,
+) -> Option<(Module<'db>, FunctionContext<'db>)> {
+    let db = world.db();
+    let body = target_body(target)?;
+    let span = body.span(db).resolve_to_absolute(db);
+    let module = parser::parse_file_to_hir(db, span.file()).module(db);
+    let owner = function_owning_offset(db, module, span.file(), span.start().as_u32())?;
+    Some((
+        module,
+        FunctionContext {
+            function: owner.function,
+            root_body: owner.root_body,
+            enclosing_contract: owner.enclosing_contract,
+            inherited_type_vars: owner.inherited_type_vars,
+        },
+    ))
 }
 
 /// Returns whether a semantic target can be renamed with text edits alone.
@@ -290,7 +362,6 @@ fn definition_has_public_alias(world: &WorldState, target: &ReferenceTarget<'_>)
             if exported.is_empty() {
                 return false;
             }
-            let env = nameres::module_env(db, module_id);
             module.items(db).iter().any(|item| {
                 let Item::Import(import) = *item else {
                     return false;
@@ -303,14 +374,9 @@ fn definition_has_public_alias(world: &WorldState, target: &ReferenceTarget<'_>)
                         return false;
                     };
                     exported.contains(alias.atom().text(db))
-                        && import_selected_name_resolutions(db, &env, selected)
+                        && import_name_targets(db, module_id, import, selected.name.atom().text(db))
                             .iter()
-                            .any(|resolution| {
-                                matches!(
-                                    resolution,
-                                    Resolution::Def { def: candidate, .. } if candidate == def
-                                )
-                            })
+                            .any(|candidate| matches!(candidate, ReferenceTarget::Def(candidate) if candidate == def))
                 })
             })
         })
@@ -343,14 +409,23 @@ fn shared_selector_contains_target(world: &WorldState, target: &ReferenceTarget<
             let scope = hir_nameres::item_scope_facts(db, module);
             module.items(db).iter().any(|item| match *item {
                 Item::Import(import) => {
+                    if import.hiding(db).iter().any(|hidden| {
+                        let targets =
+                            import_name_targets(db, module_id, import, hidden.name.atom().text(db));
+                        targets.len() > 1 && targets.iter().any(|candidate| candidate == target)
+                    }) {
+                        return true;
+                    }
                     let Some(ImportSelector::Names(names)) = import.selector(db) else {
                         return false;
                     };
                     names.iter().any(|selected| {
-                        let targets = import_selected_name_resolutions(db, &env, selected)
-                            .iter()
-                            .filter_map(target_from_resolution)
-                            .collect::<Vec<_>>();
+                        let targets = import_name_targets(
+                            db,
+                            module_id,
+                            import,
+                            selected.name.atom().text(db),
+                        );
                         targets.len() > 1 && targets.iter().any(|candidate| candidate == target)
                     })
                 }
@@ -432,16 +507,24 @@ fn import_export_target_in_module<'db>(
     for item in module.items(db) {
         match *item {
             Item::Import(import) => {
+                for hidden in import.hiding(db) {
+                    if span_contains_offset(db, hidden.name.span(db), file, offset) {
+                        let mut targets =
+                            import_name_targets(db, module_id, import, hidden.name.atom().text(db));
+                        return (targets.len() == 1).then(|| targets.remove(0));
+                    }
+                }
                 let Some(ImportSelector::Names(names)) = import.selector(db) else {
                     continue;
                 };
                 for selected in names {
                     if span_contains_offset(db, selected.name.span(db), file, offset) {
-                        let mut targets = import_selected_name_resolutions(db, &env, selected)
-                            .iter()
-                            .filter_map(target_from_resolution)
-                            .collect::<Vec<_>>();
-                        targets.dedup();
+                        let mut targets = import_name_targets(
+                            db,
+                            module_id,
+                            import,
+                            selected.name.atom().text(db),
+                        );
                         return (targets.len() == 1).then(|| targets.remove(0));
                     }
                     if selected
@@ -453,7 +536,7 @@ fn import_export_target_in_module<'db>(
                     }
                     if let Some(target) = constructor_selector_target_at(
                         db,
-                        import_selected_type_target(db, &env, selected).as_ref(),
+                        import_selected_type_target(db, module_id, import, selected).as_ref(),
                         selected.constructors.as_ref(),
                         file,
                         offset,
@@ -531,6 +614,13 @@ fn body_expr_target_at<'db>(
     env: &dyn hir_nameres::ImportedNames<'db>,
 ) -> Option<ReferenceTarget<'db>> {
     let owner = function_owning_offset(db, module, file, offset)?;
+    let (owning_body, expr_id) = innermost_expr(db, owner.root_body, file, offset)?;
+    let expr = owning_body.exprs(db).get(expr_id);
+    let span = expr_reference_span(db, expr)?;
+    if !span_contains_offset(db, span, file, offset) {
+        return None;
+    }
+
     let body_map = body_resolution_map(
         db,
         module,
@@ -540,12 +630,6 @@ fn body_expr_target_at<'db>(
         owner.inherited_type_vars,
         env,
     );
-    let (owning_body, expr_id) = innermost_expr(db, owner.root_body, file, offset)?;
-    let expr = owning_body.exprs(db).get(expr_id);
-    let span = expr_reference_span(db, expr)?;
-    if !span_contains_offset(db, span, file, offset) {
-        return None;
-    }
 
     body_map
         .exprs
@@ -688,6 +772,11 @@ fn body_map_target_at<'db>(
     body_map: &hir_nameres::BodyResolutionMap<'db>,
     env: &dyn hir_nameres::ImportedNames<'db>,
 ) -> Option<ReferenceTarget<'db>> {
+    for entry in &body_map.assembly {
+        if span_contains_offset(db, entry.span, file, offset) {
+            return target_from_resolution_at_span(db, &entry.resolution, entry.span);
+        }
+    }
     for entry in &body_map.stmt_bindings {
         let span = stmt_binding_span(db, entry.body, entry.stmt)?;
         if span_contains_offset(db, span, file, offset) {
@@ -974,6 +1063,8 @@ fn body_resolution_map<'db>(
     mut type_vars: Vec<TypeVarBinding<'db>>,
     imports: &dyn hir_nameres::ImportedNames<'db>,
 ) -> hir_nameres::BodyResolutionMap<'db> {
+    #[cfg(test)]
+    RESOLVED_BODIES.with(|count| count.set(count.get() + 1));
     let sig = function.sig(db);
     type_vars.extend(hir_nameres::type_var_bindings(
         function.def_id_value(db),
@@ -983,15 +1074,118 @@ fn body_resolution_map<'db>(
         module,
         enclosing_contract,
         params: hir_nameres::param_bindings(sig.params.atom()),
-        type_vars,
+        type_vars: type_vars.clone(),
     };
-    hir_nameres::resolve_body_with_imports_and_policy(
+    let mut resolutions = hir_nameres::resolve_body_with_imports_and_policy(
         db,
         root_body,
         &context,
         imports,
         hir_nameres::NameresDiagnosticPolicy::Emit,
-    )
+    );
+    if !has_deferred_constructors(&resolutions) {
+        return resolutions;
+    }
+    crate::analysis::with_analysis_stack(|| {
+        let item_facts = hir_nameres::resolve_item_type_facts_with_imports(
+            db,
+            module,
+            &hir_nameres::item_scope_facts(db, module),
+            imports,
+        );
+        let entry = nameres::module_id_for_source_file(db, module.def_id_value(db).file(db));
+        let lowered = hir_ty::lower_normalized_function_with_inferred_signature(
+            db,
+            module,
+            &item_facts,
+            function,
+            &type_vars,
+            Some(&resolutions),
+            entry,
+        );
+        let mut context = hir_ty::BodyTyContext::new(
+            module,
+            resolutions.clone(),
+            type_vars,
+            lowered.params,
+            Some(lowered.ret),
+        )
+        .with_param_names(
+            hir_nameres::param_bindings(sig.params.atom())
+                .iter()
+                .map(|param| param.name.atom().text(db).to_owned())
+                .collect(),
+        )
+        .with_pre_typeck_desugar(hir_ty::pre_typeck_desugar_body_tree(db, root_body));
+        if let Some(entry) = entry {
+            context = context.with_entry_module(entry);
+        }
+        let inferred = hir_ty::infer_body(db, root_body, context);
+        for entry in &mut resolutions.exprs {
+            if let Some(resolved) = inferred
+                .inferred_expr_resolutions
+                .iter()
+                .find(|resolved| resolved.body == entry.body && resolved.expr == entry.expr)
+            {
+                entry.resolution = resolved.resolution.clone();
+            }
+        }
+        for entry in &mut resolutions.pats {
+            if let Some(resolved) = inferred
+                .inferred_pat_resolutions
+                .iter()
+                .find(|resolved| resolved.body == entry.body && resolved.pat == entry.pat)
+            {
+                entry.resolution = resolved.resolution.clone();
+            }
+        }
+        resolutions
+    })
+}
+
+fn has_deferred_constructors(body: &hir_nameres::BodyResolutionMap<'_>) -> bool {
+    body.exprs
+        .iter()
+        .map(|entry| &entry.resolution)
+        .chain(body.pats.iter().map(|entry| &entry.resolution))
+        .any(|resolution| matches!(resolution, Resolution::DotCtorDeferred))
+}
+
+/// Complete source occurrence identities using inference only for bodies that
+/// need expected-type constructor lookup. Every reference consumer sees the
+/// same identities, including rename's speculative workspace.
+fn module_reference_resolutions<'db>(
+    db: &'db dyn hir_ty::Db,
+    module: Module<'db>,
+    scope: hir_nameres::ItemScope<'db>,
+    imports: &dyn hir_nameres::ImportedNames<'db>,
+) -> hir_nameres::ModuleResolutionMap<'db> {
+    let mut map = hir_nameres::resolve_module_with_imports_and_policy(
+        db,
+        module,
+        scope,
+        imports,
+        hir_nameres::NameresDiagnosticPolicy::Emit,
+    );
+    #[cfg(test)]
+    RESOLVED_BODIES.with(|count| count.set(count.get() + map.bodies.len()));
+    if map.bodies.iter().any(has_deferred_constructors) {
+        map.bodies = function_contexts(db, module)
+            .into_iter()
+            .map(|context| {
+                body_resolution_map(
+                    db,
+                    module,
+                    context.function,
+                    context.root_body,
+                    context.enclosing_contract,
+                    context.inherited_type_vars,
+                    imports,
+                )
+            })
+            .collect();
+    }
+    map
 }
 
 fn collect_item_resolution_locations<'db>(
@@ -1030,6 +1224,11 @@ fn collect_body_reference_locations<'db>(
     target: &ReferenceTarget<'db>,
     locations: &mut Vec<Location>,
 ) {
+    for entry in &body_map.assembly {
+        if resolution_matches_target(db, entry.span, &entry.resolution, target) {
+            push_span_location(world, db, entry.span, locations);
+        }
+    }
     for entry in &body_map.exprs {
         let expr = entry.body.exprs(db).get(entry.expr);
         if let Some(span) = expr_reference_span(db, expr)
@@ -1094,20 +1293,26 @@ fn collect_import_export_reference_locations<'db>(
     for item in module.items(db) {
         match *item {
             Item::Import(import) => {
+                for hidden in import.hiding(db) {
+                    if import_name_targets(db, module_id, import, hidden.name.atom().text(db))
+                        .iter()
+                        .any(|candidate| candidate == target)
+                    {
+                        push_span_location(world, db, hidden.name.span(db), locations);
+                    }
+                }
                 let Some(ImportSelector::Names(names)) = import.selector(db) else {
                     continue;
                 };
                 for selected in names {
-                    let selected_targets = import_selected_name_resolutions(db, &env, selected)
-                        .iter()
-                        .filter_map(target_from_resolution)
-                        .collect::<Vec<_>>();
+                    let selected_targets =
+                        import_name_targets(db, module_id, import, selected.name.atom().text(db));
                     if selected_targets.iter().any(|candidate| candidate == target) {
                         push_span_location(world, db, selected.name.span(db), locations);
                     }
                     for (ctor_target, span) in constructor_selector_targets(
                         db,
-                        import_selected_type_target(db, &env, selected).as_ref(),
+                        import_selected_type_target(db, module_id, import, selected).as_ref(),
                         selected.constructors.as_ref(),
                     ) {
                         if &ctor_target == target {
@@ -1166,41 +1371,14 @@ fn collect_import_export_reference_locations<'db>(
     }
 }
 
-fn import_selected_name_resolutions<'db>(
-    db: &'db dyn hir_ty::Db,
-    env: &dyn hir_nameres::ImportedNames<'db>,
-    selected: &SelectedName<'db>,
-) -> Vec<Resolution<'db>> {
-    let local_name = selected
-        .alias
-        .as_ref()
-        .unwrap_or(&selected.name)
-        .atom()
-        .text(db);
-    let mut resolutions = [
-        env.imported(db, hir_nameres::Namespace::Term, local_name),
-        env.imported(db, hir_nameres::Namespace::Type, local_name),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>();
-    resolutions.dedup();
-    resolutions
-}
-
 fn import_selected_type_target<'db>(
     db: &'db dyn hir_ty::Db,
-    env: &dyn hir_nameres::ImportedNames<'db>,
+    importing: nameres::ModuleId<'db>,
+    import: Import<'db>,
     selected: &SelectedName<'db>,
 ) -> Option<ReferenceTarget<'db>> {
-    let local_name = selected
-        .alias
-        .as_ref()
-        .unwrap_or(&selected.name)
-        .atom()
-        .text(db);
-    env.imported(db, hir_nameres::Namespace::Type, local_name)
-        .and_then(|resolution| target_from_resolution(&resolution))
+    let provider = nameres::resolve_direct_import_target(db, importing, import).ok()?;
+    interface_type_target(db, provider, selected.name.atom().text(db))
 }
 
 fn export_name_resolutions<'db>(
@@ -1257,7 +1435,28 @@ fn reexport_name_targets<'db>(
     module: nameres::ModuleId<'db>,
     exported: &ExportedName<'db>,
 ) -> Vec<ReferenceTarget<'db>> {
-    let name = exported.name.atom().text(db);
+    interface_name_targets(db, module, exported.name.atom().text(db))
+}
+
+fn import_name_targets<'db>(
+    db: &'db dyn hir_ty::Db,
+    importing: nameres::ModuleId<'db>,
+    import: Import<'db>,
+    name: &str,
+) -> Vec<ReferenceTarget<'db>> {
+    // Both selectors and hiding clauses name the provider's public interface.
+    // The consumer's environment has already applied aliases and hiding, so it
+    // cannot recover every source occurrence's identity.
+    nameres::resolve_direct_import_target(db, importing, import)
+        .map(|provider| interface_name_targets(db, provider, name))
+        .unwrap_or_default()
+}
+
+fn interface_name_targets<'db>(
+    db: &'db dyn hir_ty::Db,
+    module: nameres::ModuleId<'db>,
+    name: &str,
+) -> Vec<ReferenceTarget<'db>> {
     let interface = nameres::public_interface(db, module);
     let mut targets = [
         interface.terms.get(name),
@@ -1272,14 +1471,58 @@ fn reexport_name_targets<'db>(
     targets
 }
 
+fn impl_method_occurrences<'db>(
+    db: &'db dyn hir_ty::Db,
+    module: Module<'db>,
+    facts: &hir_nameres::ItemResolutionFacts<'db>,
+) -> Vec<(ReferenceTarget<'db>, Span<'db>)> {
+    let mut methods = Vec::new();
+    for item in module.items(db) {
+        let Item::InstanceDef(instance) = *item else {
+            continue;
+        };
+        let Some(Resolution::Def {
+            def: class,
+            kind: hir_nameres::DefResolutionKind::Class,
+        }) = facts
+            .preds
+            .iter()
+            .find(|entry| entry.pred == instance.head(db))
+            .map(|entry| &entry.resolution)
+        else {
+            continue;
+        };
+        for method in instance.methods(db) {
+            let sig = method.sig(db);
+            let name = sig.name.atom().text(db);
+            if class_method_name_span(db, *class, name).is_some() {
+                methods.push((
+                    ReferenceTarget::ClassMethod {
+                        class: *class,
+                        name: name.to_owned(),
+                    },
+                    sig.name.span(db),
+                ));
+            }
+        }
+    }
+    methods
+}
+
 fn reexport_name_type_target<'db>(
     db: &'db dyn hir_ty::Db,
     module: nameres::ModuleId<'db>,
     exported: &ExportedName<'db>,
 ) -> Option<ReferenceTarget<'db>> {
-    let name = exported.name.atom().text(db);
-    let interface = nameres::public_interface(db, module);
-    interface
+    interface_type_target(db, module, exported.name.atom().text(db))
+}
+
+fn interface_type_target<'db>(
+    db: &'db dyn hir_ty::Db,
+    module: nameres::ModuleId<'db>,
+    name: &str,
+) -> Option<ReferenceTarget<'db>> {
+    nameres::public_interface(db, module)
         .types
         .get(name)
         .map(|origin| ReferenceTarget::Def(origin.def_id))
@@ -1449,7 +1692,6 @@ fn import_alias_target_for_span<'db>(
         text.get(absolute.start().as_u32() as usize..absolute.end().as_u32() as usize)?;
     let module_id = nameres::module_id_for_source_file(db, absolute.file())?;
     let module = parser::parse_file_to_hir(db, absolute.file()).module(db);
-    let env = nameres::module_env(db, module_id);
 
     module.items(db).iter().find_map(|item| {
         let Item::Import(import) = *item else {
@@ -1463,10 +1705,10 @@ fn import_alias_target_for_span<'db>(
             if alias.atom().text(db) != occurrence {
                 return None;
             }
-            let belongs_to_alias = import_selected_name_resolutions(db, &env, selected)
-                .iter()
-                .filter_map(target_from_resolution)
-                .any(|imported| &imported == target);
+            let belongs_to_alias =
+                import_name_targets(db, module_id, import, selected.name.atom().text(db))
+                    .iter()
+                    .any(|imported| imported == target);
             if belongs_to_alias {
                 import_alias_target(db, module, selected)
             } else {
@@ -1712,39 +1954,131 @@ fn find_adt<'db>(
     })
 }
 
+/// Check the declaration and reference contexts that rename will edit.
+/// A name legal at its declaration can still reparse as contextual syntax at
+/// a use site. Semantic occurrence identity also covers imported aliases and
+/// type parameters without imposing type-name restrictions on value names.
+pub(crate) fn target_accepts_identifier<'db>(
+    world: &'db WorldState,
+    target: &ReferenceTarget<'db>,
+    new_name: &str,
+) -> bool {
+    let db = world.db();
+    let Some(context) = target_identifier_context(db, target) else {
+        return false;
+    };
+    if !parser::is_valid_identifier_in(new_name, context) {
+        return false;
+    }
+    if target_body(target).is_some() || !parser::requires_type_identifier_context(new_name) {
+        return true;
+    }
+    let declaration = target_declaration_span(db, target);
+    for module_id in reference_search_modules(world, db) {
+        let Some(file) = db.module_file(module_id) else {
+            continue;
+        };
+        let module = parser::parse_file_to_hir(db, file).module(db);
+        let env = nameres::module_env(db, module_id);
+        let module_map = hir_nameres::resolve_module_with_imports_and_policy(
+            db,
+            module,
+            hir_nameres::item_scope(db, module),
+            &env,
+            hir_nameres::NameresDiagnosticPolicy::Emit,
+        );
+        for entry in module_map
+            .item_resolutions
+            .facts
+            .types
+            .iter()
+            .chain(module_map.bodies.iter().flat_map(|body| &body.types))
+        {
+            let TypeRefKind::Named {
+                qualifier,
+                name,
+                args,
+            } = entry.ty.kind(db)
+            else {
+                continue;
+            };
+            // Trait heads contain synthesized type references at their type
+            // parameter declarations. Those names use declaration grammar.
+            if Some(name.span(db).resolve_to_absolute(db)) != declaration
+                && resolution_matches_target(db, name.span(db), &entry.resolution, target)
+                && !parser::is_valid_identifier_in(
+                    new_name,
+                    parser::IdentifierContext::TypeReference {
+                        qualified: qualifier.is_some(),
+                        type_arguments: args.atom().len(),
+                    },
+                )
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// The declaration role constrains contextual names independently of their
+/// lexical validity. Use the actual parameter syntax: an explicit `comptime`
+/// modifier already disambiguates a following parameter named `comptime`.
+fn target_identifier_context(
+    db: &dyn hir_ty::Db,
+    target: &ReferenceTarget<'_>,
+) -> Option<parser::IdentifierContext> {
+    let ReferenceTarget::Param(param) = target else {
+        return Some(parser::IdentifierContext::Ordinary);
+    };
+    let file = param.body.def_id(db).file(db);
+    let module = parser::parse_file_to_hir(db, file).module(db);
+    match find_param_in_module(db, module, param.body, param.index.as_usize())? {
+        FuncParam::Typed { comptime, .. } | FuncParam::Untyped { comptime, .. } => {
+            Some(if comptime.is_some() {
+                parser::IdentifierContext::Ordinary
+            } else {
+                parser::IdentifierContext::RuntimeParameter
+            })
+        }
+        FuncParam::Error { .. } => None,
+    }
+}
+
 fn param_name_span<'db>(db: &'db dyn hir_ty::Db, param: ParamId<'db>) -> Option<AbsoluteSpan> {
     let file = param.body.def_id(db).file(db);
     let module = parser::parse_file_to_hir(db, file).module(db);
-    find_param_span_in_module(db, module, param.body, param.index.as_usize())
+    find_param_in_module(db, module, param.body, param.index.as_usize())
+        .and_then(|param| param_name_or_whole_span(db, &param))
         .map(|span| span.resolve_to_absolute(db))
 }
 
-fn find_param_span_in_module<'db>(
+fn find_param_in_module<'db>(
     db: &'db dyn hir_ty::Db,
     module: Module<'db>,
     body: FuncBody<'db>,
     index: usize,
-) -> Option<Span<'db>> {
+) -> Option<FuncParam<'db>> {
     for item in module.items(db) {
         match *item {
             Item::FunctionDef(function) => {
-                if let Some(span) = find_param_span_in_function(db, function, body, index) {
-                    return Some(span);
+                if let Some(param) = find_param_in_function(db, function, body, index) {
+                    return Some(param);
                 }
             }
             Item::ContractDef(contract) => {
                 for contract_item in contract.items(db) {
                     if let ContractItem::FunctionDef(function) = *contract_item
-                        && let Some(span) = find_param_span_in_function(db, function, body, index)
+                        && let Some(param) = find_param_in_function(db, function, body, index)
                     {
-                        return Some(span);
+                        return Some(param);
                     }
                 }
             }
             Item::InstanceDef(instance) => {
                 for function in instance.methods(db) {
-                    if let Some(span) = find_param_span_in_function(db, *function, body, index) {
-                        return Some(span);
+                    if let Some(param) = find_param_in_function(db, *function, body, index) {
+                        return Some(param);
                     }
                 }
             }
@@ -1761,30 +2095,25 @@ fn find_param_span_in_module<'db>(
     None
 }
 
-fn find_param_span_in_function<'db>(
+fn find_param_in_function<'db>(
     db: &'db dyn hir_ty::Db,
     function: FunctionDef<'db>,
     body: FuncBody<'db>,
     index: usize,
-) -> Option<Span<'db>> {
+) -> Option<FuncParam<'db>> {
     if function.body(db) == Some(body) {
-        return function
-            .sig(db)
-            .params
-            .atom()
-            .get(index)
-            .and_then(|param| param_name_or_whole_span(db, param));
+        return function.sig(db).params.atom().get(index).cloned();
     }
 
-    find_lambda_param_span(db, function.body(db)?, body, index)
+    find_lambda_param(db, function.body(db)?, body, index)
 }
 
-fn find_lambda_param_span<'db>(
+fn find_lambda_param<'db>(
     db: &'db dyn hir_ty::Db,
     root: FuncBody<'db>,
     body: FuncBody<'db>,
     index: usize,
-) -> Option<Span<'db>> {
+) -> Option<FuncParam<'db>> {
     let mut stack = vec![root];
     while let Some(current) = stack.pop() {
         for (_, expr) in current.exprs(db).iter() {
@@ -1795,10 +2124,7 @@ fn find_lambda_param_span<'db>(
             } = &expr.kind
             {
                 if *lambda_body == body {
-                    return params
-                        .atom()
-                        .get(index)
-                        .and_then(|param| param_name_or_whole_span(db, param));
+                    return params.atom().get(index).cloned();
                 }
                 stack.push(*lambda_body);
             }

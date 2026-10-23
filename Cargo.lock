@@ -203,6 +203,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "archery"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33ca55ee147b1926dbea904f50fe4902494e97bc742205abbbf10c709e43815f"
+dependencies = [
+ "triomphe",
+]
+
+[[package]]
 name = "ark-bls12-381"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -959,17 +968,21 @@ dependencies = [
 
 [[package]]
 name = "cranelift-bitset"
-version = "0.126.2"
+version = "0.136.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "006fe8776f6d81acb83571f52e7737a54c6dec1ba75e2b7b5a68af15451f88ee"
+checksum = "0ec2ba2d4f3d959ec4023a10266c3dcfb28381d1938d507a9a5e1abb78bbcc88"
+dependencies = [
+ "wasmtime-internal-core",
+]
 
 [[package]]
 name = "cranelift-entity"
-version = "0.126.2"
+version = "0.136.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcca10e8c33eac67a45be4e09d236e274697831ca6bf4c4a927f7570eb8436a8"
+checksum = "a03e8b44c4877cf2fb21e5788d514af6fd291a066ed9ae37adf114a25fecb4aa"
 dependencies = [
  "cranelift-bitset",
+ "wasmtime-internal-core",
 ]
 
 [[package]]
@@ -3063,6 +3076,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpds"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e025feb26210bc196b908e72deb063b1b4000754304341cbc168a1e72c857ebc"
+dependencies = [
+ "archery",
+ "smallvec",
+]
+
+[[package]]
 name = "ruint"
 version = "1.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3530,9 +3553,12 @@ name = "solcore-hir"
 version = "0.1.0"
 dependencies = [
  "annotate-snippets",
+ "dir-test",
  "percent-encoding",
  "rustc-hash",
  "salsa",
+ "serde",
+ "serde_json",
  "tracing",
  "url",
 ]
@@ -3548,6 +3574,8 @@ dependencies = [
  "proptest",
  "rustc-hash",
  "salsa",
+ "serde",
+ "serde_json",
  "solcore-hir",
  "solcore-nameres",
  "solcore-parser",
@@ -3561,8 +3589,11 @@ dependencies = [
 name = "solcore-hull"
 version = "0.1.0"
 dependencies = [
+ "dir-test",
  "rustc-hash",
  "salsa",
+ "serde",
+ "serde_json",
  "solcore-hir",
  "solcore-hir-ty",
  "solcore-nameres",
@@ -3576,6 +3607,7 @@ dependencies = [
 name = "solcore-lsp"
 version = "0.1.0"
 dependencies = [
+ "dir-test",
  "line-index",
  "lsp-types",
  "percent-encoding",
@@ -3617,6 +3649,8 @@ dependencies = [
  "logos",
  "proptest",
  "salsa",
+ "serde",
+ "serde_json",
  "solcore-hir",
  "tracing",
 ]
@@ -3628,6 +3662,8 @@ dependencies = [
  "dir-test",
  "insta",
  "salsa",
+ "serde",
+ "serde_json",
  "smallvec",
  "solcore-hir",
  "solcore-hir-ty",
@@ -3646,8 +3682,11 @@ dependencies = [
 name = "solcore-specialize"
 version = "0.1.0"
 dependencies = [
+ "dir-test",
  "rustc-hash",
  "salsa",
+ "serde",
+ "serde_json",
  "solcore-hir",
  "solcore-hir-ty",
  "solcore-nameres",
@@ -3665,14 +3704,18 @@ name = "solcore-test-utils"
 version = "0.1.0"
 dependencies = [
  "annotate-snippets",
+ "dir-test",
  "insta",
+ "libc",
  "rustc-hash",
  "salsa",
+ "serde",
  "serde_json",
  "solcore-hir",
  "solcore-nameres",
  "solcore-parser",
  "solcore-test-directives",
+ "tempfile",
  "url",
 ]
 
@@ -3710,6 +3753,7 @@ name = "solcore-wasm"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
+ "dir-test",
  "getrandom 0.2.17",
  "js-sys",
  "revm",
@@ -3738,6 +3782,8 @@ dependencies = [
  "insta",
  "rustc-hash",
  "salsa",
+ "serde",
+ "serde_json",
  "solcore-hir",
  "solcore-hir-ty",
  "solcore-hull",
@@ -3751,13 +3797,14 @@ dependencies = [
 [[package]]
 name = "sonatina-codegen"
 version = "0.0.3-alpha"
-source = "git+https://github.com/fe-lang/sonatina?rev=55ca888#55ca888f1fc83077e5eee803c0619231e9b50998"
+source = "git+https://github.com/fe-lang/sonatina?rev=8ee24814ea9b32c762df8ef80c796e7d48797c0f#8ee24814ea9b32c762df8ef80c796e7d48797c0f"
 dependencies = [
  "bit-set",
  "cranelift-entity",
  "dashmap 6.2.1",
  "indexmap 2.14.0",
  "rayon",
+ "rpds",
  "rustc-hash",
  "smallvec",
  "sonatina-ir",
@@ -3771,11 +3818,12 @@ dependencies = [
 [[package]]
 name = "sonatina-ir"
 version = "0.0.3-alpha"
-source = "git+https://github.com/fe-lang/sonatina?rev=55ca888#55ca888f1fc83077e5eee803c0619231e9b50998"
+source = "git+https://github.com/fe-lang/sonatina?rev=8ee24814ea9b32c762df8ef80c796e7d48797c0f#8ee24814ea9b32c762df8ef80c796e7d48797c0f"
 dependencies = [
  "bit-set",
  "bitflags 2.13.0",
  "cranelift-entity",
+ "crossbeam-utils",
  "dashmap 6.2.1",
  "dot2",
  "dyn-clone",
@@ -3794,7 +3842,7 @@ dependencies = [
 [[package]]
 name = "sonatina-macros"
 version = "0.0.3-alpha"
-source = "git+https://github.com/fe-lang/sonatina?rev=55ca888#55ca888f1fc83077e5eee803c0619231e9b50998"
+source = "git+https://github.com/fe-lang/sonatina?rev=8ee24814ea9b32c762df8ef80c796e7d48797c0f#8ee24814ea9b32c762df8ef80c796e7d48797c0f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3804,7 +3852,7 @@ dependencies = [
 [[package]]
 name = "sonatina-parser"
 version = "0.0.3-alpha"
-source = "git+https://github.com/fe-lang/sonatina?rev=55ca888#55ca888f1fc83077e5eee803c0619231e9b50998"
+source = "git+https://github.com/fe-lang/sonatina?rev=8ee24814ea9b32c762df8ef80c796e7d48797c0f#8ee24814ea9b32c762df8ef80c796e7d48797c0f"
 dependencies = [
  "annotate-snippets",
  "bimap",
@@ -3825,7 +3873,7 @@ dependencies = [
 [[package]]
 name = "sonatina-triple"
 version = "0.0.3-alpha"
-source = "git+https://github.com/fe-lang/sonatina?rev=55ca888#55ca888f1fc83077e5eee803c0619231e9b50998"
+source = "git+https://github.com/fe-lang/sonatina?rev=8ee24814ea9b32c762df8ef80c796e7d48797c0f#8ee24814ea9b32c762df8ef80c796e7d48797c0f"
 dependencies = [
  "thiserror",
 ]
@@ -3833,10 +3881,11 @@ dependencies = [
 [[package]]
 name = "sonatina-verifier"
 version = "0.0.3-alpha"
-source = "git+https://github.com/fe-lang/sonatina?rev=55ca888#55ca888f1fc83077e5eee803c0619231e9b50998"
+source = "git+https://github.com/fe-lang/sonatina?rev=8ee24814ea9b32c762df8ef80c796e7d48797c0f#8ee24814ea9b32c762df8ef80c796e7d48797c0f"
 dependencies = [
  "cranelift-entity",
  "rayon",
+ "rpds",
  "rustc-hash",
  "smallvec",
  "sonatina-ir",
@@ -4251,6 +4300,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "triomphe"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d15f4f5898bcfc5d8a8e45ed30b2f108d710c1a2e5489dbf80e078f707181bc"
+
+[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4425,6 +4480,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc1b4cb0cc549fcf58d7dfc081778139b3d283a081644e833e84682ad71cea24"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "wasmtime-internal-core"
+version = "49.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba00c5db77adb0749ee059068e5a417bfac3d8969f5a3479d9bd1ca8c1ba248d"
+dependencies = [
+ "hashbrown 0.17.1",
+ "libm",
 ]
 
 [[package]]

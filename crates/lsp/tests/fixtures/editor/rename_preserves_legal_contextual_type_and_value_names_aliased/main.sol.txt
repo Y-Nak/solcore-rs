@@ -1,0 +1,1 @@
+import {Original as Alias} from math; function id(value: Alias<word>) returns (word) { return value; }

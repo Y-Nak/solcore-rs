@@ -15,10 +15,10 @@ error[SC0218]: Overlapping impls are not supported
     |      ^^^^^^^^^^^^^^^^^^^^^^^^^^ overlapping impl
   5 |     function sigStr(p: Proxy<(uint256, bool)>) returns (string) {
     |
-   ::: /std/dispatch.sol:100
+   ::: /std/dispatch.sol:101
     |
-100 |
-101 | impl<a, b> SigString<(a, b)> where a: SigString, b: SigString {
+101 |
+102 | impl<a, b> SigString<(a, b)> where a: SigString, b: SigString {
     |            ----------------- previous overlapping impl
-102 |     function sigStr(x: Proxy<(a, b)>) returns (string) {
+103 |     function sigStr(x: Proxy<(a, b)>) returns (string) {
     |

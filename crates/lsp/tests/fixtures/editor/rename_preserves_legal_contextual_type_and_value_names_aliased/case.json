@@ -1,0 +1,38 @@
+{
+  "documents": [
+    "main.sol",
+    "math.sol"
+  ],
+  "checks": [
+    {
+      "kind": "rename",
+      "at": {
+        "needle": "Original",
+        "document": "math.sol"
+      },
+      "new_name": "mapping",
+      "accepted": true,
+      "no_errors_after": true,
+      "contents": [
+        {
+          "text": "Alias<word>"
+        }
+      ]
+    },
+    {
+      "kind": "rename",
+      "at": {
+        "needle": "Original",
+        "document": "math.sol"
+      },
+      "new_name": "comptime",
+      "accepted": true,
+      "no_errors_after": true,
+      "contents": [
+        {
+          "text": "Alias<word>"
+        }
+      ]
+    }
+  ]
+}

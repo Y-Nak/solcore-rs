@@ -1412,3 +1412,6 @@ fn assert_solc_strict_assembly(solc: &Path, label: &str, yul: &str) {
         yul
     );
 }
+
+#[path = "source_regressions/mod.rs"]
+mod source_regressions;

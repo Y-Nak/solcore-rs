@@ -52,7 +52,7 @@ pub struct AbiParam {
     pub name: String,
     /// Canonical ABI type.
     pub ty: AbiType,
-    /// Tuple components, if `ty` is `AbiType::Tuple`.
+    /// Tuple components, including when the tuple is an array element.
     pub components: Vec<AbiParam>,
 }
 
@@ -63,6 +63,7 @@ pub enum AbiType {
     String,
     Unit,
     Tuple,
+    Array(Box<AbiType>),
     Named(String),
     Unsupported,
 }
@@ -75,8 +76,19 @@ impl std::fmt::Display for AbiType {
             AbiType::String => f.write_str("string"),
             AbiType::Unit => Ok(()),
             AbiType::Tuple => f.write_str("tuple"),
+            AbiType::Array(element) => write!(f, "{element}[]"),
             AbiType::Named(name) => f.write_str(name),
             AbiType::Unsupported => f.write_str("<unsupported>"),
+        }
+    }
+}
+
+impl AbiType {
+    pub(super) fn has_tuple_components(&self) -> bool {
+        match self {
+            Self::Tuple => true,
+            Self::Array(element) => element.has_tuple_components(),
+            _ => false,
         }
     }
 }
@@ -154,7 +166,7 @@ fn signature_type_string<'db>(
         TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Unit),
             args,
-        } if args.is_empty() => Ok(AbiType::Unit.to_string()),
+        } if args.is_empty() => Err(unsupported_unit_product_member()),
         TyKind::Tuple(elems) => tuple_signature_string(db, elems, adt_stack, abi_evidence),
         TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
@@ -172,7 +184,7 @@ fn signature_type_string<'db>(
             if let Some(element) = canonical_calldata_array_element(db, user, args)? {
                 return Ok(format!(
                     "{}[]",
-                    generic_sig_string(db, element, adt_stack, abi_evidence,)?
+                    abi_type_sig_string(db, element, adt_stack, abi_evidence)?
                 ));
             }
             if let Some(name) = canonical_location_abi_name(db, user, args)? {
@@ -192,6 +204,7 @@ fn tuple_signature_string<'db>(
     adt_stack: &mut AbiAdtStack<'db>,
     abi_evidence: &AbiAdtEvidence<'db>,
 ) -> Result<String, String> {
+    validate_product_members(db, elems)?;
     let mut parts = Vec::new();
     for elem in flatten_tuple(db, elems) {
         parts.push(signature_type_string(db, elem, adt_stack, abi_evidence)?);
@@ -245,6 +258,29 @@ pub(super) fn abi_outputs<'db>(
 ) -> Vec<AbiParam> {
     if is_unit_ty(db, ty) {
         return Vec::new();
+    }
+    let product = match ty.kind(db) {
+        TyKind::Tuple(elems) => Some(elems),
+        TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
+            args,
+        } if args.len() == 2 => Some(args),
+        _ => None,
+    };
+    if let Some(product) = product
+        && let Err(err) = validate_product_members(db, product)
+    {
+        diagnostics.push(contract_diag_unsupported_abi_type(
+            db,
+            span,
+            "ABI output",
+            &err,
+        ));
+        return vec![AbiParam {
+            name: String::new(),
+            ty: AbiType::Unsupported,
+            components: Vec::new(),
+        }];
     }
     flatten_output_ty(db, ty)
         .into_iter()
@@ -312,6 +348,38 @@ fn abi_type_of<'db>(
     adt_stack: &mut AbiAdtStack<'db>,
     abi_evidence: &AbiAdtEvidence<'db>,
 ) -> Result<(AbiType, Vec<AbiParam>), String> {
+    abi_value_type_of(
+        db,
+        ty,
+        adt_stack,
+        abi_evidence,
+        AbiValueContext::ProductMember,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum AbiValueContext {
+    ProductMember,
+    ArrayElement,
+}
+
+// Unit is also the compiler's empty argument/return product. Only an array
+// element carries an unambiguous value context for its empty-tuple ABI type;
+// explicit unit product members are not represented by dispatch metadata.
+fn abi_value_type_of<'db>(
+    db: &'db dyn Db,
+    ty: Ty<'db>,
+    adt_stack: &mut AbiAdtStack<'db>,
+    abi_evidence: &AbiAdtEvidence<'db>,
+    context: AbiValueContext,
+) -> Result<(AbiType, Vec<AbiParam>), String> {
+    if is_unit_ty(db, ty) {
+        return if matches!(context, AbiValueContext::ArrayElement) {
+            Ok((AbiType::Tuple, Vec::new()))
+        } else {
+            Err(unsupported_unit_product_member())
+        };
+    }
     match ty.kind(db) {
         TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Word),
@@ -325,28 +393,11 @@ fn abi_type_of<'db>(
             ctor: TyCtor::Builtin(BuiltinTyCtor::String),
             args,
         } if args.is_empty() => Ok((AbiType::String, Vec::new())),
-        TyKind::Named {
-            ctor: TyCtor::Builtin(BuiltinTyCtor::Unit),
-            args,
-        } if args.is_empty() => Ok((AbiType::Unit, Vec::new())),
-        TyKind::Tuple(elems) if elems.is_empty() => Ok((AbiType::Unit, Vec::new())),
-        TyKind::Tuple(elems) => Ok((
-            AbiType::Tuple,
-            flatten_tuple(db, elems)
-                .into_iter()
-                .map(|elem| abi_param(db, String::new(), elem, adt_stack, abi_evidence))
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
+        TyKind::Tuple(elems) => abi_tuple_type_of(db, elems, adt_stack, abi_evidence),
         TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
             args,
-        } if args.len() == 2 => Ok((
-            AbiType::Tuple,
-            flatten_tuple(db, args)
-                .into_iter()
-                .map(|elem| abi_param(db, String::new(), elem, adt_stack, abi_evidence))
-                .collect::<Result<Vec<_>, _>>()?,
-        )),
+        } if args.len() == 2 => abi_tuple_type_of(db, args, adt_stack, abi_evidence),
         TyKind::Named {
             ctor: TyCtor::User(user),
             args,
@@ -357,8 +408,14 @@ fn abi_type_of<'db>(
                 return Ok((AbiType::Named(name), Vec::new()));
             }
             if let Some(element) = canonical_calldata_array_element(db, user, args)? {
-                let (element_ty, components) = abi_type_of(db, element, adt_stack, abi_evidence)?;
-                return Ok((AbiType::Named(format!("{element_ty}[]")), components));
+                let (element_ty, components) = abi_value_type_of(
+                    db,
+                    element,
+                    adt_stack,
+                    abi_evidence,
+                    AbiValueContext::ArrayElement,
+                )?;
+                return Ok((AbiType::Array(Box::new(element_ty)), components));
             }
             if let Some(name) = canonical_location_abi_name(db, user, args)? {
                 return Ok((AbiType::Named(name), Vec::new()));
@@ -369,6 +426,43 @@ fn abi_type_of<'db>(
         }
         _ => Err(ty.display(db)),
     }
+}
+
+fn abi_tuple_type_of<'db>(
+    db: &'db dyn Db,
+    elems: &[Ty<'db>],
+    adt_stack: &mut AbiAdtStack<'db>,
+    abi_evidence: &AbiAdtEvidence<'db>,
+) -> Result<(AbiType, Vec<AbiParam>), String> {
+    validate_product_members(db, elems)?;
+    Ok((
+        AbiType::Tuple,
+        flatten_tuple(db, elems)
+            .into_iter()
+            .map(|elem| abi_param(db, String::new(), elem, adt_stack, abi_evidence))
+            .collect::<Result<Vec<_>, _>>()?,
+    ))
+}
+
+fn unsupported_unit_product_member() -> String {
+    "() (explicit unit parameters and tuple members have no distinct dispatch ABI value; unit is supported as an array element or an empty return product)".to_owned()
+}
+
+fn validate_product_members(db: &dyn Db, elems: &[Ty<'_>]) -> Result<(), String> {
+    for elem in elems {
+        if is_unit_ty(db, *elem) {
+            return Err(unsupported_unit_product_member());
+        }
+        match elem.kind(db) {
+            TyKind::Tuple(nested) => validate_product_members(db, nested)?,
+            TyKind::Named {
+                ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
+                args,
+            } if args.len() == 2 => validate_product_members(db, args)?,
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Returns the element of the one externally supported calldata location:
@@ -465,7 +559,7 @@ fn generic_sig_string<'db>(
             if let Some(element) = canonical_calldata_array_element(db, user, args)? {
                 return Ok(format!(
                     "{}[]",
-                    generic_sig_string(db, element, adt_stack, abi_evidence,)?
+                    abi_type_sig_string(db, element, adt_stack, abi_evidence)?
                 ));
             }
             if let Some(name) = canonical_location_abi_name(db, user, args)? {
@@ -476,6 +570,34 @@ fn generic_sig_string<'db>(
         }
         TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => Err(ty.display(db)),
         TyKind::Named { .. } | TyKind::Function { .. } | TyKind::Comptime(_) => Err(ty.display(db)),
+    }
+}
+
+/// Mirrors `ABITypeString`: a product used as one ABI type has parentheses,
+/// whereas `SigString` renders its fields as an argument list.
+fn abi_type_sig_string<'db>(
+    db: &'db dyn Db,
+    ty: Ty<'db>,
+    adt_stack: &mut AbiAdtStack<'db>,
+    abi_evidence: &AbiAdtEvidence<'db>,
+) -> Result<String, String> {
+    if is_unit_ty(db, ty) {
+        return Ok("()".to_owned());
+    }
+    let signature = generic_sig_string(db, ty, adt_stack, abi_evidence)?;
+    match ty.kind(db) {
+        TyKind::Tuple(elems) => {
+            validate_product_members(db, elems)?;
+            Ok(format!("({signature})"))
+        }
+        TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
+            args,
+        } if args.len() == 2 => {
+            validate_product_members(db, args)?;
+            Ok(format!("({signature})"))
+        }
+        _ => Ok(signature),
     }
 }
 

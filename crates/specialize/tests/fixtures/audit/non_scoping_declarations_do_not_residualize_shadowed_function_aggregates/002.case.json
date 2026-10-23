@@ -1,0 +1,10 @@
+{
+  "loader": "bare",
+  "checks": [
+    {
+      "check": "no_tuple_binding",
+      "name": "bundle"
+    }
+  ],
+  "source": "002.sol"
+}

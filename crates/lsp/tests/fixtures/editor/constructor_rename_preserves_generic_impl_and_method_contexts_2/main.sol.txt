@@ -1,0 +1,5 @@
+enum Choice<a> { Pick(a), Other }
+trait Maker<a> { function make<b>(x: a, y: b) returns (Choice<b>); }
+impl<a> Maker<a> {
+function make<b>(x: a, y: b) returns (Choice<b>) { return .Pick(y); }
+}

@@ -1,0 +1,15 @@
+{
+  "compile": [
+    "O0"
+  ],
+  "checks": {
+    "contains": [
+      "object @MemoryContractDeploy",
+      "embed .runtime as &MemoryContract",
+      "sym_addr &MemoryContract",
+      "sym_size &MemoryContract",
+      "evm_mstore ",
+      "evm_mload "
+    ]
+  }
+}

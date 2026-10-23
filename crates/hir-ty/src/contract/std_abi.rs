@@ -4,12 +4,13 @@ use hir::{
     anchor::{DefId, DefKind},
     ast::item::Item,
 };
-use nameres::{LibraryId, ModuleId, module_id_for_source_file};
+use nameres::ModuleId;
 use parser::parse_file_to_hir;
 
 use crate::{
-    Db, Ty, TyCtor, UserTyCtor, UserTyCtorKind, solver::AbiEvidenceRole,
-    support::canonical_std_module_ids,
+    Db, Ty, TyCtor, UserTyCtor, UserTyCtorKind,
+    solver::AbiEvidenceRole,
+    support::{canonical_std_module_ids, is_canonical_std_module_def},
 };
 
 pub(super) const ABI_HEAD_SIZE_METHOD: &str = "headSize";
@@ -19,6 +20,7 @@ pub(crate) enum StdAbiModule {
     Std,
     Dispatch,
     Generic,
+    AbiGeneric,
 }
 
 impl StdAbiModule {
@@ -27,6 +29,7 @@ impl StdAbiModule {
             Self::Std => "std",
             Self::Dispatch => "dispatch",
             Self::Generic => "Generic",
+            Self::AbiGeneric => "ABIGeneric",
         }
     }
 
@@ -41,11 +44,8 @@ impl StdAbiModule {
             .find(|module| db.module_file(*module).is_some())
     }
 
-    fn contains(self, db: &dyn Db, def: DefId<'_>) -> bool {
-        module_id_for_source_file(db, def.file(db)).is_some_and(|module| {
-            module.library(db) == &LibraryId::Std
-                && module.logical_path(db).as_slice() == [self.name()]
-        })
+    pub(super) fn contains(self, db: &dyn Db, def: DefId<'_>) -> bool {
+        is_canonical_std_module_def(db, def, self.name())
     }
 
     fn find_def<'db>(self, db: &'db dyn Db, name: &str, kind: DefKind) -> Option<DefId<'db>> {
@@ -68,11 +68,16 @@ impl StdAbiModule {
     }
 }
 
+/// Canonical dictionaries that determine an external ABI. Include value-context
+/// helpers as well as the top-level signature and codec traits: their selected
+/// implementations are dependencies of the same dispatch evidence graph.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum AbiClass {
     Generic,
     SigString,
+    TypeString,
     Attribs,
+    ElementAttribs,
     Encode,
     Decode,
 }
@@ -82,7 +87,9 @@ impl AbiClass {
         match self {
             Self::Generic => "Generic",
             Self::SigString => "SigString",
+            Self::TypeString => "ABITypeString",
             Self::Attribs => "ABIAttribs",
+            Self::ElementAttribs => "ABIElementAttribs",
             Self::Encode => "ABIEncode",
             Self::Decode => "ABIDecode",
         }
@@ -91,17 +98,27 @@ impl AbiClass {
     fn module(self) -> StdAbiModule {
         match self {
             Self::Generic => StdAbiModule::Generic,
-            Self::SigString => StdAbiModule::Dispatch,
-            Self::Attribs | Self::Encode | Self::Decode => StdAbiModule::Std,
+            Self::SigString | Self::TypeString => StdAbiModule::Dispatch,
+            Self::Attribs | Self::ElementAttribs | Self::Encode | Self::Decode => StdAbiModule::Std,
         }
     }
 
     pub(crate) fn evidence_role(self) -> Option<AbiEvidenceRole> {
         match self {
             Self::Generic => None,
-            Self::SigString => Some(AbiEvidenceRole::Signature),
-            Self::Attribs | Self::Encode | Self::Decode => Some(AbiEvidenceRole::Codec),
+            Self::SigString | Self::TypeString => Some(AbiEvidenceRole::Signature),
+            Self::Attribs | Self::ElementAttribs | Self::Encode | Self::Decode => {
+                Some(AbiEvidenceRole::Codec)
+            }
         }
+    }
+
+    /// ABI dictionaries shipped with the class or its generic representation
+    /// bridge stay canonical when overlapping roots load their source as Main.
+    pub(super) fn owns_instance(self, db: &dyn Db, instance: DefId<'_>) -> bool {
+        self.module().contains(db, instance)
+            || (matches!(self, Self::Attribs | Self::Encode | Self::Decode)
+                && StdAbiModule::AbiGeneric.contains(db, instance))
     }
 
     pub(crate) fn from_def(db: &dyn Db, def: DefId<'_>) -> Option<Self> {
@@ -109,7 +126,9 @@ impl AbiClass {
         [
             Self::Generic,
             Self::SigString,
+            Self::TypeString,
             Self::Attribs,
+            Self::ElementAttribs,
             Self::Encode,
             Self::Decode,
         ]

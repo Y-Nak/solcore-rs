@@ -26,6 +26,65 @@ mod types;
 #[salsa::db]
 pub trait Db: salsa::Database + HirDb {}
 
+/// Syntactic role of an identifier at a declaration or reference.
+///
+/// Contextual keywords remain ordinary identifiers except where the grammar
+/// would consume them as a modifier instead of a name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentifierContext {
+    /// A name parsed with the ordinary identifier grammar.
+    Ordinary,
+    /// A parameter name without an explicit `comptime` modifier.
+    RuntimeParameter,
+    /// A named type reference, whose qualification and arguments distinguish
+    /// ordinary names from contextual type syntax.
+    TypeReference {
+        /// Whether the name follows a qualifier such as `module.Name`.
+        qualified: bool,
+        /// Number of explicit type arguments at this occurrence.
+        type_arguments: usize,
+    },
+}
+
+enum ContextualTypeKeyword {
+    Mapping,
+    Comptime,
+}
+
+fn contextual_type_keyword(text: &str) -> Option<ContextualTypeKeyword> {
+    match text {
+        "mapping" => Some(ContextualTypeKeyword::Mapping),
+        "comptime" => Some(ContextualTypeKeyword::Comptime),
+        _ => None,
+    }
+}
+
+/// Whether validating this name requires inspecting type-reference syntax.
+/// Ordinary names need only lexical and declaration-context validation.
+pub fn requires_type_identifier_context(text: &str) -> bool {
+    contextual_type_keyword(text).is_some()
+}
+
+/// Validates an identifier without changing its syntactic role.
+pub fn is_valid_identifier_in(text: &str, context: IdentifierContext) -> bool {
+    is_valid_identifier(text)
+        && match context {
+            IdentifierContext::Ordinary => true,
+            IdentifierContext::RuntimeParameter => text != "comptime",
+            IdentifierContext::TypeReference {
+                qualified: false,
+                type_arguments,
+            } => match contextual_type_keyword(text) {
+                Some(ContextualTypeKeyword::Mapping) => false,
+                Some(ContextualTypeKeyword::Comptime) => type_arguments != 1,
+                None => true,
+            },
+            IdentifierContext::TypeReference {
+                qualified: true, ..
+            } => true,
+        }
+}
+
 /// Returns whether `text` is one ordinary source identifier.
 ///
 /// This intentionally follows the lexer and the normal identifier grammar:
@@ -36,7 +95,7 @@ pub fn is_valid_identifier(text: &str) -> bool {
     let mut lexer = lexer::Token::lexer(text);
     matches!(
         lexer.next(),
-        Some(Ok(lexer::Token::Ident(name))) if name == text && !name.contains('-')
+        Some(Ok(lexer::Token::Ident(name))) if name == text
     ) && lexer.next().is_none()
 }
 

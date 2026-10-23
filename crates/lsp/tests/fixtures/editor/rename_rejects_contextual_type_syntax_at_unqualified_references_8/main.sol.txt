@@ -1,0 +1,1 @@
+import * from std; import * from std.dispatch; contract C { type Original = word; function id(value: Original) returns (Original) { return value; } }

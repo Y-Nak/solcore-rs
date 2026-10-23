@@ -16,7 +16,9 @@ use hull::{
 };
 use nameres::{Db as _, ModuleTree, module_id_from_key};
 use parser::parse_file_to_hir;
-use solcore_sonatina::{render_hull_program, translate_hull_program};
+use solcore_sonatina::{
+    render_hull_program, translate_hull_program, translate_hull_program_returning_runtime_entry,
+};
 use solcore_test_utils::{
     FrontendTestDb, define_frontend_test_db, load_main_source, load_reachable_modules,
     load_reachable_modules_with_file_urls, module_fs_snapshot_for_roots, repo_root_from_manifest,
@@ -381,6 +383,101 @@ fn lowers_direct_nary_injections_matches_and_terminal_builtins() {
 }
 
 #[test]
+fn missing_or_ambiguous_declared_entry_is_rejected() {
+    let db = TestDb::default();
+    let span = test_span(&db);
+    for entries in [
+        vec!["missing".into()],
+        vec!["first".into(), "second".into()],
+    ] {
+        let program = Program {
+            span,
+            entry_points: entries,
+            functions: Vec::new(),
+            objects: Vec::new(),
+        };
+        assert!(translate_hull_program(&db, &program).is_err());
+    }
+}
+
+#[test]
+fn runtime_return_wrapper_uses_an_explicit_checked_entry() {
+    let db = TestDb::default();
+    let span = test_span(&db);
+    let function = |name: &str, value: &str| Function {
+        span,
+        name: name.into(),
+        args: Vec::new(),
+        ret: Ty::word(span),
+        body: vec![Stmt {
+            span,
+            kind: StmtKind::Return(Expr::word(span, value)),
+        }],
+    };
+    let mut program = Program {
+        span,
+        entry_points: Vec::new(),
+        functions: Vec::new(),
+        objects: vec![Object {
+            span,
+            name: "ContractDeploy".into(),
+            code: CodeBlock {
+                span,
+                stmts: Vec::new(),
+                functions: Vec::new(),
+            },
+            inners: vec![Object {
+                span,
+                name: "Contract".into(),
+                code: CodeBlock {
+                    span,
+                    stmts: Vec::new(),
+                    functions: vec![function("main", "7"), function("selected", "42")],
+                },
+                inners: Vec::new(),
+            }],
+        }],
+    };
+    let ordinary_ir = render_hull_program(&db, &program).expect("ordinary empty runtime");
+    let ordinary_entry = ordinary_ir
+        .split("func public %solcore_entry_19_object0_2einner0_2einit")
+        .nth(1)
+        .expect("ordinary runtime entry")
+        .split("\n}")
+        .next()
+        .unwrap();
+    assert!(ordinary_entry.contains("evm_stop"), "{ordinary_ir}");
+    assert!(!ordinary_entry.contains("call "), "{ordinary_ir}");
+    let module = translate_hull_program_returning_runtime_entry(&db, &program, "selected")
+        .expect("explicit runtime entry");
+    let ir = ModuleWriter::new(&module).dump_string();
+    let runtime_entry = ir
+        .split("func public %solcore_entry_19_object0_2einner0_2einit")
+        .nth(1)
+        .expect("runtime entry")
+        .split("\n}")
+        .next()
+        .unwrap();
+    assert!(runtime_entry.contains("8_selected"), "{ir}");
+    assert!(!runtime_entry.contains("4_main"), "{ir}");
+    assert!(runtime_entry.contains("evm_return"), "{ir}");
+
+    assert!(translate_hull_program_returning_runtime_entry(&db, &program, "missing").is_err());
+    program.objects[0].inners[0].code.functions[1]
+        .args
+        .push(Arg {
+            span,
+            name: "arg".into(),
+            ty: Ty::word(span),
+        });
+    assert!(translate_hull_program_returning_runtime_entry(&db, &program, "selected").is_err());
+    program.objects[0].inners.clear();
+    assert!(translate_hull_program_returning_runtime_entry(&db, &program, "selected").is_err());
+    program.objects.clear();
+    assert!(translate_hull_program_returning_runtime_entry(&db, &program, "selected").is_err());
+}
+
+#[test]
 fn source_main_lowers_through_hull_to_verified_ir() {
     let (_, ir) = lower_source(
         r#"
@@ -441,32 +538,6 @@ case Choice.Right(x) { return x; }}
     assert!(ir.contains("enum.extract"), "{ir}");
     assert!(ir.contains(" br ") || ir.contains("\n        br "), "{ir}");
     insta::assert_snapshot!("source_aggregate_ir", ir);
-}
-
-#[test]
-fn contract_object_data_symbols_and_inline_evm_lower_to_verified_ir() {
-    let (_, ir) = lower_source(
-        r#"
-contract MemoryContract {
-  function main() returns (word) {
-    let result : word;
-    assembly {
-      mstore(0, 42)
-      result := mload(0)
-    }
-    return result;
-  }
-}
-"#,
-    );
-
-    assert!(ir.contains("object @MemoryContractDeploy"), "{ir}");
-    assert!(ir.contains("embed .runtime as &MemoryContract"), "{ir}");
-    // Hull deployment's dataoffset/datasize become Sonatina embed-symbol ops.
-    assert!(ir.contains("sym_addr &MemoryContract"), "{ir}");
-    assert!(ir.contains("sym_size &MemoryContract"), "{ir}");
-    assert!(ir.contains("evm_mstore "), "{ir}");
-    assert!(ir.contains("evm_mload "), "{ir}");
 }
 
 #[test]
@@ -1279,3 +1350,6 @@ fn assert_verified(module: &Module) {
         "Sonatina verification failed:\n{report}"
     );
 }
+
+#[path = "source_regressions/mod.rs"]
+mod source_regressions;

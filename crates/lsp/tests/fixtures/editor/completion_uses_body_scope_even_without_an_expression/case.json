@@ -1,0 +1,20 @@
+{
+  "documents": [
+    "main.sol"
+  ],
+  "checks": [
+    {
+      "kind": "completion",
+      "at": {
+        "needle": "  \n",
+        "offset": 2
+      },
+      "contains": [
+        {
+          "label": "input",
+          "kind": 6
+        }
+      ]
+    }
+  ]
+}

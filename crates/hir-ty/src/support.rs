@@ -140,19 +140,28 @@ pub fn is_canonical_std_module_def_named(
     module_name: &str,
     name: &str,
 ) -> bool {
-    if def.name(db).as_deref() != Some(name) {
-        return false;
-    }
+    def.name(db).as_deref() == Some(name) && is_canonical_std_module_def(db, def, module_name)
+}
 
+/// Tests source ownership independently of the logical module used to load it.
+pub(crate) fn is_canonical_std_module_def(db: &dyn Db, def: DefId<'_>, module_name: &str) -> bool {
+    std_definition_module_path(db, def).is_some_and(|path| path.as_slice() == [module_name])
+}
+
+/// Standard source ownership is independent of which overlapping library root
+/// supplied the file. This also supports virtual files without filesystem URLs.
+pub(crate) fn is_std_definition(db: &dyn Db, def: DefId<'_>) -> bool {
+    std_definition_module_path(db, def).is_some()
+}
+
+fn std_definition_module_path(db: &dyn Db, def: DefId<'_>) -> Option<Vec<String>> {
     let file = def.file(db);
     let tree = db.module_tree();
-    let is_std_root_file = hir::url_to_file_path(file.url(db))
+    hir::url_to_file_path(file.url(db))
         .and_then(|path| module_key_for_path(LibraryId::Std, tree.std_root(db), &path))
-        .is_some_and(|key| key.logical_path.as_slice() == [module_name]);
-
-    is_std_root_file
-        || module_id_for_source_file(db, file).is_some_and(|module| {
-            module.library(db) == &LibraryId::Std
-                && module.logical_path(db).as_slice() == [module_name]
+        .map(|key| key.logical_path)
+        .or_else(|| {
+            let module = module_id_for_source_file(db, file)?;
+            (module.library(db) == &LibraryId::Std).then(|| module.logical_path(db).clone())
         })
 }

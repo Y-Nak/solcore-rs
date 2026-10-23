@@ -19,7 +19,7 @@ use hir::{
 };
 use hir_ty::{
     AliasNormalizer, BinderEnv, BuiltinTyCtor, Ty as SemTy, TyCtor, TyKind as SemTyKind,
-    TypeLowering, UserTyCtorKind, contract::FrontendTransform, is_canonical_std_def_named,
+    TypeLowering, UserTyCtorKind, is_canonical_std_def_named,
 };
 use parser::parse_file_to_hir;
 use specialize::{
@@ -37,10 +37,12 @@ use crate::{
     word::{canonical_word_literal, wrap_word_literal},
 };
 
+mod assembly;
 mod contract;
 mod diagnostics;
 mod emitter;
 mod layout;
+mod layout_finiteness;
 mod match_compile;
 mod reachability;
 mod storage;
@@ -76,7 +78,7 @@ struct Emitter<'db> {
     scopes: ScopeStack<BTreeMap<String, Expr<'db>>>,
     function_names: BTreeSet<String>,
     layout_stack: Vec<(DefId<'db>, Vec<SemTy<'db>>)>,
-    if_stmt_spans: Vec<Span<'db>>,
+    layout_finiteness: layout_finiteness::LayoutFiniteness<'db>,
     predeclared_lets: Vec<PredeclaredLet<'db>>,
     /// Runtime allocators for compile-time string literals, keyed by decoded
     /// UTF-8 bytes so equivalent literal spellings share one helper.
@@ -91,9 +93,23 @@ struct Emitter<'db> {
     fresh: usize,
 }
 
+/// Identity of a declaration occurrence in the immutable Mono tree currently
+/// being emitted. Source spans identify provenance, not bindings: generated
+/// captures and cloned bodies can contain distinct declarations with equal spans.
+/// Entries are retained only while their owning control-flow tree is borrowed;
+/// this pointer is compared for identity and is never dereferenced.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct DeclarationId<'db>(*const MonoStmt<'db>);
+
+impl<'db> DeclarationId<'db> {
+    fn of(stmt: &MonoStmt<'db>) -> Self {
+        Self(std::ptr::from_ref(stmt))
+    }
+}
+
 #[derive(Clone)]
 struct PredeclaredLet<'db> {
-    span: Span<'db>,
+    declaration: DeclarationId<'db>,
     backend_name: String,
     ty: Ty<'db>,
 }

@@ -1,0 +1,10 @@
+{
+  "source": "callable_capture.sol",
+  "loader": "fixture",
+  "frontend_clean": true,
+  "checks": [
+    {
+      "check": "no_closure_dispatch"
+    }
+  ]
+}

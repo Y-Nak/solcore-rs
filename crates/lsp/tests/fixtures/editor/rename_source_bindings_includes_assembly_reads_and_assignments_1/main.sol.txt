@@ -1,0 +1,1 @@
+function main(input: word) returns (word) { let value: word = input; assembly { value := add(value, 1) } return value; }

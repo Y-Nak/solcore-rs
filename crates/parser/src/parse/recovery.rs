@@ -86,7 +86,7 @@ fn line_index(source: &str, offset: usize) -> usize {
         .count()
 }
 
-fn is_statement_start_token(token: &Token<'_>) -> bool {
+pub(super) fn is_structured_statement_start(token: &Token<'_>) -> bool {
     matches!(
         token,
         Token::Let
@@ -98,7 +98,11 @@ fn is_statement_start_token(token: &Token<'_>) -> bool {
             | Token::LBrace
             | Token::Break
             | Token::Continue
-    ) || matches!(token, Token::Ident("while"))
+    )
+}
+
+fn is_statement_start_token(token: &Token<'_>) -> bool {
+    is_structured_statement_start(token) || matches!(token, Token::Ident("while"))
 }
 
 pub(super) fn refine_body_parse_error<'src>(

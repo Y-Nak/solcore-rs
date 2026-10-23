@@ -16,10 +16,11 @@ proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 smallvec = "1"
-sonatina-codegen = { git = "https://github.com/fe-lang/sonatina", rev = "55ca888" }
-sonatina-ir = { git = "https://github.com/fe-lang/sonatina", rev = "55ca888" }
-sonatina-triple = { git = "https://github.com/fe-lang/sonatina", rev = "55ca888" }
-sonatina-verifier = { git = "https://github.com/fe-lang/sonatina", rev = "55ca888" }
+# Preserve simultaneous phi updates when loop-carried values spill to memory.
+sonatina-codegen = { git = "https://github.com/fe-lang/sonatina", rev = "8ee24814ea9b32c762df8ef80c796e7d48797c0f" }
+sonatina-ir = { git = "https://github.com/fe-lang/sonatina", rev = "8ee24814ea9b32c762df8ef80c796e7d48797c0f" }
+sonatina-triple = { git = "https://github.com/fe-lang/sonatina", rev = "8ee24814ea9b32c762df8ef80c796e7d48797c0f" }
+sonatina-verifier = { git = "https://github.com/fe-lang/sonatina", rev = "8ee24814ea9b32c762df8ef80c796e7d48797c0f" }
 parser = { path = "crates/parser", package = "solcore-parser" }
 hir = { path = "crates/hir", package = "solcore-hir" }
 nameres = { path = "crates/nameres", package = "solcore-nameres" }

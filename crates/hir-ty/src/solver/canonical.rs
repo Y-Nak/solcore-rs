@@ -50,6 +50,51 @@ impl<'db> TableKey<'db> {
     }
 }
 
+/// Stabilize a fully determined dictionary root across nested canonical goals.
+/// Unsolved variables cannot safely identify an ancestor: later prerequisites
+/// can refine them, so those roots retain the final evidence cycle check.
+pub(super) fn stable_branch_root<'db>(
+    db: &'db dyn Db,
+    root: evidence::BranchRoot<'db>,
+    key: &TableKey<'db>,
+) -> Option<evidence::BranchRoot<'db>> {
+    use evidence::BranchRoot;
+    let mut vars = FxHashSet::default();
+    match &root {
+        BranchRoot::Instance(_, args) => {
+            for arg in args {
+                collect_ty_vars(db, *arg, &mut vars);
+            }
+        }
+        BranchRoot::Superclass(_, pred) | BranchRoot::Derived(_, pred) => {
+            collect_pred_vars(db, *pred, &mut vars);
+        }
+    }
+    let var_map = key
+        .rigid_vars
+        .iter()
+        .map(|var| (var.actual, var.origin))
+        .collect::<FxHashMap<_, _>>();
+    if !vars.iter().all(|var| var_map.contains_key(var)) {
+        return None;
+    }
+    let canonicalizer = GoalCanonicalizer {
+        db,
+        flex_count: 0,
+        var_map,
+    };
+    Some(match root {
+        BranchRoot::Instance(instance, args) => BranchRoot::Instance(
+            instance,
+            args.into_iter().map(|arg| canonicalizer.ty(arg)).collect(),
+        ),
+        BranchRoot::Superclass(class, pred) => {
+            BranchRoot::Superclass(class, canonicalizer.pred(pred))
+        }
+        BranchRoot::Derived(kind, pred) => BranchRoot::Derived(kind, canonicalizer.pred(pred)),
+    })
+}
+
 #[derive(Clone, Default)]
 pub(super) struct GoalRenaming {
     flex_actuals: Vec<u32>,

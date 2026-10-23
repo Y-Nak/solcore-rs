@@ -396,6 +396,46 @@ impl Workspace {
         }
     }
 
+    /// Copies the current virtual files and roots into an independent database.
+    ///
+    /// Unlike a Salsa snapshot, the returned workspace can be mutated without
+    /// cancelling queries or changing the original workspace. This supports
+    /// speculative refactorings using the same imports and source overlays.
+    pub fn fork(&self) -> Self {
+        let mut host = AnalysisHost::new();
+        let tree = self
+            .host
+            .module_tree
+            .expect("AnalysisHost module tree is initialized");
+        host.module_tree = Some(
+            ModuleTree::builder(
+                tree.main_root(&self.host).clone(),
+                tree.std_root(&self.host).clone(),
+                tree.external_roots(&self.host).clone(),
+            )
+            .durability(Durability::HIGH)
+            .new(&host),
+        );
+        let mut changes = FileChanges::default();
+        for (path, file) in &self.host.files {
+            let copied = SourceFile::new(
+                &host,
+                file.url(&self.host).clone(),
+                file.content(&self.host).clone(),
+            );
+            host.files.insert(path.clone(), copied);
+            changes.file_set_changed = true;
+            changes.module_files_changed |= host.register_module_file(path, copied);
+        }
+        host.finish_file_changes(changes);
+        let mut workspace = Self {
+            host,
+            entry_path: self.entry_path.clone(),
+        };
+        workspace.load_entry_modules();
+        workspace
+    }
+
     /// Adds or replaces a user file under `/main`.
     ///
     /// Both `main.sol` and `/main/main.sol` refer to `/main/main.sol`.
@@ -933,6 +973,48 @@ mod tests {
         workspace.set_file("main.sol", source.to_owned());
         workspace.set_entry("main.sol");
         workspace
+    }
+
+    #[test]
+    fn fork_preserves_virtual_roots_overlays_and_entry_without_sharing_mutations() {
+        let source = "import * from @math.lib; import * from std; function main() returns (word) { return answer(); }";
+        let mut original = workspace_with_main(source);
+        original.set_external_file(
+            "math",
+            "lib.sol",
+            "export {answer}; function answer() returns (word) { return 42; }".to_owned(),
+        );
+        original.db_mut().set_virtual_file(
+            "/std/lib.sol",
+            "function custom() returns (word) { return 7; }".to_owned(),
+        );
+        let missing = original
+            .db_mut()
+            .set_virtual_file("/main/unavailable.sol", String::new());
+        missing.set_content(original.db_mut()).to(None);
+        assert!(messages(&original).is_empty(), "{:?}", messages(&original));
+        let mut fork = original.fork();
+        assert_eq!(messages(&fork), messages(&original));
+        assert!(fork.entry_module().is_some());
+        assert_eq!(fork.host.files.len(), original.host.files.len());
+        for (path, file) in &original.host.files {
+            let copied = fork.db().source_file(path).expect("copied virtual file");
+            assert_eq!(copied.content(fork.db()), file.content(original.db()));
+        }
+
+        fork.set_file("main.sol", "function changed() {}".to_owned());
+        fork.remove_external_file("math", "lib.sol");
+        assert_eq!(
+            original
+                .db()
+                .source_file("/main/main.sol")
+                .unwrap()
+                .content(original.db())
+                .as_deref(),
+            Some(source)
+        );
+        assert!(original.db().source_file("/ext/math/lib.sol").is_some());
+        assert!(fork.db().source_file("/ext/math/lib.sol").is_none());
     }
 
     fn messages(workspace: &Workspace) -> Vec<String> {

@@ -1,0 +1,5 @@
+import { allB } from b;
+import { allA } from a;
+function main() returns (word) {
+    return primAddWord(allB(), allA());
+}

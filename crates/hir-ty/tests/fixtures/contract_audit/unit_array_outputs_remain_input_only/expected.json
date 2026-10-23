@@ -1,0 +1,17 @@
+{
+  "surface": {
+    "contract": "C",
+    "diagnostics": {
+      "contains": [
+        {
+          "code": "SC0231",
+          "message": "input-only",
+          "count": 2
+        }
+      ]
+    },
+    "abi": {
+      "valid": false
+    }
+  }
+}
