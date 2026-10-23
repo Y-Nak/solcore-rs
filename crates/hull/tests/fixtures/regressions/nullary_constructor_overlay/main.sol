@@ -1,3 +1,5 @@
+//~ hull: loader memory
+
 contract C {
     constructor() {}
 
