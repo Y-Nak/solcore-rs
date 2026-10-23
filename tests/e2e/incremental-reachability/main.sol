@@ -41,7 +41,8 @@ contract IncrementalReachability {
     // #[(2) -> 1]
     // #[(5) -> 1]
     function nestedMatch(count: uint256) public returns (uint256) {
-        for (let i: uint256 = uint256(0); i < count; i = i + uint256(1)) {
+        let i: uint256 = uint256(0);
+        for (; i < count; i = i + uint256(1)) {
             match (i == uint256(0)) {
                 case true {
                     match (count == uint256(1)) {

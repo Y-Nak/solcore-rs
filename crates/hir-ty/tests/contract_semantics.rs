@@ -402,6 +402,52 @@ contract C {
 }
 
 #[test]
+fn lexical_scopes_restore_outer_sail_types_for_assembly() {
+    for (case, scoped) in [
+        ("block", "{ let value: bool = true; }"),
+        (
+            "if branches",
+            "if (true) { let value: bool = true; } else { assembly { pop(value) } }",
+        ),
+        (
+            "for initializer",
+            "for (let value: bool = true; false; ) {}",
+        ),
+        ("for body", "for (; false; ) { let value: bool = true; }"),
+        // Post-clause declarations are accepted, but the body and following
+        // assembly must still resolve the surrounding Sail variable.
+        (
+            "for post",
+            "for (; false; let value: bool = true) { assembly { pop(value) } }",
+        ),
+        ("while body", "while (false) { let value: bool = true; }"),
+        (
+            "match arms",
+            "match (true) { case true { let value: bool = true; } case false { assembly { pop(value) } } }",
+        ),
+        (
+            "lambda parameter",
+            "let identity = lam (value: bool) { return value; };",
+        ),
+    ] {
+        let source = format!(
+            r#"
+contract C {{
+  function main() returns (word) {{
+    let value: word = 1;
+    {scoped}
+    assembly {{ pop(value) }}
+    return value;
+  }}
+}}
+"#,
+        );
+        let diagnostics = diagnostics(&source);
+        assert!(diagnostics.is_empty(), "{case}: {diagnostics:?}");
+    }
+}
+
+#[test]
 fn yul_for_body_values_do_not_leak_into_the_post_block() {
     let diagnostics = diagnostics(
         r#"

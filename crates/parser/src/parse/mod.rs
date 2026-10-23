@@ -463,7 +463,10 @@ fn validate_expression_statement_terminators(
                     validate_expression_statement_terminators(&arm.body, false, errors);
                 }
             }
-            ParsedStmtKind::For { body, .. } | ParsedStmtKind::Block { body } => {
+            ParsedStmtKind::For { body, .. } => {
+                validate_expression_statement_terminators(&body.stmts, false, errors);
+            }
+            ParsedStmtKind::Block { body } => {
                 validate_expression_statement_terminators(body, false, errors);
             }
             ParsedStmtKind::If {
@@ -471,9 +474,9 @@ fn validate_expression_statement_terminators(
                 else_body,
                 ..
             } => {
-                validate_expression_statement_terminators(then_body, false, errors);
+                validate_expression_statement_terminators(&then_body.stmts, false, errors);
                 if let Some(else_body) = else_body {
-                    validate_expression_statement_terminators(else_body, false, errors);
+                    validate_expression_statement_terminators(&else_body.stmts, false, errors);
                 }
             }
             _ => {}
@@ -1399,7 +1402,7 @@ match (left, right) {
         else {
             panic!("unexpected body: {:#?}", body.output);
         };
-        assert!(init.is_empty() && post.is_empty() && loop_body.len() == 1);
+        assert!(init.is_empty() && post.stmts.is_empty() && loop_body.stmts.len() == 1);
         assert_eq!(scrutinees.len(), 2);
         assert_eq!(arms.len(), 2);
         assert_eq!(arms[0].pats.len(), 2);

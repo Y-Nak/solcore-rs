@@ -1,6 +1,7 @@
 function main(flag: bool, n: word) returns (word) {
+    let value: word = n;
     if (flag) {
-        let value: word = n;
+        let value: bool = true;
     } else {}
     let get: function () returns (word) = lam () -> word {
         assembly {

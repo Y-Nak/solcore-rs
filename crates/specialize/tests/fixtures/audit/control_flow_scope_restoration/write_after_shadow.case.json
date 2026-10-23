@@ -4,8 +4,8 @@
   "frontend_clean": true,
   "checks": [
     {
-      "check": "main_return_number",
-      "value": "7"
+      "check": "main_return_variable",
+      "name": "seed"
     }
   ]
 }

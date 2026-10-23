@@ -260,7 +260,7 @@ contract MutablePatternBindings {
         return uint256(count);
     }
 
-    // #[() -> 2]
+    // #[() -> 1]
     function knownIfRebinding() public returns (uint256) {
         let x: word = 1;
         if (true) {
@@ -271,19 +271,20 @@ contract MutablePatternBindings {
 
     // #[() -> 42]
     function knownIfDeclaration() public returns (uint256) {
+        let x: word = 0;
         if (true) {
-            let x: word = 42;
+            x = 42;
         }
         let answer: comptime<word> = x;
         return uint256(answer);
     }
 
-    // #[() -> 2]
+    // #[() -> 1]
     function pureIfRebinding() public returns (uint256) {
         return uint256(knownIfBinding());
     }
 
-    // #[(1) -> 2]
+    // #[(1) -> 1]
     // #[(0) -> 3]
     function runtimeIfRebinding(flag: uint256) public returns (uint256) {
         let x: word = 1;

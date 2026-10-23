@@ -1,6 +1,7 @@
 function main(flag: bool, n: word) returns (word) {
+    let value: word = n;
     for (; flag;) {
-        let value: word = n;
+        let value: bool = true;
         break;
     }
     let get: function () returns (word) = lam () -> word {

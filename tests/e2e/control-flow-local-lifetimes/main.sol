@@ -15,16 +15,21 @@ contract ControlFlowLocalLifetimes {
                 if (flag) {
                     let bundle: word = 42;
                 } else {}
-                assembly {
-                    bundle := 7
+                match (bundle) {
+                    case ((apply, value)) {
+                        let result: word;
+                        assembly {
+                            result := add(value, 7)
+                        }
+                        return uint256(apply(result));
+                    }
                 }
-                return uint256(bundle);
             }
         }
     }
 
-    // #[(true) -> 43]
-    // #[(false) -> 1]
+    // #[(true) -> 100]
+    // #[(false) -> 100]
     function branchAssemblyReadWrite(flag: bool) public returns (uint256) {
         let x: word = 99;
         if (flag) {
@@ -36,9 +41,10 @@ contract ControlFlowLocalLifetimes {
         return uint256(x);
     }
 
-    // #[(true) -> 9]
+    // #[(true) -> 2]
     // #[(false) -> 2]
     function nestedBranchClosure(flag: bool) public returns (uint256) {
+        let x: word = 0;
         if (flag) {
             if (flag) {
                 let x: word = 7;
@@ -58,13 +64,15 @@ contract ControlFlowLocalLifetimes {
     // #[(1) -> 7]
     // #[(3) -> 9]
     function loopBodyClosure(count: uint256) public returns (uint256) {
+        let total: word = 0;
         for (let i: uint256 = uint256(0); i < count; i = i + uint256(1)) {
             let x: word = primAddWord(Typedef.rep(i), 7);
+            total = x;
         }
         let get: function () returns (word) = lam () -> word {
             let result: word;
             assembly {
-                result := x
+                result := total
             }
             return result;
         };
@@ -75,22 +83,25 @@ contract ControlFlowLocalLifetimes {
     // #[(1) -> 11]
     // #[(3) -> 13]
     function nestedLoopBranch(count: uint256) public returns (uint256) {
+        let total: word = 0;
         for (let i: uint256 = uint256(0); i < count; i = i + uint256(1)) {
             if (i < uint256(2)) {
                 let x: word = primAddWord(Typedef.rep(i), 10);
+                total = x;
             } else {
-                x = 12;
+                let x: word = 12;
+                total = x;
             }
         }
         assembly {
-            x := add(x, 1)
+            total := add(total, 1)
         }
-        return uint256(x);
+        return uint256(total);
     }
 
-    // #[(0) -> 0]
-    // #[(1) -> 0]
-    // #[(3) -> 2]
+    // #[(0) -> 100]
+    // #[(1) -> 100]
+    // #[(3) -> 100]
     function loopBodyShadow(count: uint256) public returns (uint256) {
         let i: uint256 = uint256(100);
         for (let i: uint256 = uint256(0); i < count; i = i + uint256(1)) {
@@ -99,10 +110,11 @@ contract ControlFlowLocalLifetimes {
         return i;
     }
 
-    // #[(0) -> 0]
-    // #[(1) -> 1]
-    // #[(3) -> 33]
+    // #[(0) -> 7]
+    // #[(1) -> 77]
+    // #[(3) -> 217]
     function loopPostDeclaration(count: uint256) public returns (uint256) {
+        let x: word = 7;
         let observed: word = 0;
         for (let i: uint256 = uint256(0); i < count;
             let x: word = primAddWord(Typedef.rep(i), 1), i = i + uint256(1)) {
@@ -120,40 +132,46 @@ contract ControlFlowLocalLifetimes {
     // #[(1) -> 7]
     // #[(4) -> 8]
     function loopEarlyExits(count: uint256) public returns (uint256) {
+        let result: word = 0;
         for (let i: uint256 = uint256(0); i < count; i = i + uint256(1)) {
             let x: word = primAddWord(Typedef.rep(i), 7);
+            result = x;
             if (eqWord(Typedef.rep(i), 1)) {
                 break;
             }
             continue;
         }
-        return uint256(x);
+        return uint256(result);
     }
 
     // #[(0) -> 0]
     // #[(3) -> 1]
     function loopDefaultInitialization(count: uint256) public returns (uint256) {
+        let result: word = 0;
         for (let i: uint256 = uint256(0); i < count; i = i + uint256(1)) {
             let x: word;
             assembly {
                 x := add(x, 1)
             }
+            result = x;
         }
-        return uint256(x);
+        return uint256(result);
     }
 
     // #[(0) -> 0]
     // #[(3) -> 1]
     function nestedDefaultInitialization(count: uint256) public returns (uint256) {
+        let result: word = 0;
         for (let i: uint256 = uint256(0); i < count; i = i + uint256(1)) {
             if (i < count) {
                 let x: word;
                 assembly {
                     x := add(x, 1)
                 }
+                result = x;
             }
         }
-        return uint256(x);
+        return uint256(result);
     }
 
     // #[(0) -> 0]
@@ -175,8 +193,9 @@ contract ControlFlowLocalLifetimes {
     // #[(true) -> 21]
     // #[(false) -> 14]
     function assemblyLexicalScopes(flag: bool) public returns (uint256) {
+        let x: word = 0;
         if (flag) {
-            let x: word = 7;
+            x = 7;
         } else {}
         let result: word = 0;
         assembly {
@@ -213,10 +232,11 @@ contract ControlFlowLocalLifetimes {
         return uint256(result);
     }
 
-    // #[(true) -> 9]
+    // #[(true) -> 2]
     // #[(false) -> 2]
     function repeatedClosure(flag: bool) public returns (uint256) {
         let read: function (bool) returns (word) = lam (flag: bool) -> word {
+            let x: word = 0;
             if (flag) {
                 let x: word = 7;
             } else {}
@@ -228,28 +248,19 @@ contract ControlFlowLocalLifetimes {
         return uint256(primAddWord(read(flag), read(false)));
     }
 
-    // #[() -> 0]
+    // #[() -> 1]
     function constantFalseDeclaration() public returns (uint256) {
+        let x: word = 1;
         if (false) {
             let x: word = 7;
         } else {}
         return uint256(x);
     }
 
-    // #[() -> 0]
+    // #[() -> 1]
     function constantTrueElseShadow() public returns (uint256) {
+        let x: word = 1;
         if (true) {
-            let x: word = 42;
-        } else {
-            let x: word = 7;
-        }
-        return uint256(x);
-    }
-
-    // #[(true) -> 0]
-    // #[(false) -> 7]
-    function runtimeElseShadow(flag: bool) public returns (uint256) {
-        if (flag) {
             let x: word = 42;
         } else {
             let x: word = 7;
@@ -259,6 +270,18 @@ contract ControlFlowLocalLifetimes {
 
     // #[(true) -> 1]
     // #[(false) -> 1]
+    function runtimeElseShadow(flag: bool) public returns (uint256) {
+        let x: word = 1;
+        if (flag) {
+            let x: word = 42;
+        } else {
+            let x: word = 7;
+        }
+        return uint256(x);
+    }
+
+    // #[(true) -> 2]
+    // #[(false) -> 2]
     function explicitScopeDoesNotEscape(flag: bool) public returns (uint256) {
         let x: word = 1;
         {

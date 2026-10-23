@@ -1,6 +1,6 @@
-//! Source `if` and `for` declarations share their enclosing lexical scope,
-//! even when their runtime region is skipped. Keep that binding order when
-//! selecting a known branch, without evaluating any of its skipped effects.
+//! Mono control-flow regions do not introduce implicit lexical scopes. Source
+//! scopes are represented by explicit blocks. Preserve the binding order of
+//! any unscoped IR declarations without evaluating skipped runtime effects.
 
 use super::*;
 use crate::ir::LetMode;
@@ -79,7 +79,8 @@ impl<'db> Evaluator<'db> {
                         self.skipped_declarations(arm.body, out);
                     }
                 }
-                // Explicit blocks and actual match arms own their bindings.
+                // Explicit blocks (including source branch and loop bodies)
+                // and actual match arms own their bindings.
                 _ => {}
             }
         }

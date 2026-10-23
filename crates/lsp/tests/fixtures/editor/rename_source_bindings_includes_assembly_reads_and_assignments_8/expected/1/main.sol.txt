@@ -1,1 +1,1 @@
-function main(input: word) returns (word) { if (true) { let renamed = input; } assembly { renamed := add(renamed, 1) } return renamed; }
+function main(input: word) returns (word) { if (true) { let renamed = input; assembly { renamed := add(renamed, 1) } return renamed; } return 0; }

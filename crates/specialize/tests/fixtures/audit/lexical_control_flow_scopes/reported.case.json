@@ -1,0 +1,6 @@
+{
+  "source": "reported.sol",
+  "loader": "std",
+  "frontend_clean": true,
+  "checks": [{ "check": "main_return_number", "value": "1" }]
+}

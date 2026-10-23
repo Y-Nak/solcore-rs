@@ -1169,7 +1169,7 @@ contract C {
 }
 
 #[test]
-fn audit_p0_for_initializer_let_remains_visible_after_the_loop() {
+fn audit_p0_for_initializer_let_restores_the_outer_storage_binding() {
     let hull = pretty_src_hull(
         "for_initializer_scope",
         r#"
@@ -1184,12 +1184,11 @@ contract C {
 "#,
     );
     let main = hull_function(&hull, "_main_");
-    assert_contains_in_order("for initializer scope", main, &["let i", "for", "return i"]);
-    assert!(!main.contains("return sload"), "{main}\n{hull}");
+    assert_contains_in_order("for initializer scope", main, &["for", "return sload(0)"]);
 }
 
 #[test]
-fn audit_p0_if_branch_let_is_hoisted_and_remains_a_local() {
+fn audit_p0_if_branch_let_restores_the_outer_storage_binding() {
     let hull = pretty_src_hull_with_std(
         "if_branch_let_scope",
         r#"
@@ -1211,17 +1210,11 @@ contract C {
     );
     let main = hull_function(&hull, "_f_");
     assert_contains_in_order(
-        "if branch let hoisting",
+        "if branch lexical scope",
         main,
-        &[
-            "let $if_local",
-            "match",
-            "$if_local",
-            ":= 7",
-            "return $if_local",
-        ],
+        &["match", "let x", "x := 7", "return CanStore_load_"],
     );
-    assert!(!main.contains("return sload(0)"), "{main}\n{hull}");
+    assert!(!main.contains("$if_local"), "{main}\n{hull}");
     assert_contains_in_order(
         "short-circuit and lowering",
         main,

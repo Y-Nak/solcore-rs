@@ -70,13 +70,14 @@ contract KnownIfBindingOrder {
         return uint256(requireStatic(x));
     }
 
-    // #[() -> 0]
+    // #[() -> 7]
     function unavailableRead() public returns (uint256) {
         return uint256(readSkipped());
     }
 
     // #[() -> 7]
     function unavailableAssignment() public returns (uint256) {
+        let x: word = 0;
         if (false) {
             let x: word = 9;
         } else {

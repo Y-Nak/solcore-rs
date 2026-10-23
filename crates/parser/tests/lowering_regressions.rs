@@ -63,6 +63,24 @@ fn top_function<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> Functi
         .expect("top-level function")
 }
 
+#[test]
+fn empty_loop_post_clauses_have_valid_scope_spans() {
+    for separator in ["", " ", "\n    ", " /* empty post */ "] {
+        let source = format!(
+            "function f() {{ for (let i = 0; false;{separator}) {{}} while (false) {{}} }}"
+        );
+        let db = TestDb::default();
+        let (file, module) = parse_module(&db, "empty_loop_post", &source);
+        assert!(diagnostics(&db, file).is_empty(), "{source}");
+        let body = top_function(&db, module, "f").body(&db).expect("body");
+        for (_, stmt) in body.stmts(&db).iter() {
+            let span = stmt.span.resolve_to_absolute(&db);
+            assert!(span.start() <= span.end(), "{source}: {stmt:?}");
+            assert!(span.end().as_usize() <= source.len());
+        }
+    }
+}
+
 fn contract_function<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> FunctionDef<'db> {
     module
         .items(db)

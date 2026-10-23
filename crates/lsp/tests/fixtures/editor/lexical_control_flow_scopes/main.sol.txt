@@ -1,0 +1,15 @@
+function main(flag: bool) returns (word) {
+    let outer: word = 1;
+    if (flag) {
+        let branch: word = 2;
+        /* then */
+    } else {
+        /* else */
+    }
+    for (let index: word = 0; flag; index = 1) {
+        let inner: word = 3;
+        /* loop */
+    }
+    /* after */
+    return outer;
+}

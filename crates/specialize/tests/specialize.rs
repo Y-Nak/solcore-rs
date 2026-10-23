@@ -4148,7 +4148,7 @@ contract C {
 }
 
 #[test]
-fn if_statement_preserves_shared_scope_through_pre_typeck_view() {
+fn if_statement_preserves_lexical_blocks_through_pre_typeck_view() {
     let (_db, output) = specialize_src(
         r#"
 contract C {
@@ -4184,16 +4184,23 @@ contract C {
     } = &main.body[1].kind
     else {
         panic!(
-            "expected if statement to preserve its shared scope: {:#?}",
+            "expected if statement to preserve its lexical blocks: {:#?}",
             main.body
         );
     };
     assert!(matches!(&cond.kind, MonoExprKind::Var(_)));
-    assert!(matches!(then_body[0].kind, MonoStmtKind::Assign { .. }));
-    assert!(matches!(
-        else_body.as_ref().unwrap()[0].kind,
-        MonoStmtKind::Assign { .. }
-    ));
+    for branch in [then_body, else_body.as_ref().unwrap()] {
+        let [
+            MonoStmt {
+                kind: MonoStmtKind::Block(body),
+                ..
+            },
+        ] = branch.as_slice()
+        else {
+            panic!("expected one lexical block in each branch: {branch:#?}");
+        };
+        assert!(matches!(body[0].kind, MonoStmtKind::Assign { .. }));
+    }
 }
 
 #[test]

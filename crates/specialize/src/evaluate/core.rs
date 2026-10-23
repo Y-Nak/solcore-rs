@@ -469,9 +469,10 @@ impl<'db> Evaluator<'db> {
         ret_comptime: bool,
         scope: &mut ScopeBindings<'db>,
     ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
-        // Non-scoping control flow shares this registry with its enclosing
-        // sequence. Declarations update it once; lexical scope entry/exit owns
-        // the snapshots, rather than copying every visible binding per statement.
+        // Control-flow regions share this registry with their enclosing
+        // sequence. Explicit blocks and match arms own lexical scope entry/exit
+        // and its snapshots. Declarations update the registry once, rather than
+        // copying every visible binding per statement.
         let mut out = Vec::new();
         for stmt in stmts {
             let (next_env, next_comptime_env, mut stmts) =
@@ -552,9 +553,9 @@ impl<'db> Evaluator<'db> {
         !self.stmts_binding_effects(body).is_empty()
     }
 
-    /// Source `if` and `for` declarations become visible in source order,
-    /// independently of which runtime branch executes. Explicit blocks and
-    /// actual match arms, in contrast, own their declarations.
+    /// Declarations in transparent IR regions become visible in traversal order.
+    /// Explicit blocks, including source branch/loop scopes, and actual match
+    /// arms own their declarations and stop this traversal.
     fn stmts_binding_effects(&self, body: &[MonoStmt<'db>]) -> AssignedNames {
         let mut bindings = AssignedNames::empty();
         for stmt in body {
@@ -1159,8 +1160,8 @@ impl<'db> Evaluator<'db> {
                 self.expr_is_known_value(expr)
             });
             if let Some(matched) = matched {
-                // Source `if` is desugared to a match, but does not
-                // introduce an arm scope in the source language.
+                // Desugared `if` regions retain the explicit blocks that
+                // represent their source scopes; do not add a match arm scope.
                 if self.if_stmt_spans.contains(&span) {
                     let body = self
                         .select_source_branch(arms.into_iter().map(|arm| arm.body), matched.index);
@@ -1220,8 +1221,8 @@ impl<'db> Evaluator<'db> {
             scrutinees,
             arms,
         } = input;
-        // Desugared source `if` arms can introduce bindings visible
-        // after the statement, including from an unexecuted branch.
+        // Desugared `if` regions preserve any unscoped IR declarations in
+        // traversal order. Source declarations are enclosed in explicit blocks.
         // Only actual matches can discard their static columns here.
         let source_if = self.if_stmt_spans.contains(&span);
         let specialize_columns = !source_if

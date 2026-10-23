@@ -338,6 +338,16 @@ where
             .separated_by(just(Token::Comma))
             .collect::<Vec<_>>()
             .boxed();
+        let braced_stmts = stmt
+            .clone()
+            .repeated()
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LBrace), just(Token::RBrace))
+            .map_with(|stmts, e| ParsedStmtScope {
+                span: e.span(),
+                stmts,
+            })
+            .boxed();
         let for_stmt = just(Token::For)
             .ignore_then(
                 for_items
@@ -345,15 +355,21 @@ where
                     .then_ignore(just(Token::Semi))
                     .then(parsed_expr_parser())
                     .then_ignore(just(Token::Semi))
-                    .then(for_items)
+                    .then(for_items.map_with(|stmts, e| {
+                        let span: LexSpan = e.span();
+                        // Empty token sequences can have an inverted span
+                        // across skipped whitespace/comments. Their lexical
+                        // extent is just the insertion point before `)`.
+                        let span = if stmts.is_empty() {
+                            (span.start..span.start).into()
+                        } else {
+                            span
+                        };
+                        ParsedStmtScope { span, stmts }
+                    }))
                     .delimited_by(just(Token::LParen), just(Token::RParen)),
             )
-            .then(
-                stmt.clone()
-                    .repeated()
-                    .collect::<Vec<_>>()
-                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
-            )
+            .then(braced_stmts.clone())
             .map_with(|(((init, cond), post), body), e| ParsedStmt {
                 span: e.span(),
                 kind: ParsedStmtKind::For {
@@ -369,18 +385,16 @@ where
             .ignore_then(
                 parsed_expr_parser().delimited_by(just(Token::LParen), just(Token::RParen)),
             )
-            .then(
-                stmt.clone()
-                    .repeated()
-                    .collect::<Vec<_>>()
-                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
-            )
+            .then(braced_stmts.clone())
             .map_with(|(cond, body), e| ParsedStmt {
                 span: e.span(),
                 kind: ParsedStmtKind::For {
                     init: Vec::new(),
+                    post: ParsedStmtScope {
+                        span: (cond.span.end..cond.span.end).into(),
+                        stmts: Vec::new(),
+                    },
                     cond,
-                    post: Vec::new(),
                     body,
                 },
             })
@@ -390,22 +404,8 @@ where
             .ignore_then(
                 parsed_expr_parser().delimited_by(just(Token::LParen), just(Token::RParen)),
             )
-            .then(
-                stmt.clone()
-                    .repeated()
-                    .collect::<Vec<_>>()
-                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
-            )
-            .then(
-                just(Token::Else)
-                    .ignore_then(
-                        stmt.clone()
-                            .repeated()
-                            .collect::<Vec<_>>()
-                            .delimited_by(just(Token::LBrace), just(Token::RBrace)),
-                    )
-                    .or_not(),
-            )
+            .then(braced_stmts.clone())
+            .then(just(Token::Else).ignore_then(braced_stmts.clone()).or_not())
             .map_with(|((cond, then_body), else_body), e| ParsedStmt {
                 span: e.span(),
                 kind: ParsedStmtKind::If {
