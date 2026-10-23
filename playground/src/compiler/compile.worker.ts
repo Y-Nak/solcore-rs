@@ -1,16 +1,21 @@
-import { compile, initializeCompiler, initializeSolc, needsSolc, run, watch } from "./runtime";
-import type { WorkerRequest, WorkerResponse } from "./types";
+import { compile, configureSolcUrl, initializeCompiler, initializeSolc, needsSolc, run, watch } from "./runtime";
+import type { ConfigureRuntimeRequest, WorkerRequest, WorkerResponse } from "./types";
 
 const workerScope = self as unknown as {
   addEventListener: (
     type: "message",
-    listener: (event: MessageEvent<WorkerRequest>) => void,
+    listener: (event: MessageEvent<WorkerRequest | ConfigureRuntimeRequest>) => void,
   ) => void;
   postMessage: (response: WorkerResponse) => void;
 };
 
-workerScope.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
+workerScope.addEventListener("message", (event: MessageEvent<WorkerRequest | ConfigureRuntimeRequest>) => {
   const request = event.data;
+
+  if (request.kind === "configure-runtime") {
+    configureSolcUrl(request.solcUrl);
+    return;
+  }
 
   if (request.kind !== "compile" && request.kind !== "run" && request.kind !== "discover" && request.kind !== "watch") {
     return;
