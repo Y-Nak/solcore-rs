@@ -1,0 +1,5 @@
+---
+source: crates/parser/tests/tokens.rs
+expression: tokens
+---
+Ident("foo_bar")

@@ -303,14 +303,14 @@ pub enum Token<'a> {
 
     /// A complete backtick-delimited Yul quasiquote antiquotation.
     ///
-    /// This is tokenized so the source parser can reject Haskell's internal
+    /// This is tokenized so the source parser can reject unsupported internal
     /// template syntax with a specific diagnostic.
     #[regex(r"`[^`]*`", |lex| lex.slice())]
     YulMetaBacktick(&'a str),
 
     /// A complete `${...}` Yul quasiquote antiquotation.
     ///
-    /// This is tokenized so the source parser can reject Haskell's internal
+    /// This is tokenized so the source parser can reject unsupported internal
     /// template syntax with a specific diagnostic.
     #[regex(r"\$\{[^}]*\}", |lex| lex.slice())]
     YulMetaInterpolation(&'a str),

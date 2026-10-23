@@ -10,3 +10,7 @@ function main(x: word) returns (word) {
         }
     }
 }
+
+//~ loader: bare
+//~ nameres-empty
+//~ infer: main diagnostics-empty

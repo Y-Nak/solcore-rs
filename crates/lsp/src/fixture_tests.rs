@@ -1,4 +1,5 @@
-//! Declarative editor fixtures preserve the exact document text and UTF-16 positions.
+//! Directory editor fixtures preserve the exact document text and UTF-16 positions.
+//! Typed Rust checks live in `cases`; editor buffers contain only the tested text.
 //!
 //! `.sol.txt` files are editor buffers, including incomplete syntax and deliberate
 //! spacing, opened under `.sol` URIs. Each check starts with fresh documents;
@@ -11,19 +12,14 @@ use lsp_types::{
     CompletionItemKind, CompletionResponse, DiagnosticSeverity, GotoDefinitionResponse, Position,
     Url, WorkspaceEdit,
 };
-use serde::Deserialize;
 
 use crate::{LineIndexExt, WorldState};
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Case {
     documents: Vec<String>,
     checks: Vec<Check>,
 }
 
-#[derive(Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum Check {
     Rename(Rename),
     RenameSequence {
@@ -31,10 +27,8 @@ enum Check {
     },
     Completion {
         at: Cursor,
-        #[serde(default)]
         parse_clean: bool,
         contains: Vec<ExpectedCompletion>,
-        #[serde(default)]
         excludes: Vec<String>,
     },
     Signature {
@@ -43,27 +37,19 @@ enum Check {
     },
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ExpectedCompletion {
     label: String,
     kind: CompletionItemKind,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Cursor {
-    #[serde(default = "main_document")]
     document: String,
     needle: String,
-    #[serde(default)]
     occurrence: Occurrence,
-    #[serde(default)]
     offset: usize,
 }
 
-#[derive(Default, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Default)]
 enum Occurrence {
     #[default]
     First,
@@ -71,42 +57,52 @@ enum Occurrence {
     All,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Default)]
 struct Rename {
     at: Cursor,
     new_name: String,
     accepted: bool,
-    #[serde(default)]
     prepare: bool,
-    #[serde(default)]
     no_errors_before: bool,
-    #[serde(default)]
     no_errors_after: bool,
     references: Option<usize>,
     /// Bound compiler body-resolution work independently of wall-clock speed.
     max_resolved_bodies: Option<usize>,
     definition: Option<Cursor>,
-    #[serde(default)]
     expected_documents: BTreeMap<String, String>,
-    #[serde(default)]
     contents: Vec<ContentExpectation>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ContentExpectation {
-    #[serde(default = "main_document")]
     document: String,
     text: String,
     count: Option<usize>,
-    #[serde(default)]
     absent: bool,
 }
 
-fn main_document() -> String {
-    "main.sol".to_owned()
+impl Default for Cursor {
+    fn default() -> Self {
+        Self {
+            document: "main.sol".into(),
+            needle: String::new(),
+            occurrence: Occurrence::First,
+            offset: 0,
+        }
+    }
 }
+
+impl Default for ContentExpectation {
+    fn default() -> Self {
+        Self {
+            document: "main.sol".into(),
+            text: String::new(),
+            count: None,
+            absent: false,
+        }
+    }
+}
+
+mod cases;
 
 fn uri(document: &str) -> Url {
     Url::parse(&format!("file:///main/{document}")).expect("fixture document URI")
@@ -301,10 +297,10 @@ fn check_rename(
     }
 }
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/editor", glob: "**/case.json")]
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/editor", glob: "*/main.sol.txt")]
 fn editor_fixture(fixture: Fixture<&str>) {
     let root = Path::new(fixture.path()).parent().unwrap();
-    let case: Case = serde_json::from_str(fixture.content()).expect("editor fixture schema");
+    let case = cases::case(root.file_name().unwrap().to_str().unwrap());
     assert!(!case.documents.is_empty(), "fixture has no documents");
     assert!(!case.checks.is_empty(), "fixture has no checks");
     for check in case.checks {

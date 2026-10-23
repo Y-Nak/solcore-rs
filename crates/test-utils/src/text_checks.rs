@@ -2,10 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Deserialize;
-
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Default)]
 pub struct TextChecks {
     pub contains: Vec<String>,
     pub not_contains: Vec<String>,
@@ -15,8 +12,6 @@ pub struct TextChecks {
     pub regions: Vec<TextRegion>,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct TextRegion {
     pub after: Option<String>,
     pub before: Option<String>,

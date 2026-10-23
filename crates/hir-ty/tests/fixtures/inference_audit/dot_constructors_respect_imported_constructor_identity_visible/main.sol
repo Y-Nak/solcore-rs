@@ -15,3 +15,7 @@ function inspect(x: Secret) returns (word) {
         }
     }
 }
+
+//~ loader: project
+//~ infer: forge solve absent-code=SC0224
+//~ infer: inspect solve absent-code=SC0224

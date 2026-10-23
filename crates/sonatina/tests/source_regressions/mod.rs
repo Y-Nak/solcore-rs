@@ -1,37 +1,56 @@
 use super::*;
 use dir_test::{Fixture, dir_test};
-use serde::Deserialize;
 use solcore_test_utils::{run_in_large_stack, text_checks::TextChecks};
 use sonatina_codegen::{EvmCompile, OptLevel};
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Default)]
 struct Case {
-    source: Option<String>,
-    #[serde(default)]
     file_url_imports: bool,
-    #[serde(default)]
     checks: TextChecks,
-    #[serde(default)]
     compile: Vec<Optimization>,
     compile_error: Option<String>,
     deploy_output: Option<String>,
 }
 
-#[derive(Deserialize)]
 enum Optimization {
     O0,
     O2,
 }
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions", glob: "**/expect.json")]
-fn source_lowering(fixture: Fixture<&str>) {
-    let case: Case = serde_json::from_str(fixture.content()).expect("lowering expectations");
-    let source_path = case.source.as_ref().map_or_else(
-        || std::path::Path::new(fixture.path()).with_file_name("main.sol"),
-        |path| repo_root_from_manifest(env!("CARGO_MANIFEST_DIR")).join(path),
-    );
-    let source = std::fs::read_to_string(source_path).expect("lowering source");
+mod cases;
+
+macro_rules! source_cases {
+    ($name:ident, $directory:literal, $glob:literal) => {
+        #[dir_test(dir: $directory, glob: $glob)]
+        fn $name(fixture: Fixture<&str>) {
+            run_source_fixture(fixture);
+        }
+    };
+}
+
+source_cases!(
+    local_sources,
+    "$CARGO_MANIFEST_DIR/tests/fixtures/regressions",
+    "**/main.sol"
+);
+source_cases!(
+    incremental_reachability,
+    "$CARGO_MANIFEST_DIR/../..",
+    "tests/e2e/incremental-reachability/main.sol"
+);
+source_cases!(
+    loop_post_reachability,
+    "$CARGO_MANIFEST_DIR/../..",
+    "tests/e2e/loop-post-reachability/main.sol"
+);
+
+fn run_source_fixture(fixture: Fixture<&str>) {
+    let path = std::path::PathBuf::from(fixture.path())
+        .canonicalize()
+        .expect("source fixture path");
+    let key = solcore_test_utils::fixture_path_key(env!("CARGO_MANIFEST_DIR"), &path);
+    let case = cases::expectations(&key);
+    let source = std::fs::read_to_string(&path).expect("lowering source");
     run_in_large_stack(move || {
         let (module, ir) = lower_source_inner(&source, case.file_url_imports);
         case.checks.assert_matches(&ir);

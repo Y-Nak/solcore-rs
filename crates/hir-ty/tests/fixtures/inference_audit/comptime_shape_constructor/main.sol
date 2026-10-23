@@ -8,3 +8,6 @@ function get(comptime value: Box) returns (word) {
         }
     }
 }
+
+//~ loader: bare
+//~ infer: get diagnostics-empty patterns-known

@@ -1,9 +1,0 @@
-{
-  "checks": {
-    "contains": [
-      "LValueIdxAccess_lookup",
-      "std_lidx",
-      "std_out_of_bounds"
-    ]
-  }
-}

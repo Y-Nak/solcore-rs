@@ -6,3 +6,6 @@ function get(value: StaticPair) returns (word) {
         }
     }
 }
+
+//~ loader: bare
+//~ infer: get diagnostics-empty patterns-known

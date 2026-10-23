@@ -1,4 +1,0 @@
-{
-  "source": "crates/parser/tests/fixtures/corpus/ok/test/examples/cases/asm-match-tuple-write-read.sol",
-  "loader": "memory"
-}

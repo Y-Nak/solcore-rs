@@ -4,8 +4,8 @@ pragma no-patterson-condition;
 pragma no-coverage-condition;
 pragma no-bounded-variable-condition;
 
-// Regression test for the field-access desugarer (transRhs in
-// src/Solcore/Desugarer/FieldAccess.hs).
+// Regression test for field-access desugaring inside constructor applications.
+// Nested tuple values must lower field accesses before type checking.
 //
 // A tuple literal `(x, y)` parses to a `pair(x, y)` constructor application.
 // transRhs used to leave constructor applications untouched (`go Con{} = pure e`),

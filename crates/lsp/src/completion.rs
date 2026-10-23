@@ -671,19 +671,33 @@ mod tests {
         assert_no_completion(&items, "Eq.eq");
     }
 
-    #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/completion_context", glob: "*.json")]
+    #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/completion_context", glob: "*.sol.txt")]
     fn qualified_completion_context_fixture(fixture: dir_test::Fixture<&str>) {
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Case {
-            source: String,
-            expected: Option<(String, String)>,
-        }
-        let case: Case =
-            serde_json::from_str(fixture.content()).expect("completion context fixture");
-        let actual = qualified_completion_context(&case.source, case.source.len() as u32)
+        let name = std::path::Path::new(fixture.path())
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        let expected = match name {
+            "empty_member.sol.txt" => Some(("bar".into(), "".into())),
+            "rejected_1.sol.txt" => None,
+            "rejected_2.sol.txt" => None,
+            "rejected_3.sol.txt" => None,
+            "rejected_4.sol.txt" => None,
+            "rejected_5.sol.txt" => None,
+            "rejected_6.sol.txt" => None,
+            "spaced_subtraction.sol.txt" => Some(("bar".into(), "member".into())),
+            "subtraction.sol.txt" => Some(("bar".into(), "member".into())),
+            "two_subtractions.sol.txt" => Some(("Other".into(), "next".into())),
+            "unary_minus.sol.txt" => Some(("bar".into(), "member".into())),
+            "underscores.sol.txt" => Some(("foo_bar".into(), "member_prefix".into())),
+            "unicode.sol.txt" => Some(("名前".into(), "値".into())),
+            _ => panic!("missing completion expectation for {name}"),
+        };
+        let source = fixture.content();
+        let actual = qualified_completion_context(source, source.len() as u32)
             .map(|context| (context.qualifier, context.member_prefix));
-        assert_eq!(actual, case.expected, "{}", case.source);
+        assert_eq!(actual, expected, "{source}");
     }
 
     fn world_with_module(main: &str, module_path: &str, module_source: &str) -> (WorldState, Url) {

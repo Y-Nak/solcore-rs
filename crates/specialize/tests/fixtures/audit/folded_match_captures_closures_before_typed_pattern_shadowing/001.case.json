@@ -1,9 +1,0 @@
-{
-  "loader": "bare",
-  "checks": [
-    {
-      "check": "no_closure_dispatch"
-    }
-  ],
-  "source": "001.sol"
-}

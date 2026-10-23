@@ -1,2 +1,0 @@
-enum D { C }
-function f(x: D) returns (word) { return g(1,); }

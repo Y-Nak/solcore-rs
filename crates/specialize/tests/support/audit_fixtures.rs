@@ -1,42 +1,32 @@
 use dir_test::{Fixture, dir_test};
-use serde::Deserialize;
 
 use super::*;
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Default)]
 struct Case {
-    source: PathBuf,
     loader: Loader,
     frontend_clean: Option<bool>,
     max_depth: Option<usize>,
-    #[serde(default)]
     diagnostics: Vec<DiagnosticCheck>,
-    #[serde(default)]
     forbidden_diagnostics: Vec<DiagnosticKind>,
-    #[serde(default)]
     checks: Vec<Check>,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Default)]
 enum Loader {
+    #[default]
     Bare,
     Std,
     StdCurrent,
     Fixture,
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct DiagnosticCheck {
     kind: DiagnosticKind,
     context: Option<String>,
     context_contains: Option<String>,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "snake_case")]
 enum DiagnosticKind {
     FreeTypeVariable,
     ComptimeEvaluationFailed,
@@ -69,8 +59,7 @@ impl DiagnosticKind {
     }
 }
 
-#[derive(Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Default)]
 struct Selector {
     prefix: Option<String>,
     contains: Vec<String>,
@@ -104,8 +93,6 @@ impl Selector {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(tag = "check", rename_all = "snake_case", deny_unknown_fields)]
 enum Check {
     MainReturnNumber {
         value: Option<String>,
@@ -123,7 +110,6 @@ enum Check {
     NoClosureDispatch,
     UniqueFunctionNames,
     FunctionCount {
-        #[serde(default)]
         selector: Selector,
         count: Option<usize>,
         min: Option<usize>,
@@ -132,9 +118,7 @@ enum Check {
     FunctionReturns {
         selector: Selector,
         value: String,
-        #[serde(default)]
         follow_calls: bool,
-        #[serde(default)]
         all_paths: bool,
     },
     FunctionParameters {
@@ -169,13 +153,132 @@ enum Check {
     },
 }
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures", glob: "**/*.case.json")]
+#[path = "audit_cases.rs"]
+mod audit_cases;
+
+macro_rules! source_cases {
+    ($name:ident, $directory:literal, $glob:literal) => {
+        #[dir_test(dir: $directory, glob: $glob)]
+        fn $name(fixture: Fixture<&str>) {
+            specialization_fixture(fixture);
+        }
+    };
+}
+
+source_cases!(
+    audit,
+    "$CARGO_MANIFEST_DIR/tests/fixtures/audit",
+    "**/main.sol"
+);
+source_cases!(
+    invalid_audit,
+    "$CARGO_MANIFEST_DIR/tests/fixtures/audit",
+    "**/main.invalid.sol.txt"
+);
+source_cases!(
+    shared_aggregate_closure_captures,
+    "$CARGO_MANIFEST_DIR/../..",
+    "tests/e2e/aggregate-closure-captures/main.sol"
+);
+source_cases!(
+    shared_comptime_pattern_scopes,
+    "$CARGO_MANIFEST_DIR/../..",
+    "tests/e2e/comptime-pattern-scopes/main.sol"
+);
+source_cases!(
+    shared_abi_word_memory,
+    "$CARGO_MANIFEST_DIR/../..",
+    "tests/e2e/abi-word-memory/main.sol"
+);
+source_cases!(
+    shared_abi_word_custom_codec,
+    "$CARGO_MANIFEST_DIR/../..",
+    "tests/e2e/abi-word-custom-codec/main.sol"
+);
+source_cases!(
+    shared_abi_byte_memory,
+    "$CARGO_MANIFEST_DIR/../..",
+    "tests/e2e/abi-byte-memory/main.sol"
+);
+source_cases!(
+    shared_abi_raw_default_codec,
+    "$CARGO_MANIFEST_DIR/../..",
+    "tests/e2e/abi-raw-default-codec/main.sol"
+);
+source_cases!(
+    function_value_evidence_main,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/specialize/tests/fixtures/function_value_evidence/main.sol"
+);
+source_cases!(
+    module_local_function_evidence_main,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/specialize/tests/fixtures/module_local_function_evidence/main.sol"
+);
+source_cases!(
+    module_local_function_evidence_multiple,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/specialize/tests/fixtures/module_local_function_evidence/multiple.sol"
+);
+source_cases!(
+    module_local_function_evidence_ordered_a,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/specialize/tests/fixtures/module_local_function_evidence/ordered_a.sol"
+);
+source_cases!(
+    module_local_function_evidence_ordered_b,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/specialize/tests/fixtures/module_local_function_evidence/ordered_b.sol"
+);
+source_cases!(
+    module_local_function_evidence_phantom,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/specialize/tests/fixtures/module_local_function_evidence/phantom.sol"
+);
+source_cases!(
+    module_local_function_evidence_values,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/specialize/tests/fixtures/module_local_function_evidence/values.sol"
+);
+source_cases!(
+    operator_evidence_main,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/specialize/tests/fixtures/operator_evidence/main.sol"
+);
+source_cases!(
+    operator_evidence_reversed,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/specialize/tests/fixtures/operator_evidence/reversed.sol"
+);
+source_cases!(
+    superclass_dictionaries_main,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/specialize/tests/fixtures/superclass_dictionaries/main.sol"
+);
+source_cases!(
+    superclass_dictionaries_reversed,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/specialize/tests/fixtures/superclass_dictionaries/reversed.sol"
+);
+source_cases!(
+    trait_method_instantiations_main,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/specialize/tests/fixtures/trait_method_instantiations/main.sol"
+);
+source_cases!(
+    trait_method_instantiations_reversed,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/specialize/tests/fixtures/trait_method_instantiations/reversed.sol"
+);
+
 fn specialization_fixture(fixture: Fixture<&str>) {
-    let path = PathBuf::from(fixture.path());
+    let path = PathBuf::from(fixture.path())
+        .canonicalize()
+        .expect("source fixture path");
     solcore_test_utils::run_in_large_stack(move || {
-        let case: Case = serde_json::from_str(&fs::read_to_string(&path).unwrap())
-            .expect("valid fixture expectations");
-        let source_path = path.parent().unwrap().join(&case.source);
+        let key = solcore_test_utils::fixture_path_key(env!("CARGO_MANIFEST_DIR"), &path);
+        let case = audit_cases::expectations(&key);
+        let source_path = path.clone();
         let options = SpecializeOptions {
             max_depth: case
                 .max_depth

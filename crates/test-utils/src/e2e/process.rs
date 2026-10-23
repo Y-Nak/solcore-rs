@@ -252,16 +252,20 @@ fn parse_anvil_port(line: &str) -> Option<u16> {
 mod tests {
     use super::*;
 
-    #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/anvil_address", glob: "*.json")]
+    #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/anvil_address", glob: "*.txt")]
     fn parses_anvil_listening_address(fixture: dir_test::Fixture<&str>) {
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Case {
-            line: String,
-            port: Option<u16>,
-        }
-        let case: Case = serde_json::from_str(fixture.content()).expect("address fixture");
-        assert_eq!(parse_anvil_port(&case.line), case.port);
+        let name = std::path::Path::new(fixture.path())
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        let expected = match name {
+            "http" => Some(49152),
+            "ipv4" => Some(8545),
+            "unrelated" => None,
+            _ => panic!("missing expected port for {name}"),
+        };
+        assert_eq!(parse_anvil_port(fixture.content().trim_end()), expected);
     }
 
     #[cfg(unix)]

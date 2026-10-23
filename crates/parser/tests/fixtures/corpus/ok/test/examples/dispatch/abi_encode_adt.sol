@@ -23,7 +23,7 @@ pragma no-bounded-variable-condition;
 // `abi_encode` correct here — a manual `Generic` instance (which requires
 // `pragma no-generic-instance-for`) would suppress the derived `ABIAttribs`, so
 // `headSize` would fall back to the catch-all `default instance t:ABIAttribs`
-// (32 bytes) and truncate the encoding to its first word. See DeriveGeneric.hs.
+// (32 bytes) and truncate the encoding to its first word.
 //
 // Layouts pinned here:
 //   * static product  (uint256, uint256)      -> two head words   (len 0x40)

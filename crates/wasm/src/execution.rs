@@ -369,25 +369,16 @@ function main() returns (word) {
         assert_eq!(result.return_word.as_deref(), Some("42"));
     }
 
-    #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/execution", glob: "**/expect.json")]
+    #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/execution", glob: "**/main.sol")]
     fn source_execution(fixture: dir_test::Fixture<&str>) {
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Expected {
-            return_word: String,
-        }
-        let expected: Expected =
-            serde_json::from_str(fixture.content()).expect("execution expectations");
-        let source = std::fs::read_to_string(
-            std::path::Path::new(fixture.path()).with_file_name("main.sol"),
-        )
-        .expect("execution source");
-        let result = run_source(&source);
+        let source = fixture.content();
+        let expected = source
+            .lines()
+            .find_map(|line| line.strip_prefix("// return-word: "))
+            .expect("execution fixture must specify return-word");
+        let result = run_source(source);
         assert_eq!(result.status, RunStatus::Success, "{result:?}");
-        assert_eq!(
-            result.return_word.as_deref(),
-            Some(expected.return_word.as_str())
-        );
+        assert_eq!(result.return_word.as_deref(), Some(expected));
     }
 
     #[test]

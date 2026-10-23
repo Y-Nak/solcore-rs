@@ -1,36 +1,105 @@
 use super::*;
 use dir_test::{Fixture, dir_test};
-use serde::Deserialize;
 use solcore_test_utils::{run_in_large_stack, text_checks::TextChecks};
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Default)]
 struct Case {
-    source: Option<String>,
-    #[serde(default)]
     loader: Loader,
-    #[serde(default)]
     checks: TextChecks,
-    #[serde(default)]
     functions: BTreeMap<String, TextChecks>,
     undefined_variable: Option<String>,
 }
 
-#[derive(Default, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Default)]
 enum Loader {
     Memory,
     #[default]
     Fixture,
 }
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/regressions", glob: "**/expect.json")]
-fn source_emission(fixture: Fixture<&str>) {
-    let case: Case = serde_json::from_str(fixture.content()).expect("emission expectations");
-    let path = case.source.as_ref().map_or_else(
-        || Path::new(fixture.path()).with_file_name("main.sol"),
-        |path| repo_root().join(path),
-    );
+mod cases;
+
+macro_rules! source_cases {
+    ($name:ident, $directory:literal, $glob:literal) => {
+        #[dir_test(dir: $directory, glob: $glob)]
+        fn $name(fixture: Fixture<&str>) {
+            run_source_fixture(fixture);
+        }
+    };
+}
+
+source_cases!(
+    local_sources,
+    "$CARGO_MANIFEST_DIR/tests/fixtures/regressions",
+    "**/main.sol"
+);
+source_cases!(
+    assembly_tuple_pattern_write,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/parser/tests/fixtures/corpus/ok/test/examples/cases/asm-match-tuple-write-read.sol"
+);
+source_cases!(
+    control_flow_capture_identity,
+    "$CARGO_MANIFEST_DIR/../..",
+    "tests/e2e/control-flow-capture-identity/main.sol"
+);
+source_cases!(
+    control_flow_local_lifetimes,
+    "$CARGO_MANIFEST_DIR/../..",
+    "tests/e2e/control-flow-local-lifetimes/main.sol"
+);
+source_cases!(
+    empty_deployment,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/empty_no_constructor.sol"
+);
+source_cases!(
+    inferred_lambda_capture,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/parser/tests/fixtures/corpus/ok/test/examples/cases/closure-free-var.sol"
+);
+source_cases!(
+    inferred_lambda_helper,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/hull/tests/fixtures/local-lambda-helper.sol"
+);
+source_cases!(
+    inferred_lambda_increment,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/parser/tests/fixtures/corpus/ok/test/examples/cases/inc-closure.sol"
+);
+source_cases!(
+    inferred_lambda_local_capture,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/parser/tests/fixtures/corpus/ok/test/examples/cases/closure-free-var-local.sol"
+);
+source_cases!(
+    inferred_lambda_simple,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/parser/tests/fixtures/corpus/ok/test/examples/cases/SimpleLambda.sol"
+);
+source_cases!(
+    inferred_lambda_std_capture,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/parser/tests/fixtures/corpus/ok/test/examples/cases/closure-free-var-std.sol"
+);
+source_cases!(
+    nonpayable_deployment,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/nonpayable_ctor.sol"
+);
+source_cases!(
+    payable_deployment,
+    "$CARGO_MANIFEST_DIR/../..",
+    "crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/payable_ctor.sol"
+);
+
+fn run_source_fixture(fixture: Fixture<&str>) {
+    let path = std::path::PathBuf::from(fixture.path())
+        .canonicalize()
+        .expect("source fixture path");
+    let key = solcore_test_utils::fixture_path_key(env!("CARGO_MANIFEST_DIR"), &path);
+    let case = cases::expectations(&key);
     run_in_large_stack(move || {
         let (db, output) = match case.loader {
             Loader::Memory => {

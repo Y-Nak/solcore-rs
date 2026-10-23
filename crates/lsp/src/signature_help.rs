@@ -498,28 +498,11 @@ mod tests {
             .byte_to_position(offset)
     }
 
-    #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/call_arguments", glob: "*.json")]
+    #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/call_arguments", glob: "*.sol.txt")]
     fn call_argument_structure_fixture(fixture: dir_test::Fixture<&str>) {
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Case {
-            source: String,
-            open: u32,
-            end: u32,
-            expected_range: (u32, u32),
-            comma_start: u32,
-            cursor: u32,
-            expected_commas: u32,
-        }
-        let case: Case = serde_json::from_str(fixture.content()).expect("call argument fixture");
-        assert_eq!(
-            call_argument_range(&case.source, case.open, case.end),
-            Some(case.expected_range)
-        );
-        assert_eq!(
-            count_commas_before(&case.source, case.comma_start, case.cursor),
-            case.expected_commas
-        );
+        let source = fixture.content();
+        assert_eq!(call_argument_range(source, 1, 13), Some((2, 12)));
+        assert_eq!(count_commas_before(source, 2, 11), 1);
     }
 
     #[test]

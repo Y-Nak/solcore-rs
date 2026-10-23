@@ -1,4 +1,0 @@
-function f() returns (word) {
-               let x = ;
-               return missing;
-             }

@@ -1,135 +1,64 @@
 use super::*;
 use dir_test::{Fixture, dir_test};
-use serde::Deserialize;
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Case {
-    #[serde(default = "separate_root")]
-    roots: Vec<RootLayout>,
-    #[serde(default)]
-    nameres_empty: bool,
-    diagnostics: Option<DiagnosticExpectation>,
-    surface: Option<SurfaceExpectation>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug)]
 enum RootLayout {
     Separate,
     MainOnly,
     Shared,
 }
 
-fn separate_root() -> Vec<RootLayout> {
-    vec![RootLayout::Separate]
+fn assert_diagnostics_contain(actual: &[Diagnostic], code: &str, message: &str) {
+    assert!(
+        actual
+            .iter()
+            .any(|d| d.code.as_deref() == Some(code) && d.message.contains(message)),
+        "missing {code} containing {message:?}: {actual:#?}",
+    );
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DiagnosticExpectation {
-    count: Option<usize>,
-    all_code: Option<String>,
-    #[serde(default)]
-    contains: Vec<DiagnosticMatch>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DiagnosticMatch {
-    code: String,
-    message: String,
-    count: Option<usize>,
-}
-
-impl DiagnosticExpectation {
-    fn check(&self, actual: &[Diagnostic]) {
-        if let Some(count) = self.count {
-            assert_eq!(actual.len(), count, "{actual:#?}");
-        }
-        if let Some(code) = &self.all_code {
-            assert!(
-                actual.iter().all(|d| d.code.as_ref() == Some(code)),
-                "{actual:#?}"
-            );
-        }
-        for expected in &self.contains {
-            let count = actual
+fn param_shape(param: &solcore_hir_ty::AbiParam) -> String {
+    let mut shape = param.ty.to_string();
+    if !param.components.is_empty() {
+        shape.push('(');
+        shape.push_str(
+            &param
+                .components
                 .iter()
-                .filter(|d| {
-                    d.code.as_ref() == Some(&expected.code) && d.message.contains(&expected.message)
-                })
-                .count();
-            if let Some(expected_count) = expected.count {
-                assert_eq!(count, expected_count, "{}: {actual:#?}", expected.message);
-            } else {
-                assert!(count > 0, "{}: {actual:#?}", expected.message);
-            }
-        }
+                .map(param_shape)
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        shape.push(')');
     }
+    shape
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SurfaceExpectation {
-    contract: String,
-    diagnostics: Option<DiagnosticExpectation>,
-    methods: Option<Vec<MethodExpectation>>,
-    constructor_inputs: Option<Vec<ParamExpectation>>,
-    abi: AbiExpectation,
+fn assert_param_shapes(actual: &[solcore_hir_ty::AbiParam], expected: &[&str]) {
+    assert_eq!(actual.iter().map(param_shape).collect::<Vec<_>>(), expected);
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct MethodExpectation {
-    signature: String,
-    selector: Option<String>,
-    inputs: Vec<ParamExpectation>,
-    outputs: Option<Vec<ParamExpectation>>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ParamExpectation {
-    ty: String,
-    components: Vec<ParamExpectation>,
-}
-
-fn check_params(expected: &[ParamExpectation], actual: &[solcore_hir_ty::AbiParam]) {
-    assert_eq!(actual.len(), expected.len(), "{actual:#?}");
-    for (expected, actual) in expected.iter().zip(actual) {
-        assert_eq!(actual.ty.to_string(), expected.ty);
-        check_params(&expected.components, &actual.components);
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AbiExpectation {
-    valid: bool,
-    #[serde(default)]
-    contains: Vec<String>,
-    #[serde(default)]
-    absent: Vec<String>,
-    #[serde(default)]
-    occurrences: BTreeMap<String, usize>,
-}
-
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_audit", glob: "**/expected.json")]
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_audit", glob: "**/main.sol")]
 fn contract_semantics(fixture: Fixture<&str>) {
     let case_dir = PathBuf::from(fixture.path()).parent().unwrap().to_owned();
-    let case: Case =
-        serde_json::from_str(fixture.content()).expect("contract fixture expectations");
-    let source = std::fs::read_to_string(case_dir.join("main.sol")).unwrap();
-    for roots in case.roots {
+    let name = case_dir.file_name().unwrap().to_str().unwrap();
+    let layouts: &[RootLayout] = match name {
+        "canonical_abi_metadata_under_main_root_rejects_user_instances"
+        | "canonical_abi_providers_under_main_root_remain_trusted"
+        | "canonical_dispatch_under_main_root_preserves_manual_abi_diagnostics" => {
+            &[RootLayout::MainOnly, RootLayout::Shared]
+        }
+        _ => &[RootLayout::Separate],
+    };
+    for &roots in layouts {
         let (mut db, key) = match roots {
             RootLayout::Separate => {
-                let (mut db, key) = db_with_main(&source);
+                let (mut db, key) = db_with_main(fixture.content());
                 insert_real_std_modules(&mut db);
                 (db, key)
             }
-            RootLayout::MainOnly => db_with_overlapping_std(&source, false),
-            RootLayout::Shared => db_with_overlapping_std(&source, true),
+            RootLayout::MainOnly => db_with_overlapping_std(fixture.content(), false),
+            RootLayout::Shared => db_with_overlapping_std(fixture.content(), true),
         };
         let project_root = match roots {
             RootLayout::Separate => "/main",
@@ -152,53 +81,152 @@ fn contract_semantics(fixture: Fixture<&str>) {
                 );
             }
         }
-        let module_id = module_id_from_key(&db, &key);
-        if case.nameres_empty {
-            let diagnostics = nameres::reachable_diagnostics(&db, module_id);
-            assert!(diagnostics.is_empty(), "{roots:?}: {diagnostics:?}");
-        }
-        if let Some(expected) = &case.diagnostics {
-            expected.check(&diagnostics_for_module(&db, &key));
-        }
-        if let Some(expected) = &case.surface {
-            let module = parse_file_to_hir(&db, db.module_files[&key]).module(&db);
-            let contract = contract_named(&db, module, &expected.contract);
-            let surface = contract_dispatch_surface(&db, module, contract);
-            if let Some(diagnostics) = &expected.diagnostics {
-                diagnostics.check(&surface.diagnostics);
+        // Keep specialized semantic checks in Rust, next to the assertions they
+        // exercise. Source files alone define the set of directory test cases.
+        match name {
+            "canonical_abi_metadata_under_main_root_rejects_user_instances" => {
+                let diagnostics = diagnostics_for_module(&db, &key);
+                assert_eq!(diagnostics.len(), 2, "{roots:?}: {diagnostics:#?}");
+                assert_diagnostics_contain(&diagnostics, "SC0231", "manual `ABIElementAttribs`");
+                assert_diagnostics_contain(&diagnostics, "SC0231", "manual `ABITypeString`");
             }
-            if let Some(methods) = &expected.methods {
-                assert_eq!(surface.methods.len(), methods.len());
-                for (actual, expected) in surface.methods.iter().zip(methods) {
-                    assert_eq!(actual.signature, expected.signature);
-                    if let Some(selector) = &expected.selector {
-                        assert_eq!(&actual.selector.to_hex(), selector);
-                    }
-                    check_params(&expected.inputs, &actual.inputs);
-                    if let Some(outputs) = &expected.outputs {
-                        check_params(outputs, &actual.outputs);
-                    }
+            "canonical_abi_providers_under_main_root_remain_trusted"
+            | "unselected_manual_element_metadata_remains_available_to_internal_code" => {
+                let diagnostics = diagnostics_for_module(&db, &key);
+                assert!(diagnostics.is_empty(), "{roots:?}: {diagnostics:#?}");
+            }
+            "canonical_dispatch_under_main_root_preserves_manual_abi_diagnostics" => {
+                let module_id = module_id_from_key(&db, &key);
+                let diagnostics = nameres::reachable_diagnostics(&db, module_id);
+                assert!(diagnostics.is_empty(), "{roots:?}: {diagnostics:#?}");
+                let diagnostics = diagnostics_for_module(&db, &key);
+                assert_eq!(diagnostics.len(), 4, "{roots:?}: {diagnostics:#?}");
+                for class in ["ABIAttribs", "ABIEncode", "ABIDecode", "SigString"] {
+                    assert_diagnostics_contain(
+                        &diagnostics,
+                        "SC0231",
+                        &format!("manual `{class}`"),
+                    );
                 }
             }
-            if let Some(expected_inputs) = &expected.constructor_inputs {
+            "external_array_abi_rejects_selected_manual_element_layout_nested"
+            | "external_array_abi_rejects_selected_manual_element_layout_unit"
+            | "external_array_abi_rejects_selected_manual_element_layout_word" => {
+                let diagnostics = diagnostics_for_module(&db, &key);
+                assert!(
+                    diagnostics
+                        .iter()
+                        .all(|d| d.code.as_deref() == Some("SC0231")),
+                    "{diagnostics:#?}"
+                );
+                assert_diagnostics_contain(&diagnostics, "SC0231", "manual `ABIElementAttribs`");
+            }
+            "external_array_abi_rejects_selected_manual_element_signature" => {
+                assert_diagnostics_contain(
+                    &diagnostics_for_module(&db, &key),
+                    "SC0231",
+                    "manual `ABITypeString`",
+                );
+            }
+            "external_nested_array_abi_rejects_imported_manual_element_layout" => {
+                assert_diagnostics_contain(
+                    &diagnostics_for_module(&db, &key),
+                    "SC0231",
+                    "manual `ABIElementAttribs`",
+                );
+            }
+            "raw_abi_fallback_requires_supported_primitive" => {
+                let diagnostics = diagnostics_for_module(&db, &key);
+                assert_eq!(diagnostics.len(), 2, "{diagnostics:#?}");
+                assert!(
+                    diagnostics
+                        .iter()
+                        .all(|d| d.code.as_deref() == Some("SC0207")),
+                    "{diagnostics:#?}"
+                );
+                assert_diagnostics_contain(&diagnostics, "SC0207", "Custom: ABIEncode");
+                assert_diagnostics_contain(
+                    &diagnostics,
+                    "SC0207",
+                    "ABIDecoder<Custom, MemoryWordReader>: ABIDecode<Custom>",
+                );
+            }
+            "explicit_unit_product_members_are_rejected_at_public_boundaries_array_tuple"
+            | "explicit_unit_product_members_are_rejected_at_public_boundaries_constructor"
+            | "explicit_unit_product_members_are_rejected_at_public_boundaries_nested_array_tuple"
+            | "explicit_unit_product_members_are_rejected_at_public_boundaries_parameter"
+            | "explicit_unit_product_members_are_rejected_at_public_boundaries_return_tuple"
+            | "explicit_unit_product_members_are_rejected_at_public_boundaries_tuple"
+            | "unit_array_outputs_remain_input_only" => {
+                let module = parse_file_to_hir(&db, db.module_files[&key]).module(&db);
+                let contract = contract_named(&db, module, "C");
+                let surface = contract_dispatch_surface(&db, module, contract);
+                if name == "unit_array_outputs_remain_input_only" {
+                    assert_diagnostics_contain(&surface.diagnostics, "SC0231", "input-only");
+                    assert_eq!(
+                        surface
+                            .diagnostics
+                            .iter()
+                            .filter(|d| d.code.as_deref() == Some("SC0231")
+                                && d.message.contains("input-only"))
+                            .count(),
+                        2,
+                        "{:?}",
+                        surface.diagnostics
+                    );
+                } else {
+                    assert_diagnostics_contain(&surface.diagnostics, "SC0231", "explicit unit");
+                }
+                assert!(contract_abi_json(&db, module, contract).is_err());
+            }
+            "calldata_tuple_array_uses_canonical_signature_and_json_components" => {
+                let module = parse_file_to_hir(&db, db.module_files[&key]).module(&db);
+                let contract = contract_named(&db, module, "Tuples");
+                let surface = contract_dispatch_surface(&db, module, contract);
+                assert_eq!(surface.methods.len(), 1);
+                let method = &surface.methods[0];
+                assert_eq!(method.signature, "first((uint256,address)[])");
+                assert_eq!(method.selector.to_hex(), "0x01de5ccf");
+                assert_param_shapes(&method.inputs, &["tuple[](uint256,address)"]);
+                let abi = contract_abi_json(&db, module, contract).unwrap();
+                assert!(abi.contains("\"type\": \"tuple[]\""), "{abi}");
+                assert!(abi.contains("\"components\": ["), "{abi}");
+            }
+            "unit_array_abi_keeps_empty_tuple_value_context" => {
+                let module = parse_file_to_hir(&db, db.module_files[&key]).module(&db);
+                let contract = contract_named(&db, module, "UnitArrays");
+                let surface = contract_dispatch_surface(&db, module, contract);
+                assert!(surface.diagnostics.is_empty(), "{:?}", surface.diagnostics);
+                assert_eq!(surface.methods.len(), 4);
+                let expected = [
+                    ("units(()[])", vec!["tuple[]"]),
+                    ("nested(()[][])", vec!["tuple[][]"]),
+                    ("empty()", vec![]),
+                    (
+                        "wrapped((()[],uint256)[])",
+                        vec!["tuple[](tuple[],uint256)"],
+                    ),
+                ];
+                for (method, (signature, inputs)) in surface.methods.iter().zip(expected) {
+                    assert_eq!(method.signature, signature);
+                    assert_param_shapes(&method.inputs, &inputs);
+                }
+                assert_eq!(surface.methods[0].selector.to_hex(), "0xfc59547a");
+                assert!(surface.methods[2].outputs.is_empty());
                 let DispatchConstructor::Explicit { inputs, .. } = &surface.constructor else {
                     panic!("expected explicit constructor");
                 };
-                check_params(expected_inputs, inputs);
-            }
-            let abi = contract_abi_json(&db, module, contract);
-            assert_eq!(abi.is_ok(), expected.abi.valid, "{abi:?}");
-            if let Ok(abi) = abi {
-                for text in &expected.abi.contains {
+                assert_param_shapes(inputs, &["uint256"]);
+                let abi = contract_abi_json(&db, module, contract).unwrap();
+                for text in ["\"type\": \"tuple[]\"", "\"type\": \"tuple[][]\""] {
                     assert!(abi.contains(text), "{text}: {abi}");
                 }
-                for text in &expected.abi.absent {
+                for text in ["\"type\": \"\"", "\"type\": \"[]\""] {
                     assert!(!abi.contains(text), "{text}: {abi}");
                 }
-                for (text, count) in &expected.abi.occurrences {
-                    assert_eq!(abi.matches(text.as_str()).count(), *count, "{text}: {abi}");
-                }
+                assert_eq!(abi.matches("\"components\": []").count(), 3, "{abi}");
             }
+            other => panic!("missing contract assertions for fixture: {other}"),
         }
     }
 }

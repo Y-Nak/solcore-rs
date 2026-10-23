@@ -6,20 +6,41 @@ use specialize::{SpecializeOptions, specialize_module};
 
 define_frontend_test_db!(TestDb, hir_ty);
 
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Expected {
-    finite: bool,
-    nonempty: bool,
-}
-
-#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/layouts", glob: "**/expect.json")]
+#[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/layouts", glob: "**/main.sol")]
 fn layout_finiteness(fixture: dir_test::Fixture<&str>) {
-    let expected: Expected = serde_json::from_str(fixture.content()).expect("layout expectations");
-    let source =
-        std::fs::read_to_string(std::path::Path::new(fixture.path()).with_file_name("main.sol"))
-            .expect("layout source");
-    assert_layout_finiteness(&source, expected.finite, expected.nonempty);
+    let name = std::path::Path::new(fixture.path())
+        .parent()
+        .and_then(std::path::Path::file_name)
+        .and_then(std::ffi::OsStr::to_str)
+        .expect("layout fixture name");
+    let (finite, nonempty) = match name {
+        "finite_fixed_comptime"
+        | "finite_permuted"
+        | "finite_regular"
+        | "finite_reset_box"
+        | "finite_reset_comptime"
+        | "finite_unused_comptime"
+        | "finite_unused_growing"
+        | "finite_wrapped_regular"
+        | "fixed_argument_unused" => (true, false),
+        "fixed_argument_used"
+        | "growing_alias"
+        | "growing_alternative_box"
+        | "growing_alternative_comptime"
+        | "growing_box"
+        | "growing_comptime"
+        | "growing_comptime_alias"
+        | "growing_nested_box"
+        | "growing_nested_comptime"
+        | "growing_product"
+        | "growing_wrapped_comptime" => (false, false),
+        "nested_box_inline"
+        | "nested_box_sequential"
+        | "nested_mixed_inline"
+        | "nested_mixed_sequential" => (true, true),
+        _ => panic!("missing layout expectations for {name}"),
+    };
+    assert_layout_finiteness(fixture.content(), finite, nonempty);
 }
 
 fn assert_layout_finiteness(source: &str, finite: bool, nonempty: bool) {
