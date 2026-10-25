@@ -207,6 +207,8 @@ and builds the Playground into `dist/`. The reusable `buildPlayground({ outDir,
 base })` function in `scripts/build.mjs` also lets another static site bundle the
 same editor and runtime. It includes local compiler, LSP, and solc assets, with no
 knowledge of the site's content.
+The same module exports `previewStaticSite({ outDir, port })`, a Vite preview
+server for built static sites with missing-file 404 responses.
 
 After building, `npm run test:wasm` checks execution through the generated WASM
 package with each backend. `npm run test:unit` checks the JavaScript helpers,

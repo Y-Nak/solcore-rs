@@ -29,16 +29,13 @@ export function rebasePlaygroundLinks(html, htmlFile, bookRoot) {
   );
 }
 
-async function rewriteHtml(directory, bookRoot) {
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const path = join(directory, entry.name);
-    if (entry.isDirectory()) {
-      await rewriteHtml(path, bookRoot);
-    } else if (entry.isFile() && extname(path) === ".html") {
-      const before = await readFile(path, "utf8");
-      const after = rebasePlaygroundLinks(before, path, bookRoot);
-      if (after !== before) await writeFile(path, after);
-    }
+async function rewriteHtml(bookRoot) {
+  for (const entry of await readdir(bookRoot, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile() || extname(entry.name) !== ".html") continue;
+    const path = join(entry.parentPath, entry.name);
+    const before = await readFile(path, "utf8");
+    const after = rebasePlaygroundLinks(before, path, bookRoot);
+    if (after !== before) await writeFile(path, after);
   }
 }
 
@@ -64,7 +61,7 @@ export async function buildTutorial(root = repositoryRoot) {
   // Avoid retaining projects or runtime assets removed from the curriculum.
   await rm(destination, { recursive: true, force: true });
   runMdbook(["build", join(root, "solcore-tutorial"), "--dest-dir", destination], { stdio: "inherit" });
-  await rewriteHtml(destination, destination);
+  await rewriteHtml(destination);
   await mkdir(join(destination, "projects"), { recursive: true });
   for (const project of projects) {
     await writeFile(join(destination, "projects", `${project.id}.json`), `${JSON.stringify(project, null, 2)}\n`);

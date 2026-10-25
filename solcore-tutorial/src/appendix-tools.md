@@ -4,7 +4,7 @@ You can complete the lessons in a browser. Use a local checkout when you want th
 
 ## Build and distribute this checkout
 
-Install Rust through rustup, Node.js with npm, `wasm-pack` **0.15.0**, and mdBook (CI pins **0.4.52**). Rustup uses the repository's `rust-toolchain.toml` automatically. From a fresh checkout at the repository root:
+Install Rust through rustup, Node.js **22 or newer** with npm, `wasm-pack` **0.15.0**, and mdBook (CI pins **0.4.52**). Rustup uses the repository's `rust-toolchain.toml` automatically. From a fresh checkout at the repository root:
 
 ```sh
 cargo install wasm-pack --version 0.15.0 --locked
@@ -25,6 +25,8 @@ Copy the entire `book/` output directory to a static web server to distribute it
 The two initial `wasm-pack` commands generate local packages before dependency installation. The full tutorial build then rebuilds both WASM packages and downloads the pinned solc build if needed. Those development dependencies are needed to build the tutorial, not to read a distributed copy. See also the [playground development guide](https://github.com/Y-Nak/solcore-rs/blob/HEAD/playground/README.md#development) for the shared editor and runtime.
 
 For ongoing book development, run `npm run build:book` from `solcore-tutorial/` after prose, project-source, or frontend changes. It reuses already prepared WASM and solc assets. Run `npm run build` after compiler or language-server changes, and `npm run preview` to serve the result. The ordinary Playground has its own development and build commands; it does not build this tutorial.
+
+Preview serves the latest built files; it does not rebuild them automatically. Rebuild and reload the page after editing. If port 4177 is already occupied, stop the earlier preview or choose another port with `PORT=4180 npm run preview`.
 
 ## Read the book without building WASM
 

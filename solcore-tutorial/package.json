@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
-    "build": "npm --prefix ../playground run prepare:runtime && npm run build:book",
+    "build": "npm --prefix ../playground run prepare:runtime && node scripts/build.mjs",
     "build:book": "node scripts/build.mjs",
     "preview": "node scripts/preview.mjs",
     "test": "node --test tests/tutorial.test.mjs tests/tutorial-build.test.mjs",
