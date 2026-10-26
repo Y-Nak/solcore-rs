@@ -1,6 +1,6 @@
 # Solcore standard library
 
-The ten `.sol` files in this directory are the standard library for the Rust
+The twelve `.sol` files in this directory (including `unchecked/`) are the standard library for the Rust
 compiler. Format them with `solcore-fmt`. Parser, frontend, specialization, and
 backend tests read these same sources directly.
 
@@ -50,6 +50,20 @@ encoding masks unsigned values and sign-extends signed values to their declared
 width, including raw values constructed through `Typedef.abs`. The shared ABI
 matrix in `crates/test-utils/src/e2e/integers/abi.rs` covers all 11 types through
 calldata and memory, including tuples, arrays, and malformed input.
+
+## Unchecked arithmetic
+
+`unchecked/unsigned.sol` declares the `UncheckedAdd`, `UncheckedSub`,
+`UncheckedMul`, `UncheckedDiv`, and `UncheckedMod` traits, re-exported by
+`unchecked/signed.sol`, with wrapping instances for `word`, `uint8` ..
+`uint256`, and `int8` .. `int256`. The compiler lowers `+ - * / %`, their
+compound assignments, and unary `-` written directly inside `unchecked { ... }`
+to these traits, so such a block must import `std.unchecked.unsigned` or
+`std.unchecked.signed`. Results wrap to the type's width and `MIN / -1` is
+`MIN`; division or modulo by zero still panics with code `0x12`. The scope is
+lexical: called functions and lambda bodies inside the block stay checked, and
+nested blocks are rejected. Regressions: `tests/e2e/unchecked-scope` and the
+unchecked part of the shared matrix in `crates/test-utils/src/e2e/integers.rs`.
 
 ## Verification
 

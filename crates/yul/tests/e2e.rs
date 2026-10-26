@@ -41,6 +41,12 @@ fn integer_operations() {
 }
 
 #[test]
+fn integer_unchecked_operations() {
+    run_in_large_stack(|| integers::run_unchecked(run_fixture))
+        .unwrap_or_else(|failure| panic!("Yul unchecked integer E2E failed: {failure}"));
+}
+
+#[test]
 fn integer_abi() {
     run_in_large_stack(|| integers::run_abi(run_fixture))
         .unwrap_or_else(|failure| panic!("Yul integer ABI E2E failed: {failure}"));
