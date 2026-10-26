@@ -53,7 +53,7 @@ contract GenericProduct {
         let buf = allocate_zeroed_memory(64);
         mstore(buf, Typedef.rep(a));
         mstore(buf + 32, Typedef.rep(b));
-        let rdr: MemoryWordReader = MemoryWordReader(buf);
+        let rdr: MemoryWordReader = MemoryWordReader(buf, buf + 64);
         let dec: ABIDecoder<Point, MemoryWordReader> = ABIDecoder(rdr);
         let p: Point = decode(dec, 0);
         match (p) {

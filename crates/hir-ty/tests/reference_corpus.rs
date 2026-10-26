@@ -44,7 +44,7 @@ fn reference_accepted_corpus(fixture: Fixture<&str>) {
         let outcome = frontend::run_frontend_with_roots(
             &path,
             &main_root,
-            &root.join("ok/std"),
+            &frontend::repo_root().join("std"),
             external_roots,
         );
         let actual = outcome
@@ -107,7 +107,7 @@ fn reference_rejected_corpus(fixture: Fixture<&str>) {
         let outcome = frontend::run_frontend_with_roots(
             &path,
             &main_root,
-            &root.join("ok/std"),
+            &frontend::repo_root().join("std"),
             external_roots,
         );
         let accepted = !outcome.frontend_has_errors && !outcome.typeck_has_errors;
@@ -174,11 +174,6 @@ fn manifest() -> &'static Manifest {
                 relative_sources(&root.join("ok/test/imports"))
                     .into_iter()
                     .map(|path| format!("test/imports/{path}")),
-            )
-            .chain(
-                relative_sources(&root.join("ok/std"))
-                    .into_iter()
-                    .map(|path| format!("std/{path}")),
             )
             .collect::<BTreeSet<_>>();
         assert_eq!(
@@ -306,9 +301,7 @@ fn path_key(relative: &Path) -> String {
 
 fn roots_for_entry(root: &Path, relative: &Path) -> (PathBuf, BTreeMap<String, PathBuf>) {
     let mut external = BTreeMap::new();
-    let main_root = if relative.starts_with("std") {
-        root.join("std")
-    } else if relative.starts_with("test/imports/extlib") {
+    let main_root = if relative.starts_with("test/imports/extlib") {
         external.insert("extlib".to_owned(), root.join("test/imports/extlib"));
         root.join("test/imports/extlib")
     } else if relative.starts_with("test/imports") {

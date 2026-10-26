@@ -34,23 +34,14 @@ fn standard_library_sources_pass_normal_frontend_checks(fixture: Fixture<&str>) 
             outcome.frontend_error_diagnostics,
             outcome.typeck_error_diagnostics,
         );
-    });
-}
-
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/../parser/tests/fixtures/corpus/ok/std", glob: "std.sol")]
-fn reference_standard_library_has_no_diagnostics(fixture: Fixture<&str>) {
-    let path = PathBuf::from(fixture.path())
-        .canonicalize()
-        .expect("reference standard source path");
-    run_in_large_stack(move || {
-        let outcome = frontend::run_frontend(&path, path.parent().unwrap());
-        assert!(
-            outcome.frontend_diagnostics.is_empty() && outcome.typeck_diagnostics.is_empty(),
-            "{} failed frontend checks\n  frontend diagnostics: {:#?}\n  typeck diagnostics: {:#?}",
-            path.display(),
-            outcome.frontend_diagnostics,
-            outcome.typeck_diagnostics,
-        );
+        if path.file_name().is_some_and(|name| name == "std.sol") {
+            assert!(
+                outcome.frontend_diagnostics.is_empty() && outcome.typeck_diagnostics.is_empty(),
+                "std.sol emitted diagnostics\n  frontend: {:#?}\n  typeck: {:#?}",
+                outcome.frontend_diagnostics,
+                outcome.typeck_diagnostics,
+            );
+        }
     });
 }
 

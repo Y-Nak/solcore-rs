@@ -19,9 +19,8 @@ For example:
 The following expectations are supported:
 
 - `loader bare`: specialize isolated source without a standard library.
-- `loader std`: use the parser-corpus standard library.
-- `loader std-current`: use the workspace standard library.
-- `loader fixture`: load the source file, sibling modules, and parser-corpus standard
+- `loader std`: use the workspace standard library (`std-current` is an alias).
+- `loader fixture`: load the source file, sibling modules, and workspace standard
   library. Every annotated entry must specify a loader.
 - `frontend clean` or `frontend errors`: check the frontend independently of
   specialization. Omitting this leaves frontend diagnostics unchecked.
