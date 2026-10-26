@@ -3,5 +3,6 @@ trait C<a> {
 }
 
 function bad<a>() returns (word) where a: C {
-    return C.c(1);
+    let value: word = 1;
+    return C.c(value);
 }

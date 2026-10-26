@@ -41,7 +41,6 @@ pub(super) struct InferCtx<'db> {
     pub(super) closure_sigs: FxHashMap<DefId<'db>, ClosureSig<'db>>,
     pub(super) phantom_constructor_results:
         FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), (InferTy<'db>, Vec<TyVid<'db>>)>,
-    pub(super) integer_literal_pattern_vars: Vec<TyVid<'db>>,
     pub(super) reported_ambiguous_constraint: bool,
     pub(super) poisoned_exprs: FxHashSet<(FuncBody<'db>, Id<Expr<'db>>)>,
     pub(super) poisoned_pats: FxHashSet<(FuncBody<'db>, Id<Pat<'db>>)>,
@@ -119,7 +118,6 @@ impl<'db> InferCtx<'db> {
             pre_typeck_desugar: ctx.pre_typeck_desugar,
             closure_sigs: FxHashMap::default(),
             phantom_constructor_results: FxHashMap::default(),
-            integer_literal_pattern_vars: Vec::new(),
             reported_ambiguous_constraint: false,
             poisoned_exprs: FxHashSet::default(),
             poisoned_pats: FxHashSet::default(),

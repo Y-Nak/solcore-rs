@@ -6,5 +6,5 @@ function use<a>(x: a) returns (word) where a: C {
 
 function main() returns (word) {
     let y: word = 1;
-    return use(1);
+    return use(y);
 }

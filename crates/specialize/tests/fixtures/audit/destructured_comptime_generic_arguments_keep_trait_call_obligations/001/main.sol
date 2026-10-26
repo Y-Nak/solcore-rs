@@ -20,5 +20,6 @@ function get<a>(comptime value: Box<a>) returns (word) where a: StaticValue {
     }
 }
 function main() returns (word) {
-    return get(Box(3));
+    let value: word = 3;
+    return get(Box(value));
 }

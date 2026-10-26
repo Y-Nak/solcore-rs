@@ -88,7 +88,6 @@ impl<'db> InferCtx<'db> {
             LitKind::Number(_) | LitKind::Hex(_) => {
                 let vid = self.engine.fresh_vid();
                 let ty = InferTy::Var(vid);
-                self.integer_literal_pattern_vars.push(vid);
                 self.pending.push(PendingObligation {
                     class: ClassId::Builtin(BuiltinClassId::Int),
                     main: ty.clone(),
@@ -99,6 +98,11 @@ impl<'db> InferCtx<'db> {
                     if let Some(numeric_expected) =
                         self.numeric_literal_pattern_expected(expected.clone())
                     {
+                        self.check_integer_literal_pattern_range(
+                            body,
+                            pat,
+                            numeric_expected.clone(),
+                        );
                         // `comptime` is a staging property of the scrutinee,
                         // not part of the numeric literal itself. Constrain the
                         // literal's `Int` variable with the wrapped numeric type
@@ -138,10 +142,70 @@ impl<'db> InferCtx<'db> {
                 ctor: TyCtor::Builtin(BuiltinTyCtor::Word | BuiltinTyCtor::Integer),
                 ref args,
             } if args.is_empty() => Some(ty.clone()),
+            ref ty @ InferTy::Named {
+                ctor: TyCtor::User(user),
+                ref args,
+            } if args.is_empty()
+                && crate::support::is_canonical_std_def_named(self.db, user.def, "uint256") =>
+            {
+                Some(ty.clone())
+            }
             InferTy::Named { .. }
             | InferTy::Function { .. }
             | InferTy::Tuple(_)
             | InferTy::BoundVar(_) => None,
+        }
+    }
+
+    pub(super) fn check_integer_literal_pattern_range(
+        &mut self,
+        body: FuncBody<'db>,
+        pat: Id<Pat<'db>>,
+        ty: InferTy<'db>,
+    ) {
+        if self.pat_is_poisoned(body, pat) {
+            return;
+        }
+        let ty = self.normalize_aliases(ty);
+        let ty = self.engine.resolve(ty);
+        if let InferTy::Comptime(inner) = ty {
+            return self.check_integer_literal_pattern_range(body, pat, *inner);
+        }
+        let InferTy::Named {
+            ctor: TyCtor::User(user),
+            args,
+        } = ty
+        else {
+            return;
+        };
+        if !args.is_empty()
+            || !crate::support::is_canonical_std_def_named(self.db, user.def, "uint256")
+        {
+            return;
+        }
+        let (text, digits, radix) = match &body.pats(self.db).get(pat).kind {
+            PatKind::Lit(LitKind::Number(text)) => (text, text.as_str(), 10),
+            PatKind::Lit(LitKind::Hex(text)) => (
+                text,
+                text.strip_prefix("0x")
+                    .or_else(|| text.strip_prefix("0X"))
+                    .unwrap_or(text),
+                16,
+            ),
+            _ => return,
+        };
+        if num_bigint::BigUint::parse_bytes(digits.as_bytes(), radix)
+            .is_none_or(|value| value.bits() > 256)
+        {
+            self.emit_pat_error(
+                body,
+                pat,
+                TypeckDiagnostic::Mismatch {
+                    span: self.pat_label_span(body, pat),
+                    expected: "integer in the uint256 range (0..2^256-1)".to_owned(),
+                    actual: text.clone(),
+                },
+            );
         }
     }
 

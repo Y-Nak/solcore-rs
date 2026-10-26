@@ -609,6 +609,26 @@ impl<'db> InferCtx<'db> {
         expected: InferTy<'db>,
     ) -> CoveragePat<'db> {
         let expected = self.coverage_ty(expected);
+        if let InferTy::Named {
+            ctor: TyCtor::User(user),
+            args,
+        } = &expected
+            && args.is_empty()
+            && crate::support::is_canonical_std_def_named(self.db, user.def, "uint256")
+        {
+            // Numeric syntax and `uint256(word)` describe the same pattern.
+            let key = canonical_exact_unsigned_integer(digits, radix)
+                .map(|value| format!("word:{value}"))
+                .unwrap_or_else(|| raw_numeric_literal_key(digits, radix));
+            let inner = CoveragePat::constant(CoverageHead::Literal(key));
+            return CoveragePat::constructor(
+                CoverageHead::Ctor(CoverageCtor::User {
+                    ty: user.def,
+                    index: hir_nameres::CtorIndex::from_usize(0),
+                }),
+                vec![inner],
+            );
+        }
         let canonical = match expected {
             InferTy::Named {
                 ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Word),

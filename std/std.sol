@@ -1047,8 +1047,9 @@ impl Bounded<uint256> {
 }
 
 impl Int<uint256> {
-    function fromInteger(x: integer) returns (uint256) {
-        return uint256(wordFromInteger(x));
+    function fromInteger(comptime x: integer) returns (uint256) {
+        let checked: comptime<word> = checkedIntegerWord(x, 0, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+        return uint256(checked);
     }
 }
 

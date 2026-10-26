@@ -963,7 +963,36 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     span: pat.span,
                 }),
             },
-            PatKind::Lit(lit) => MonoPatKind::Lit(lit.clone()),
+            PatKind::Lit(lit) => {
+                let value_ty = strip_comptime_ty(self.driver.db, ty);
+                if matches!(lit, LitKind::Number(_) | LitKind::Hex(_))
+                    && let TyKind::Named {
+                        ctor: TyCtor::User(user),
+                        args,
+                    } = value_ty.kind(self.driver.db)
+                    && args.is_empty()
+                    && is_canonical_std_def_named(self.driver.db, user.def, "uint256")
+                {
+                    MonoPatKind::Con {
+                        ctor: MonoId {
+                            name: ctor_name(
+                                self.driver.db,
+                                self.driver.adts.get(&user.def).map(|info| info.adt),
+                                hir_nameres::CtorIndex::from_usize(0),
+                            ),
+                            ty: mono_ty,
+                            span: pat.span,
+                        },
+                        args: vec![MonoPat {
+                            span: pat.span,
+                            ty: MonoTy::new_unchecked(Ty::word(self.driver.db)),
+                            kind: MonoPatKind::Lit(lit.clone()),
+                        }],
+                    }
+                } else {
+                    MonoPatKind::Lit(lit.clone())
+                }
+            }
             PatKind::Ctor { head, args } => MonoPatKind::Con {
                 ctor: MonoId {
                     name: match self.pat_resolution(pat_id) {

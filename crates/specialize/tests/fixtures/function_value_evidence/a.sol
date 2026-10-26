@@ -8,11 +8,13 @@ impl Phantom<word, word> {
 }
 function localA() returns (word) {
     let f = run;
-    return f(0);
+    let value: word = 0;
+    return f(value);
 }
 function qualifiedA() returns (word) {
     let f = base.run;
-    return f(0);
+    let value: word = 0;
+    return f(value);
 }
 function argumentA() returns (word) {
     return apply(run, 0);
@@ -21,5 +23,6 @@ function nestedA() returns (word) {
     return relay(run, 0);
 }
 function genericA() returns (word) {
-    return genericValue(0);
+    let value: word = 0;
+    return genericValue(value);
 }

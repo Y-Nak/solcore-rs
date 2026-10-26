@@ -714,5 +714,8 @@ mod fixture_tests;
 #[path = "tests/inference.rs"]
 mod inference;
 
+#[cfg(test)]
+mod integer_defaulting;
+
 #[path = "tests/solver.rs"]
 mod solver;

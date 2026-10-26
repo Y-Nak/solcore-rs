@@ -15,5 +15,6 @@ impl<a> C<a> where Box<a>: C {
 }
 
 function f() returns (word) {
-    return C.c(0);
+    let value: word = 0;
+    return C.c(value);
 }

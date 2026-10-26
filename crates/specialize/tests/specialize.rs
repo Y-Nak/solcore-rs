@@ -30,6 +30,8 @@ use solcore_specialize::{
 
 #[path = "specialize/checked_closures.rs"]
 mod checked_closures;
+#[path = "specialize/checked_defaults.rs"]
+mod checked_defaults;
 #[path = "specialize/integer_literals.rs"]
 mod integer_literals;
 #[path = "specialize/signed_integers.rs"]
@@ -506,7 +508,8 @@ impl IsA<word> {
 
 contract C {
   function main(x : word) public returns (word) {
-    return IsA.ais(x, 0);
+    let witness: word = 0;
+    return IsA.ais(x, witness);
   }
 }
 "#,

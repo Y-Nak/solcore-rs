@@ -2,31 +2,26 @@ use super::*;
 
 fn integer_types() -> impl Iterator<Item = (String, String, String, String)> {
     [false, true].into_iter().flat_map(|signed| {
-        [8, 16, 32, 64, 128, 256]
-            .into_iter()
-            .filter_map(move |bits| {
-                if !signed && bits == 256 {
-                    return None; // uint256 retains its established word conversion semantics.
-                }
-                let digits = bits / 4;
-                let ty = format!("{}int{bits}", if signed { "" } else { "u" });
-                let upper = if signed {
-                    format!("0x7{}", "f".repeat(digits - 1))
-                } else {
-                    format!("0x{}", "f".repeat(digits))
-                };
-                let lower = if signed {
-                    format!("integerSub(0, 0x8{})", "0".repeat(digits - 1))
-                } else {
-                    "0".to_owned()
-                };
-                let lower_word = if signed {
-                    format!("0x{}8{}", "f".repeat(64 - digits), "0".repeat(digits - 1))
-                } else {
-                    "0".to_owned()
-                };
-                Some((ty, lower, upper, lower_word))
-            })
+        [8, 16, 32, 64, 128, 256].into_iter().map(move |bits| {
+            let digits = bits / 4;
+            let ty = format!("{}int{bits}", if signed { "" } else { "u" });
+            let upper = if signed {
+                format!("0x7{}", "f".repeat(digits - 1))
+            } else {
+                format!("0x{}", "f".repeat(digits))
+            };
+            let lower = if signed {
+                format!("integerSub(0, 0x8{})", "0".repeat(digits - 1))
+            } else {
+                "0".to_owned()
+            };
+            let lower_word = if signed {
+                format!("0x{}8{}", "f".repeat(64 - digits), "0".repeat(digits - 1))
+            } else {
+                "0".to_owned()
+            };
+            (ty, lower, upper, lower_word)
+        })
     })
 }
 
