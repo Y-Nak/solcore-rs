@@ -28,6 +28,8 @@ use solcore_specialize::{
     specialize_name, specialize_prepared_module,
 };
 
+#[path = "specialize/checked_closures.rs"]
+mod checked_closures;
 #[path = "specialize/integer_literals.rs"]
 mod integer_literals;
 #[path = "specialize/signed_integers.rs"]

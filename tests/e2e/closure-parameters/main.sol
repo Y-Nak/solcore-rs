@@ -7,6 +7,20 @@ function makeAdder(value: uint256) returns (function (uint256) returns (uint256)
     };
 }
 
+function makeComputedAdder(value: uint256) returns (function (uint256) returns (uint256)) {
+    let incremented = value + uint256(1);
+    return lam (other: uint256) -> uint256 {
+        return incremented + other;
+    };
+}
+
+function makeCheckedConstant(value: uint256) returns (function () returns (uint256)) {
+    let unused = value + uint256(1);
+    return lam () -> uint256 {
+        return uint256(7);
+    };
+}
+
 function twice(f: function (uint256) returns (uint256), x: uint256) returns (uint256) {
     return f(f(x));
 }
@@ -163,6 +177,60 @@ contract ClosureParameters {
     function runtimeFactory(step: uint256, x: uint256) public returns (uint256) {
         let f = makeAdder(step);
         return f(x);
+    }
+
+    // #[(4, 37) -> 42]
+    // #[(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 0) -> revert(0x4e487b710000000000000000000000000000000000000000000000000000000000000011)]
+    function computedFactory(step: uint256, x: uint256) public returns (uint256) {
+        let f = makeComputedAdder(step);
+        return f(x);
+    }
+
+    // #[(4) -> 1]
+    // #[(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff) -> revert(0x4e487b710000000000000000000000000000000000000000000000000000000000000011)]
+    function unusedComputedFactory(step: uint256) public returns (uint256) {
+        let unused = makeCheckedConstant(step);
+        return uint256(1);
+    }
+
+    function makeCountedAdder(step: uint256) returns (function (uint256) returns (uint256)) {
+        count = count + uint256(1);
+        let first = step + count;
+        count = count + uint256(1);
+        let second = step + count;
+        return lam (other: uint256) -> uint256 {
+            return first + second + other;
+        };
+    }
+
+    // #[(3) -> 30]
+    function factoryEffectOrder(step: uint256) public returns (uint256) {
+        count = uint256(0);
+        let f = makeCountedAdder(step);
+        count = count + uint256(10);
+        return f(uint256(0)) + f(uint256(0)) + count;
+    }
+
+    // #[(3) -> 2]
+    function unusedFactoryEffects(step: uint256) public returns (uint256) {
+        count = uint256(0);
+        let unused = makeCountedAdder(step);
+        return count;
+    }
+
+    // #[(3) -> 2]
+    function discardedFactoryEffects(step: uint256) public returns (uint256) {
+        count = uint256(0);
+        makeCountedAdder(step);
+        return count;
+    }
+
+    // #[(3) -> 11]
+    function reassignedFactoryEffects(step: uint256) public returns (uint256) {
+        count = uint256(0);
+        let f = makeAdder(step);
+        f = makeCountedAdder(step);
+        return f(uint256(0)) + count;
     }
 
     // #[(40) -> 42]

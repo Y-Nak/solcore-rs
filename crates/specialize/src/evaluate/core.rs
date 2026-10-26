@@ -59,7 +59,7 @@ mod pattern_tests;
 #[path = "staged_patterns.rs"]
 mod staged_patterns;
 
-use closures::{ClosureCloneKey, LiftedClosure};
+use closures::{ClosureCloneKey, ClosureFactory, LiftedClosure};
 
 struct LetInput<'db> {
     span: Span<'db>,
@@ -186,6 +186,7 @@ pub(super) struct Evaluator<'db> {
     pending_clones: VecDeque<PendingClone<'db>>,
     next_clone_id: usize,
     closure_clone_names: FxHashMap<ClosureCloneKey<'db>, String>,
+    closure_factories: FxHashMap<String, ClosureFactory<'db>>,
     lifted_closures: Vec<LiftedClosure<'db>>,
     capture_types: TypeReg<'db>,
     // Fresh symbolic identities for locals whose runtime declaration cannot be
@@ -332,6 +333,7 @@ impl<'db> Evaluator<'db> {
             pending_clones: VecDeque::new(),
             next_clone_id: 0,
             closure_clone_names: FxHashMap::default(),
+            closure_factories: FxHashMap::default(),
             lifted_closures: Vec::new(),
             capture_types: TypeReg::default(),
             unavailable_values: FxHashSet::default(),
@@ -692,6 +694,11 @@ impl<'db> Evaluator<'db> {
                 let (expr, effects) = self.eval_expr_stable(&env, &comptime_env, expr);
                 let mut env = env;
                 let mut comptime_env = comptime_env;
+                let (expr, factory_bindings) = self.capture_closure_factory(expr);
+                if !factory_bindings.is_empty() {
+                    self.invalidate_assigned_effects(&effects, &mut env, &mut comptime_env);
+                    return (env, comptime_env, factory_bindings);
+                }
                 if let MonoExprKind::Call { callee, args, .. } = &expr.kind
                     && let Some(body) = self.try_inline_stmt_call(callee, args, span)
                 {
@@ -730,7 +737,9 @@ impl<'db> Evaluator<'db> {
                 let (rhs_env, rhs_comptime_env) =
                     self.mask_assigned_env(env.clone(), comptime_env.clone(), &lhs_effects);
                 let (rhs, rhs_effects) = self.eval_expr_stable(&rhs_env, &rhs_comptime_env, rhs);
-                let (rhs, mut capture_bindings) = self.capture_closure_value(rhs);
+                let (rhs, mut capture_bindings) = self.capture_closure_factory(rhs);
+                let (rhs, bindings) = self.capture_closure_value(rhs);
+                capture_bindings.extend(bindings);
                 let static_assignment = matches!(&lhs.kind, MonoExprKind::Var(_))
                     && target
                         .as_ref()
@@ -1090,8 +1099,14 @@ impl<'db> Evaluator<'db> {
         };
         let (init, capture_bindings) = match init {
             Some(expr) => {
+                let (expr, mut factory_bindings) = if comptime {
+                    (expr, Vec::new())
+                } else {
+                    self.capture_closure_factory(expr)
+                };
                 let (expr, bindings) = self.capture_closure_value(expr);
-                (Some(expr), bindings)
+                factory_bindings.extend(bindings);
+                (Some(expr), factory_bindings)
             }
             init => (init, Vec::new()),
         };
