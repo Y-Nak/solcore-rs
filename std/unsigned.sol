@@ -8,8 +8,8 @@ import { mstore, sstore, sload } from std.opcodes;
 export { uint8, uint16, uint32, uint64, uint128 };
 
 // --- uint8 (8-bit unsigned) ---
-enum uint8 {
-    uint8(word)
+struct uint8 {
+    value: word;
 }
 
 impl Typedef<uint8, word> {
@@ -17,11 +17,7 @@ impl Typedef<uint8, word> {
         return uint8(w);
     }
     function rep(x: uint8) returns (word) {
-        match (x) {
-            case uint8(w) {
-                return w;
-            }
-        }
+        return x.value;
     }
 }
 impl Add<uint8> {
@@ -145,19 +141,15 @@ impl StorageCopy<uint8> {
 }
 
 // --- uint16 (16-bit unsigned) ---
-enum uint16 {
-    uint16(word)
+struct uint16 {
+    value: word;
 }
 impl Typedef<uint16, word> {
     function abs(w: word) returns (uint16) {
         return uint16(w);
     }
     function rep(x: uint16) returns (word) {
-        match (x) {
-            case uint16(w) {
-                return w;
-            }
-        }
+        return x.value;
     }
 }
 impl Add<uint16> {
@@ -281,19 +273,15 @@ impl StorageCopy<uint16> {
 }
 
 // --- uint32 (32-bit unsigned) ---
-enum uint32 {
-    uint32(word)
+struct uint32 {
+    value: word;
 }
 impl Typedef<uint32, word> {
     function abs(w: word) returns (uint32) {
         return uint32(w);
     }
     function rep(x: uint32) returns (word) {
-        match (x) {
-            case uint32(w) {
-                return w;
-            }
-        }
+        return x.value;
     }
 }
 impl Add<uint32> {
@@ -417,19 +405,15 @@ impl StorageCopy<uint32> {
 }
 
 // --- uint64 (64-bit unsigned) ---
-enum uint64 {
-    uint64(word)
+struct uint64 {
+    value: word;
 }
 impl Typedef<uint64, word> {
     function abs(w: word) returns (uint64) {
         return uint64(w);
     }
     function rep(x: uint64) returns (word) {
-        match (x) {
-            case uint64(w) {
-                return w;
-            }
-        }
+        return x.value;
     }
 }
 impl Add<uint64> {
@@ -553,19 +537,15 @@ impl StorageCopy<uint64> {
 }
 
 // --- uint128 (128-bit unsigned) ---
-enum uint128 {
-    uint128(word)
+struct uint128 {
+    value: word;
 }
 impl Typedef<uint128, word> {
     function abs(w: word) returns (uint128) {
         return uint128(w);
     }
     function rep(x: uint128) returns (word) {
-        match (x) {
-            case uint128(w) {
-                return w;
-            }
-        }
+        return x.value;
     }
 }
 impl Add<uint128> {
