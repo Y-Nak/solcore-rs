@@ -62,6 +62,7 @@ function forwardValue<a>(value: a) returns (a) {
 
 contract ClosureParameters {
     count: uint256;
+    incremented: uint256;
     locked: bool;
 
     // #[() -> 42]
@@ -184,6 +185,51 @@ contract ClosureParameters {
     function computedFactory(step: uint256, x: uint256) public returns (uint256) {
         let f = makeComputedAdder(step);
         return f(x);
+    }
+
+    // #[(4) -> 6]
+    function factoryLocalShadowsStorage(step: uint256) public returns (uint256) {
+        incremented = uint256(100);
+        let f = makeComputedAdder(step);
+        return f(uint256(1));
+    }
+
+    function makeAdderWithStorage(step: uint256) returns (function (uint256) returns (uint256)) {
+        let incremented = step + uint256(1);
+        return lam (other: uint256) -> uint256 {
+            return incremented + count + other;
+        };
+    }
+
+    function makeAdderWithExpiredShadow(step: uint256) returns (function (uint256) returns (uint256)) {
+        {
+            let count: bool = true;
+        }
+        let incremented = step + uint256(1);
+        return lam (other: uint256) -> uint256 {
+            return incremented + count + other;
+        };
+    }
+
+    function changeFactoryStorage() {
+        count = uint256(20);
+    }
+
+    // #[(4) -> 26]
+    function factoryCallerShadowsStorage(step: uint256) public returns (uint256) {
+        count = uint256(10);
+        let count: uint256 = uint256(100);
+        let f = makeAdderWithStorage(step);
+        changeFactoryStorage();
+        return f(uint256(1));
+    }
+
+    // #[(4) -> 26]
+    function factoryExpiredShadow(step: uint256) public returns (uint256) {
+        count = uint256(10);
+        let f = makeAdderWithExpiredShadow(step);
+        changeFactoryStorage();
+        return f(uint256(1));
     }
 
     // #[(4) -> 1]

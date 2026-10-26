@@ -54,6 +54,29 @@ pub(super) struct ClosureFactory<'db> {
     payload: MonoTy<'db>,
 }
 
+struct FactoryScope<'a, 'db> {
+    types: TypeReg<'db>,
+    if_stmt_spans: &'a FxHashSet<Span<'db>>,
+}
+
+impl<'db> Visitor<'db> for FactoryScope<'_, 'db> {
+    fn visit_stmt(&mut self, stmt: &MonoStmt<'db>) {
+        match &stmt.kind {
+            // Source blocks and actual match arms own their local bindings.
+            MonoStmtKind::Block(_) => return,
+            MonoStmtKind::Match { .. } if !self.if_stmt_spans.contains(&stmt.span) => return,
+            MonoStmtKind::Let { id, .. } => {
+                self.types.insert(id.name.clone(), id.clone());
+            }
+            _ => {}
+        }
+        walk_stmt(self, stmt);
+    }
+
+    fn visit_expr(&mut self, _expr: &MonoExpr<'db>) {}
+    fn visit_pat(&mut self, _pat: &MonoPat<'db>) {}
+}
+
 impl<'db> Evaluator<'db> {
     /// Keep a factory's runtime work at construction time. Its residual helper
     /// returns the closure's environment instead of a function value, and the
@@ -117,7 +140,19 @@ impl<'db> Evaluator<'db> {
         let MonoStmtKind::Return(Some(value)) = &last.kind else {
             return None;
         };
-        let (target, captures) = self.lift_closure(value)?;
+        // Capture classification must use the factory's scope at its return,
+        // not caller locals or declarations whose nested scope has ended.
+        let mut scope = FactoryScope {
+            types: build_type_reg(&function.params, &[]),
+            if_stmt_spans: &self.if_stmt_spans,
+        };
+        for stmt in prefix {
+            scope.visit_stmt(stmt);
+        }
+        let saved_types = std::mem::replace(&mut self.capture_types, scope.types);
+        let lifted = self.lift_closure(value);
+        self.capture_types = saved_types;
+        let (target, captures) = lifted?;
         if captures.iter().any(|capture| {
             ty_is_function(self.db, capture.ty.ty()) || self.value_contains_callable(capture)
         }) {
