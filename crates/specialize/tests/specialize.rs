@@ -30,6 +30,8 @@ use solcore_specialize::{
 
 #[path = "specialize/integer_literals.rs"]
 mod integer_literals;
+#[path = "specialize/signed_integers.rs"]
+mod signed_integers;
 
 #[salsa::db]
 #[derive(Default, Clone)]
