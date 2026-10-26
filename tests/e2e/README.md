@@ -1,5 +1,9 @@
 # Backend E2E fixtures
 
+Both backends also run the shared integer matrix in
+`crates/test-utils/src/e2e/integers.rs`. It builds one temporary source fixture
+per integer type and checks 433 cases using a mathematical oracle.
+
 Both the Yul and Sonatina backends generate a test for every `**/main.sol`
 fixture in this directory. Selector-dispatched fixtures explicitly open both
 `std` and `std.dispatch` with `import * from ...`. Expectations live next to the contract
