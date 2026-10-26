@@ -12,5 +12,6 @@ function needsDerivedTwice<a>(x: a) where a: Derived, a: Derived {
 }
 
 function main() {
-    return needsDerivedTwice(0);
+    let value: word = 0;
+    return needsDerivedTwice(value);
 }

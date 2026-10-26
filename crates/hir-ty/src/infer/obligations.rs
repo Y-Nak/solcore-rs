@@ -296,6 +296,8 @@ impl<'db> InferCtx<'db> {
         unresolved.sort_unstable();
 
         self.default_integer_literals_with_non_int_obligations(&pending, &unresolved);
+        self.default_integer_literal_patterns();
+        self.default_root_integer_literals();
         self.default_open_string_coercions(&pending, &unresolved);
 
         // Final phase: no further improvement is possible, so report the
@@ -349,7 +351,6 @@ impl<'db> InferCtx<'db> {
             return;
         }
 
-        let word = self.word();
         for &index in unresolved {
             let obligation = &pending[index];
             if obligation.class != ClassId::Builtin(BuiltinClassId::Int)
@@ -365,8 +366,31 @@ impl<'db> InferCtx<'db> {
             let mut vars = FxHashSet::default();
             self.collect_infer_vars(obligation.main.clone(), &mut vars);
             if vars.iter().any(|var| constrained_vars.contains(var)) {
-                self.unify(obligation.main.clone(), word.clone());
+                let default = self.default_integer_ty();
+                self.unify(obligation.main.clone(), default);
             }
+        }
+    }
+
+    /// An unconstrained source integer uses the checked standard integer type.
+    /// Explicit `word`/`integer` constraints are resolved before defaulting; a
+    /// missing standard library must never turn an implicit integer into `word`.
+    fn default_integer_ty(&mut self) -> InferTy<'db> {
+        if let Some(def) = crate::support::canonical_std_adt_def(self.db, "uint256") {
+            InferTy::Named {
+                ctor: TyCtor::User(UserTyCtor {
+                    def,
+                    kind: UserTyCtorKind::Adt,
+                }),
+                args: Vec::new(),
+            }
+        } else {
+            self.diagnostics
+                .push(TypeckDiagnostic::UndefinedTypeConstructor {
+                    span: self.body_label_span(self.root_body),
+                    name: "std.uint256".to_owned(),
+                });
+            InferTy::Error
         }
     }
 
@@ -827,11 +851,20 @@ impl<'db> InferCtx<'db> {
     }
 
     pub(super) fn default_integer_literal_patterns(&mut self) {
-        let word = self.word();
-        for var in self.integer_literal_pattern_vars.clone() {
-            if matches!(self.engine.resolve(InferTy::Var(var)), InferTy::Var(_)) {
-                self.unify(InferTy::Var(var), word.clone());
+        for pending in self.pending.clone() {
+            let ObligationSource::IntegerLiteralPattern { body, pat } = pending.source else {
+                continue;
+            };
+            if self.obligation_source_poisoned(&pending.source)
+                || self.pending_obligation_has_error(&pending)
+            {
+                continue;
             }
+            if matches!(self.engine.resolve(pending.main.clone()), InferTy::Var(_)) {
+                let default = self.default_integer_ty();
+                self.unify(pending.main.clone(), default);
+            }
+            self.check_integer_literal_pattern_range(body, pat, pending.main);
         }
     }
 
@@ -960,7 +993,6 @@ impl<'db> InferCtx<'db> {
             return;
         }
 
-        let word = self.word();
         for pending in self.pending.clone() {
             if pending.class != ClassId::Builtin(BuiltinClassId::Int)
                 || !pending.args.is_empty()
@@ -972,7 +1004,8 @@ impl<'db> InferCtx<'db> {
             let mut vars = FxHashSet::default();
             self.collect_infer_vars(pending.main.clone(), &mut vars);
             if !vars.is_empty() && vars.iter().all(|var| root_vars.contains(var)) {
-                self.unify(pending.main.clone(), word.clone());
+                let default = self.default_integer_ty();
+                self.unify(pending.main.clone(), default);
             }
         }
     }

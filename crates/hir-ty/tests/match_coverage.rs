@@ -14,7 +14,7 @@ fn conservative_match_coverage(fixture: Fixture<&str>) {
         .canonicalize()
         .expect("match source");
     run_in_large_stack(move || {
-        let std_root = frontend::repo_root().join("crates/parser/tests/fixtures/corpus/ok/std");
+        let std_root = frontend::repo_root().join("std");
         let outcome = frontend::run_frontend(&path, &std_root);
         assert!(
             !outcome.frontend_has_errors && !outcome.typeck_has_errors,

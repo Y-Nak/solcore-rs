@@ -1,8 +1,8 @@
 //! Shared support for backend-to-EVM end-to-end tests.
 //!
-//! The helpers in this module deliberately start at bytecode. Each backend owns
-//! its source-to-bytecode pipeline, while process management, Anvil execution,
-//! directive parsing, and static-ABI call execution live here.
+//! Each backend owns its source-to-bytecode pipeline, while common test cases,
+//! process management, Anvil execution, directive parsing, and static-ABI call
+//! execution live here.
 
 use std::{
     env, fmt,
@@ -14,6 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub mod integers;
 mod process;
 mod vector;
 

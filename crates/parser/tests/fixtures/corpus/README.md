@@ -6,10 +6,10 @@ are formatted with `solcore-fmt`; intentional syntax-error fixtures remain
 unchanged. The `ok/test/examples/` and `fail/test/examples/` directories retain
 their historical classifications rather than defining current language behavior.
 
-The standard-library sources in `ok/std/` are byte-identical to
-[`std/`](../../../../../std/); see
-[`std/README.md`](../../../../../std/README.md) for the synchronization
-policy. The `test/imports/` and `known-diagnostic-gaps/` trees contain additional
+The corpus tests load the workspace standard library directly from
+[`std/`](../../../../../std/). Dedicated parser and frontend tests also check
+each standard-library source as an entry point. The `test/imports/` and
+`known-diagnostic-gaps/` trees contain additional
 Rust compiler regressions outside the historical example set.
 
 The Rust compiler and its tests define current language behavior. The historical

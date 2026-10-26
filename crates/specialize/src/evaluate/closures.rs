@@ -5,7 +5,10 @@
 
 use super::*;
 use crate::evaluate::{
-    effects::{function_is_comptime_pure, function_is_pure},
+    effects::{
+        function_is_comptime_inlinable, function_is_comptime_pure, function_is_inlinable,
+        function_is_pure,
+    },
     erasure::{strip_comptime, ty_is_function},
     known::collect_pat_binders,
 };
@@ -43,7 +46,155 @@ pub(super) struct LiftedClosure<'db> {
     captures: Vec<MonoId<'db>>,
 }
 
+#[derive(Clone)]
+pub(super) struct ClosureFactory<'db> {
+    callee: MonoId<'db>,
+    target: MonoId<'db>,
+    captures: Vec<MonoTy<'db>>,
+    payload: MonoTy<'db>,
+}
+
+struct FactoryScope<'a, 'db> {
+    types: TypeReg<'db>,
+    if_stmt_spans: &'a FxHashSet<Span<'db>>,
+}
+
+impl<'db> Visitor<'db> for FactoryScope<'_, 'db> {
+    fn visit_stmt(&mut self, stmt: &MonoStmt<'db>) {
+        match &stmt.kind {
+            // Source blocks and actual match arms own their local bindings.
+            MonoStmtKind::Block(_) => return,
+            MonoStmtKind::Match { .. } if !self.if_stmt_spans.contains(&stmt.span) => return,
+            MonoStmtKind::Let { id, .. } => {
+                self.types.insert(id.name.clone(), id.clone());
+            }
+            _ => {}
+        }
+        walk_stmt(self, stmt);
+    }
+
+    fn visit_expr(&mut self, _expr: &MonoExpr<'db>) {}
+    fn visit_pat(&mut self, _pat: &MonoPat<'db>) {}
+}
+
 impl<'db> Evaluator<'db> {
+    /// Keep a factory's runtime work at construction time. Its residual helper
+    /// returns the closure's environment instead of a function value, and the
+    /// caller binds that environment once, even if the closure is never used.
+    pub(super) fn capture_closure_factory(
+        &mut self,
+        expr: MonoExpr<'db>,
+    ) -> (MonoExpr<'db>, Vec<MonoStmt<'db>>) {
+        let MonoExprKind::Call { callee, args, .. } = &expr.kind else {
+            return (expr, Vec::new());
+        };
+        let Some(factory) = self.closure_factory(&callee.name) else {
+            return (expr, Vec::new());
+        };
+        let call = MonoExpr {
+            span: expr.span,
+            ty: factory.payload,
+            kind: MonoExprKind::Call {
+                callee: factory.callee,
+                args: args.clone(),
+                origin: MonoCallOrigin::ByName,
+            },
+        };
+        let (payload, binding) = self.materialize_callable_payload(call);
+        let captures = factory
+            .captures
+            .iter()
+            .enumerate()
+            .map(|(index, ty)| MonoExpr {
+                span: expr.span,
+                ty: *ty,
+                kind: MonoExprKind::Field {
+                    base: Box::new(payload.clone()),
+                    field: index.to_string(),
+                },
+            })
+            .collect();
+        (
+            self.bound_closure(&factory.target, captures, expr.ty, expr.span),
+            vec![binding],
+        )
+    }
+
+    fn closure_factory(&mut self, name: &str) -> Option<ClosureFactory<'db>> {
+        if let Some(factory) = self.closure_factories.get(name) {
+            return Some(factory.clone());
+        }
+        let mut function = self.functions.get(name)?.clone();
+        if !ty_is_function(self.db, function.ret.ty())
+            || ty_is_comptime(self.db, function.ret.ty())
+            || function.params.iter().any(|param| {
+                param_is_comptime(self.db, param) || ty_is_function(self.db, param.ty.ty())
+            })
+        {
+            return None;
+        }
+        let (last, prefix) = function.body.split_last()?;
+        if prefix.iter().any(stmt_has_return) || function.body.iter().any(stmt_has_yul_leave) {
+            return None;
+        }
+        let MonoStmtKind::Return(Some(value)) = &last.kind else {
+            return None;
+        };
+        // Capture classification must use the factory's scope at its return,
+        // not caller locals or declarations whose nested scope has ended.
+        let mut scope = FactoryScope {
+            types: build_type_reg(&function.params, &[]),
+            if_stmt_spans: &self.if_stmt_spans,
+        };
+        for stmt in prefix {
+            scope.visit_stmt(stmt);
+        }
+        let saved_types = std::mem::replace(&mut self.capture_types, scope.types);
+        let lifted = self.lift_closure(value);
+        self.capture_types = saved_types;
+        let (target, captures) = lifted?;
+        if captures.iter().any(|capture| {
+            ty_is_function(self.db, capture.ty.ty()) || self.value_contains_callable(capture)
+        }) {
+            return None;
+        }
+        let return_span = value.span;
+        if self.clone_fuel == 0 {
+            self.push_closure_fuel_diagnostic(&function, return_span);
+            return None;
+        }
+        self.clone_fuel -= 1;
+        let capture_types = captures
+            .iter()
+            .map(|capture| capture.ty)
+            .collect::<Vec<_>>();
+        let payload = MonoTy::new_unchecked(hir_ty::Ty::tuple(
+            self.db,
+            capture_types.iter().map(|ty| ty.ty()).collect(),
+        ));
+        function.name = self.fresh_clone_name(&format!("{name}$environment"));
+        function.ret = payload;
+        function.body.last_mut()?.kind = MonoStmtKind::Return(Some(MonoExpr {
+            span: return_span,
+            ty: payload,
+            kind: MonoExprKind::Tuple(captures),
+        }));
+        let factory = ClosureFactory {
+            callee: MonoId {
+                name: function.name.clone(),
+                ty: function_ty(self.db, &function.params, payload),
+                span: function.span,
+            },
+            target,
+            captures: capture_types,
+            payload,
+        };
+        self.closure_factories
+            .insert(name.to_owned(), factory.clone());
+        self.register_closure_function(function, VEnv::default());
+        Some(factory)
+    }
+
     /// Only closed values may be substituted beneath a lambda's binders.
     /// Symbolic captures stay in their defining scope and become explicit
     /// arguments to the lifted body, including reads and writes in assembly.
@@ -647,6 +798,15 @@ impl<'db> Evaluator<'db> {
         ) {
             self.pure_funs.insert(function.name.clone());
         }
+        if function_is_inlinable(
+            self.db,
+            &function,
+            &self.inlinable_funs,
+            &function.name,
+            &self.storage_fields,
+        ) {
+            self.inlinable_funs.insert(function.name.clone());
+        }
         if function_is_comptime_pure(
             self.db,
             &function,
@@ -655,6 +815,15 @@ impl<'db> Evaluator<'db> {
             &self.storage_fields,
         ) {
             self.comptime_pure_funs.insert(function.name.clone());
+        }
+        if function_is_comptime_inlinable(
+            self.db,
+            &function,
+            &self.comptime_inlinable_funs,
+            &function.name,
+            &self.storage_fields,
+        ) {
+            self.comptime_inlinable_funs.insert(function.name.clone());
         }
         // A closure's writes depend on its bound callable arguments. Until its
         // body has been evaluated, use a conservative summary at all call sites.

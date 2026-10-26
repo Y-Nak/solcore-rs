@@ -11,7 +11,7 @@ Try it in the [online playground](https://playground.solcore.soliditylang.org/).
 ## Language and standard library
 
 The Rust compiler and its regression tests define the supported Solcore
-language. Sources use the canonical `.sol` syntax. The eight library sources
+language. Sources use the canonical `.sol` syntax. The ten library sources
 in [`std/`](std/) are maintained with this compiler; see the standard library's
 [README](std/README.md) for its maintenance and verification policy.
 

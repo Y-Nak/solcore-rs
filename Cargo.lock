@@ -3693,6 +3693,7 @@ dependencies = [
  "annotate-snippets",
  "insta",
  "libc",
+ "num-bigint",
  "rustc-hash",
  "salsa",
  "serde",

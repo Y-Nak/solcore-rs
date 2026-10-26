@@ -535,6 +535,13 @@ pub(crate) enum ParsedLitKind<'src> {
     String(&'src str),
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ParsedUnOp {
+    Not,
+    BitNot,
+    Neg,
+}
+
 /// Parsed expression.
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedExpr<'src> {
@@ -611,7 +618,7 @@ pub(crate) enum ParsedExprKind<'src> {
     /// Unary operator expression.
     UnaryOp {
         /// Operator and span.
-        op: ParsedSpanned<'src, function::UnOp>,
+        op: ParsedSpanned<'src, ParsedUnOp>,
         /// Operand.
         expr: Box<ParsedExpr<'src>>,
     },

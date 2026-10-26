@@ -10,4 +10,4 @@ error[SC0001]: parse error: unexpected `)`
 2 | function f() returns (word) { return g(1,); }
   |                                          ^ unexpected token
   |
-  = note: expecting `!`, `(`, `.`, `@`, `[`, `lam`, or `~`
+  = note: expecting `!`, `(`, `-`, `.`, `@`, `[`, `lam`, or `~`

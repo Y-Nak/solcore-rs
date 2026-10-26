@@ -83,7 +83,7 @@ fn assign_stmt_kind<'src>(
             let rhs = ParsedExpr {
                 span,
                 kind: ParsedExprKind::UnaryOp {
-                    op: ParsedSpanned::new(function::UnOp::BitNot, op_span),
+                    op: ParsedSpanned::new(ParsedUnOp::BitNot, op_span),
                     expr: Box::new(lhs_read),
                 },
             };

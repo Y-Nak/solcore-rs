@@ -39,6 +39,7 @@ pub(super) struct BodyIndex<'db> {
     class_method_value_bindings:
         FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), LogicalEvidenceBindings<'db>>,
     string_coercion_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), LogicalEvidence<'db>>,
+    integer_literal_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), LogicalEvidence<'db>>,
     first_builtin_int_evidence: Option<CallSiteEvidence<'db>>,
     comptime_let_stmts: FxHashSet<(FuncBody<'db>, Id<Stmt<'db>>)>,
     comptime_obligations: FxHashMap<FuncBody<'db>, Vec<ComptimeObligation<'db>>>,
@@ -62,6 +63,7 @@ impl<'db> BodyIndex<'db> {
             class_method_value_evidence: FxHashMap::default(),
             class_method_value_bindings: FxHashMap::default(),
             string_coercion_evidence: FxHashMap::default(),
+            integer_literal_evidence: FxHashMap::default(),
             first_builtin_int_evidence: None,
             comptime_let_stmts: FxHashSet::default(),
             comptime_obligations: FxHashMap::default(),
@@ -138,6 +140,13 @@ impl<'db> BodyIndex<'db> {
                     .entry((body, expr, function))
                     .or_default()
                     .push((obligation.pred, solved.evidence.clone()));
+                continue;
+            }
+            if let hir_ty::ObligationSource::IntegerLiteral { body, expr } = obligation.source {
+                index
+                    .integer_literal_evidence
+                    .entry((body, expr))
+                    .or_insert_with(|| solved.evidence.clone());
                 continue;
             }
             if let hir_ty::ObligationSource::StringCoercion { body, expr } = obligation.source {
@@ -484,6 +493,27 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         }
         ty = self.normalize_body_ty(ty);
         let mono_ty = self.driver.mono_ty(ty, "expression", expr.span)?;
+        if let Some(evidence) = self
+            .index
+            .integer_literal_evidence
+            .get(&(self.body, expr_id))
+            .cloned()
+            && let ExprKind::Lit(lit) = &expr.kind
+        {
+            let source = MonoExpr {
+                span: expr.span,
+                ty: MonoTy::new_unchecked(Ty::integer(self.driver.db)),
+                kind: MonoExprKind::Lit(lit.clone()),
+            };
+            let kind = self.int_from_integer_call(vec![source], ty, expr.span, Some(evidence))?;
+            let mono_expr = MonoExpr {
+                span: expr.span,
+                ty: mono_ty,
+                kind,
+            };
+            self.lowered_exprs.insert(expr_id, mono_expr.clone());
+            return Some(mono_expr);
+        }
         if let Some(evidence) = self.string_coercion_evidence(expr_id) {
             let source_ty = self.source_string_ty();
             let source_mono_ty =
@@ -933,7 +963,36 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     span: pat.span,
                 }),
             },
-            PatKind::Lit(lit) => MonoPatKind::Lit(lit.clone()),
+            PatKind::Lit(lit) => {
+                let value_ty = strip_comptime_ty(self.driver.db, ty);
+                if matches!(lit, LitKind::Number(_) | LitKind::Hex(_))
+                    && let TyKind::Named {
+                        ctor: TyCtor::User(user),
+                        args,
+                    } = value_ty.kind(self.driver.db)
+                    && args.is_empty()
+                    && is_canonical_std_def_named(self.driver.db, user.def, "uint256")
+                {
+                    MonoPatKind::Con {
+                        ctor: MonoId {
+                            name: ctor_name(
+                                self.driver.db,
+                                self.driver.adts.get(&user.def).map(|info| info.adt),
+                                hir_nameres::CtorIndex::from_usize(0),
+                            ),
+                            ty: mono_ty,
+                            span: pat.span,
+                        },
+                        args: vec![MonoPat {
+                            span: pat.span,
+                            ty: MonoTy::new_unchecked(Ty::word(self.driver.db)),
+                            kind: MonoPatKind::Lit(lit.clone()),
+                        }],
+                    }
+                } else {
+                    MonoPatKind::Lit(lit.clone())
+                }
+            }
             PatKind::Ctor { head, args } => MonoPatKind::Con {
                 ctor: MonoId {
                     name: match self.pat_resolution(pat_id) {

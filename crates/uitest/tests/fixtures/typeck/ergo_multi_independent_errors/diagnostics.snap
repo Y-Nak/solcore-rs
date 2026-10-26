@@ -28,10 +28,10 @@ error[SC0201]: type mismatch: expected bool, found numeric
 ---
 
 error[SC0206]: non-callable value of type word
-  --> /main/main.sol:10:12
+  --> /main/main.sol:11:12
    |
- 9 | function c(x: word) returns (word) {
-10 |     return x(1);
+10 |     let value: word = 1;
+11 |     return x(value);
    |            ^ callee is not callable
-11 | }
+12 | }
    |

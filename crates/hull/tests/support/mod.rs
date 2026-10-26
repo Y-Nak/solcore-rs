@@ -112,7 +112,7 @@ pub(super) fn specialize_fixture(path: &Path) -> (&'static TestDb, SpecializeOut
     let db = Box::leak(Box::new(TestDb::default()));
     let main_root = path.parent().expect("fixture parent").to_path_buf();
     let repo = repo_root();
-    let std_root = repo.join("crates/parser/tests/fixtures/corpus/ok/std");
+    let std_root = repo.join("std");
     db.module_tree = Some(ModuleTree::new(
         db,
         main_root.clone(),

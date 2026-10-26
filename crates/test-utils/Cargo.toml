@@ -12,6 +12,7 @@ annotate-snippets = { workspace = true }
 hir = { workspace = true }
 insta = "1.43.2"
 nameres = { workspace = true }
+num-bigint = { workspace = true }
 parser = { workspace = true }
 rustc-hash = { workspace = true }
 salsa = { workspace = true }

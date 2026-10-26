@@ -7,5 +7,6 @@ function b() returns (bool) {
 }
 
 function c(x: word) returns (word) {
-    return x(1);
+    let value: word = 1;
+    return x(value);
 }

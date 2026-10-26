@@ -18,8 +18,9 @@ use solcore_test_utils::{
     define_frontend_test_db,
     e2e::{
         AbiShape, COMMAND_TIMEOUT, E2eExecution, E2eFailure, FailureKind, ResolvedE2eCall,
-        command_available, e2e_enabled, e2e_pipeline_only, looks_like_hex, parse_e2e_directive,
-        resolve_e2e_comments, run_command, source_e2e_scenario, with_evm_harness,
+        command_available, e2e_enabled, e2e_pipeline_only, integers, looks_like_hex,
+        parse_e2e_directive, resolve_e2e_comments, run_command, source_e2e_scenario,
+        with_evm_harness,
     },
     load_fixture_case_with_file_urls, load_reachable_modules_with_file_urls,
     repo_root_from_manifest, run_in_large_stack,
@@ -32,6 +33,18 @@ define_frontend_test_db!(TestDb, hir_ty);
 
 static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 static SOLC_FOR_E2E: OnceLock<Result<Option<PathBuf>, E2eFailure>> = OnceLock::new();
+
+#[test]
+fn integer_operations() {
+    run_in_large_stack(|| integers::run(run_fixture))
+        .unwrap_or_else(|failure| panic!("Yul integer E2E failed: {failure}"));
+}
+
+#[test]
+fn integer_abi() {
+    run_in_large_stack(|| integers::run_abi(run_fixture))
+        .unwrap_or_else(|failure| panic!("Yul integer ABI E2E failed: {failure}"));
+}
 
 #[dir_test(
     dir: "$CARGO_MANIFEST_DIR/../../tests/e2e",

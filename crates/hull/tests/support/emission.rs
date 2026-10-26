@@ -78,8 +78,15 @@ fn checked_typedef_array_operations(fixture: Fixture<&str>) {
                     "std_out_of_bounds".into(),
                     "Typedef_rep".into(),
                     "Second".into(),
-                    "std_hash1".into(),
+                    "std_storageArrayElement".into(),
                 ],
+                ..TextChecks::default()
+            },
+        ),
+        (
+            "std_storageArrayElement".into(),
+            TextChecks {
+                contains: vec!["std_hash1".into(), "std_storageArrayOffset".into()],
                 ..TextChecks::default()
             },
         ),
