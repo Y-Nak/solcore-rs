@@ -40,6 +40,12 @@ fn integer_operations() {
         .unwrap_or_else(|failure| panic!("Yul integer E2E failed: {failure}"));
 }
 
+#[test]
+fn integer_abi() {
+    run_in_large_stack(|| integers::run_abi(run_fixture))
+        .unwrap_or_else(|failure| panic!("Yul integer ABI E2E failed: {failure}"));
+}
+
 #[dir_test(
     dir: "$CARGO_MANIFEST_DIR/../../tests/e2e",
     glob: "**/main.sol"

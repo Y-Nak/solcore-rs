@@ -1,6 +1,7 @@
 // std.signed: signed integer types int8..int256.
-// Each type wraps a two's-complement `word`; narrow widths are kept in range
-// (signextend) after every value-producing operation.
+// Each type wraps a two's-complement word. Arithmetic is checked; bitwise
+// operations and ABI encoding sign-extend to the selected width.
+// Typedef.abs preserves the raw representation; ABI decoding validates it.
 import * from std;
 import { SigString } from std.dispatch;
 import { sdiv, smod, sgt, signextend, mstore, sstore, sload } from std.opcodes;
@@ -123,14 +124,16 @@ impl ABIAttribs<int8> {
 
 impl ABIEncode<int8> {
     function encodeInto(x: int8, basePtr: word, offset: word, tail: word) returns (word) {
-        mstore(basePtr + offset, Typedef.rep(x));
+        mstore(basePtr + offset, signextend(0, Typedef.rep(x)));
         return tail;
     }
 }
 
 impl<reader> ABIDecode<ABIDecoder<int8, reader>, int8> where reader: WordReader {
     function decode(ptr: ABIDecoder<int8, reader>, currentHeadOffset: word) returns (int8) {
-        return Typedef.abs(signextend(0, WordReader.read(WordReader.advance(ptr, currentHeadOffset))));
+        let raw = WordReader.read(WordReader.advance(ptr, currentHeadOffset));
+        require(raw == signextend(0, raw), Error(0x6cc54a63)); // DirtyHigherBitsForInteger()
+        return Typedef.abs(raw);
     }
 }
 
@@ -282,14 +285,16 @@ impl ABIAttribs<int16> {
 
 impl ABIEncode<int16> {
     function encodeInto(x: int16, basePtr: word, offset: word, tail: word) returns (word) {
-        mstore(basePtr + offset, Typedef.rep(x));
+        mstore(basePtr + offset, signextend(1, Typedef.rep(x)));
         return tail;
     }
 }
 
 impl<reader> ABIDecode<ABIDecoder<int16, reader>, int16> where reader: WordReader {
     function decode(ptr: ABIDecoder<int16, reader>, currentHeadOffset: word) returns (int16) {
-        return Typedef.abs(signextend(1, WordReader.read(WordReader.advance(ptr, currentHeadOffset))));
+        let raw = WordReader.read(WordReader.advance(ptr, currentHeadOffset));
+        require(raw == signextend(1, raw), Error(0x6cc54a63)); // DirtyHigherBitsForInteger()
+        return Typedef.abs(raw);
     }
 }
 
@@ -440,14 +445,16 @@ impl ABIAttribs<int32> {
 
 impl ABIEncode<int32> {
     function encodeInto(x: int32, basePtr: word, offset: word, tail: word) returns (word) {
-        mstore(basePtr + offset, Typedef.rep(x));
+        mstore(basePtr + offset, signextend(3, Typedef.rep(x)));
         return tail;
     }
 }
 
 impl<reader> ABIDecode<ABIDecoder<int32, reader>, int32> where reader: WordReader {
     function decode(ptr: ABIDecoder<int32, reader>, currentHeadOffset: word) returns (int32) {
-        return Typedef.abs(signextend(3, WordReader.read(WordReader.advance(ptr, currentHeadOffset))));
+        let raw = WordReader.read(WordReader.advance(ptr, currentHeadOffset));
+        require(raw == signextend(3, raw), Error(0x6cc54a63)); // DirtyHigherBitsForInteger()
+        return Typedef.abs(raw);
     }
 }
 
@@ -599,14 +606,16 @@ impl ABIAttribs<int64> {
 
 impl ABIEncode<int64> {
     function encodeInto(x: int64, basePtr: word, offset: word, tail: word) returns (word) {
-        mstore(basePtr + offset, Typedef.rep(x));
+        mstore(basePtr + offset, signextend(7, Typedef.rep(x)));
         return tail;
     }
 }
 
 impl<reader> ABIDecode<ABIDecoder<int64, reader>, int64> where reader: WordReader {
     function decode(ptr: ABIDecoder<int64, reader>, currentHeadOffset: word) returns (int64) {
-        return Typedef.abs(signextend(7, WordReader.read(WordReader.advance(ptr, currentHeadOffset))));
+        let raw = WordReader.read(WordReader.advance(ptr, currentHeadOffset));
+        require(raw == signextend(7, raw), Error(0x6cc54a63)); // DirtyHigherBitsForInteger()
+        return Typedef.abs(raw);
     }
 }
 
@@ -757,14 +766,16 @@ impl ABIAttribs<int128> {
 
 impl ABIEncode<int128> {
     function encodeInto(x: int128, basePtr: word, offset: word, tail: word) returns (word) {
-        mstore(basePtr + offset, Typedef.rep(x));
+        mstore(basePtr + offset, signextend(15, Typedef.rep(x)));
         return tail;
     }
 }
 
 impl<reader> ABIDecode<ABIDecoder<int128, reader>, int128> where reader: WordReader {
     function decode(ptr: ABIDecoder<int128, reader>, currentHeadOffset: word) returns (int128) {
-        return Typedef.abs(signextend(15, WordReader.read(WordReader.advance(ptr, currentHeadOffset))));
+        let raw = WordReader.read(WordReader.advance(ptr, currentHeadOffset));
+        require(raw == signextend(15, raw), Error(0x6cc54a63)); // DirtyHigherBitsForInteger()
+        return Typedef.abs(raw);
     }
 }
 

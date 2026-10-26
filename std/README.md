@@ -34,6 +34,12 @@ against the type's bounds at compile time, before conversion to a 256-bit
 word. `Typedef.abs` remains a raw representation conversion. The existing
 `word` and `uint256` literal conversions retain their modulo-2^256 behavior.
 
+ABI decoding rejects noncanonical upper bits with `DirtyHigherBitsForInteger()`;
+encoding masks unsigned values and sign-extends signed values to their declared
+width, including raw values constructed through `Typedef.abs`. The shared ABI
+matrix in `crates/test-utils/src/e2e/integers/abi.rs` covers all 11 types through
+calldata and memory, including tuples, arrays, and malformed input.
+
 
 ## Verification
 

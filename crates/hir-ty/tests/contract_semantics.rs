@@ -680,12 +680,29 @@ fn std_signed_and_unsigned_integers_are_supported_by_the_public_abi_surface(
         "{:?}",
         surface.diagnostics
     );
+    let expected = [
+        "int8", "int16", "int32", "int64", "int128", "int256", "uint8", "uint16", "uint32",
+        "uint64", "uint128",
+    ];
     let method = &surface.methods[0];
-    assert_eq!(method.signature, "echo(int8,int256,uint64)");
+    assert_eq!(method.signature, format!("echo({})", expected.join(",")));
+    for params in [&method.inputs, &method.outputs] {
+        assert_eq!(
+            params
+                .iter()
+                .map(|param| param.ty.to_string())
+                .collect::<Vec<_>>(),
+            expected,
+        );
+    }
 
     let abi = contract_abi_json(&db, module, contract).expect("integer ABI JSON");
-    for ty in ["int8", "int256", "uint64"] {
-        assert!(abi.contains(&format!("\"type\": \"{ty}\"")), "{abi}");
+    for ty in expected {
+        assert_eq!(
+            abi.matches(&format!("\"type\": \"{ty}\"")).count(),
+            2,
+            "{abi}"
+        );
     }
 }
 

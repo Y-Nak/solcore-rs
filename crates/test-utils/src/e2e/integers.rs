@@ -1,15 +1,29 @@
 //! Shared integer E2E matrix and mathematical oracle for both backends.
 //!
-//! Inputs and results travel as raw words so the tests exercise the selected
-//! integer implementation without depending on its ABI decoder.
+//! Arithmetic inputs and results travel as raw words, while the separate ABI
+//! matrix checks typed codecs with independently encoded inputs and outputs.
 
 use num_bigint::BigInt;
 use std::{fmt::Write as _, fs, path::Path};
 
 use super::{E2eFailure, FailureKind, e2e_enabled};
 
+mod abi;
+
 /// Runs the shared matrix through a backend's existing fixture pipeline.
 pub fn run(run_fixture: impl Fn(&Path) -> Result<(), E2eFailure>) -> Result<(), E2eFailure> {
+    run_matrix(fixtures, run_fixture)
+}
+
+/// Exercises integer ABI codecs using independently encoded calldata and results.
+pub fn run_abi(run_fixture: impl Fn(&Path) -> Result<(), E2eFailure>) -> Result<(), E2eFailure> {
+    run_matrix(abi::fixtures, run_fixture)
+}
+
+fn run_matrix(
+    fixtures: impl FnOnce() -> Vec<(String, String)>,
+    run_fixture: impl Fn(&Path) -> Result<(), E2eFailure>,
+) -> Result<(), E2eFailure> {
     if !e2e_enabled() {
         return Ok(());
     }
@@ -312,8 +326,7 @@ fn panic(code: u8) -> String {
 }
 
 fn literal(value: &BigInt) -> String {
-    let modulus = BigInt::from(1) << 256usize;
-    let word = ((value % &modulus) + &modulus) % &modulus;
+    let word = word(value);
     if word.bits() <= 64 {
         word.to_str_radix(10)
     } else {
@@ -321,10 +334,25 @@ fn literal(value: &BigInt) -> String {
     }
 }
 
+fn word(value: &BigInt) -> BigInt {
+    let modulus = BigInt::from(1) << 256usize;
+    ((value % &modulus) + &modulus) % &modulus
+}
+
 /// Returns one source fixture per integer type (11 types, 433 execution cases).
 /// Smaller contracts keep each dispatcher within the default evaluation fuel.
 fn fixtures() -> Vec<(String, String)> {
-    let mut fixtures = Vec::new();
+    integer_types()
+        .into_iter()
+        .map(|(name, ty)| {
+            let source = ty.source(&name);
+            (name, source)
+        })
+        .collect()
+}
+
+fn integer_types() -> Vec<(String, IntegerType)> {
+    let mut types = Vec::new();
     for signed in [true, false] {
         for bits in [8, 16, 32, 64, 128, 256] {
             if !signed && bits == 256 {
@@ -338,11 +366,10 @@ fn fixtures() -> Vec<(String, String)> {
                 max: magnitude - 1,
             };
             let name = format!("{}int{bits}", if signed { "" } else { "u" });
-            let source = ty.source(&name);
-            fixtures.push((name, source));
+            types.push((name, ty));
         }
     }
-    fixtures
+    types
 }
 
 #[cfg(test)]
@@ -367,5 +394,23 @@ mod tests {
             );
         }
         assert_eq!(cases, 433);
+    }
+
+    #[test]
+    fn abi_matrix_sources_parse_and_format() {
+        let fixtures = abi::fixtures();
+        assert_eq!(fixtures.len(), 11);
+        let mut cases = 0;
+        for (name, source) in fixtures {
+            cases += source.matches("// #[raw(").count();
+            let formatted = format_source(&source, &FormatOptions::default())
+                .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+            assert_eq!(
+                format_source(&formatted, &FormatOptions::default()).unwrap(),
+                formatted,
+                "{name}: formatting must be idempotent"
+            );
+        }
+        assert_eq!(cases, 422);
     }
 }

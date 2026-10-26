@@ -59,6 +59,12 @@ fn integer_operations() {
         .unwrap_or_else(|failure| panic!("Sonatina integer E2E failed: {failure}"));
 }
 
+#[test]
+fn integer_abi() {
+    run_in_large_stack(|| integers::run_abi(run_fixture))
+        .unwrap_or_else(|failure| panic!("Sonatina integer ABI E2E failed: {failure}"));
+}
+
 fn run_fixture(path: &Path) -> Result<(), E2eFailure> {
     let (creations, execution) = lower_and_compile(path)?;
     if e2e_pipeline_only() {
