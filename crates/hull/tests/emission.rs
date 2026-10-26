@@ -382,7 +382,10 @@ fn regressions_dispatch_std_address_dispatch(fixture: Fixture<&str>) {
             assert!(hull.contains("$ABIDecoder_"), "{hull}");
             assert!(hull.contains("address_"), "{hull}");
             assert!(hull.contains("(160, raw)"), "{hull}");
-            assert!(hull.contains("0x7cc04fa7"), "{hull}");
+            assert!(
+                hull.contains("0x7cc04fa7") || hull.contains(&0x7cc04fa7_u32.to_string()),
+                "{hull}"
+            );
         },
     );
 }

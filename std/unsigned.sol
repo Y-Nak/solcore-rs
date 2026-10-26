@@ -88,8 +88,9 @@ impl Bounded<uint8> {
     }
 }
 impl Int<uint8> {
-    function fromInteger(x: integer) returns (uint8) {
-        return uint8(wordFromInteger(x));
+    function fromInteger(comptime x: integer) returns (uint8) {
+        let checked: comptime<word> = checkedIntegerWord(x, 0, 255);
+        return uint8(checked);
     }
 }
 impl SigString<uint8> {
@@ -223,8 +224,9 @@ impl Bounded<uint16> {
     }
 }
 impl Int<uint16> {
-    function fromInteger(x: integer) returns (uint16) {
-        return uint16(wordFromInteger(x));
+    function fromInteger(comptime x: integer) returns (uint16) {
+        let checked: comptime<word> = checkedIntegerWord(x, 0, 65535);
+        return uint16(checked);
     }
 }
 impl SigString<uint16> {
@@ -358,8 +360,9 @@ impl Bounded<uint32> {
     }
 }
 impl Int<uint32> {
-    function fromInteger(x: integer) returns (uint32) {
-        return uint32(wordFromInteger(x));
+    function fromInteger(comptime x: integer) returns (uint32) {
+        let checked: comptime<word> = checkedIntegerWord(x, 0, 4294967295);
+        return uint32(checked);
     }
 }
 impl SigString<uint32> {
@@ -493,8 +496,9 @@ impl Bounded<uint64> {
     }
 }
 impl Int<uint64> {
-    function fromInteger(x: integer) returns (uint64) {
-        return uint64(wordFromInteger(x));
+    function fromInteger(comptime x: integer) returns (uint64) {
+        let checked: comptime<word> = checkedIntegerWord(x, 0, 18446744073709551615);
+        return uint64(checked);
     }
 }
 impl SigString<uint64> {
@@ -628,8 +632,9 @@ impl Bounded<uint128> {
     }
 }
 impl Int<uint128> {
-    function fromInteger(x: integer) returns (uint128) {
-        return uint128(wordFromInteger(x));
+    function fromInteger(comptime x: integer) returns (uint128) {
+        let checked: comptime<word> = checkedIntegerWord(x, 0, 340282366920938463463374607431768211455);
+        return uint128(checked);
     }
 }
 impl SigString<uint128> {

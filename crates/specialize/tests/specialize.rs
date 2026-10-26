@@ -28,6 +28,9 @@ use solcore_specialize::{
     specialize_name, specialize_prepared_module,
 };
 
+#[path = "specialize/integer_literals.rs"]
+mod integer_literals;
+
 #[salsa::db]
 #[derive(Default, Clone)]
 struct TestDb {

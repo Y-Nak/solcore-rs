@@ -415,7 +415,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             }),
             Some(hir_nameres::Resolution::ClassMethod { class, name }) => {
                 if self.is_int_from_integer_call(callee) {
-                    return self.int_from_integer_call(arg_exprs, result_ty, span);
+                    return self.int_from_integer_call(arg_exprs, result_ty, span, None);
                 }
                 let evidence = self
                     .call_evidence(call_expr, callee)
@@ -457,7 +457,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                         hir_nameres::BuiltinClassMethod::IntFromInteger
                     )
                 ) {
-                    return self.int_from_integer_call(arg_exprs, result_ty, span);
+                    return self.int_from_integer_call(arg_exprs, result_ty, span, None);
                 }
                 if matches!(
                     kind,
@@ -893,11 +893,12 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         name
     }
 
-    fn int_from_integer_call(
+    pub(super) fn int_from_integer_call(
         &mut self,
         mut args: Vec<MonoExpr<'db>>,
         result_ty: Ty<'db>,
         span: Span<'db>,
+        evidence: Option<LogicalEvidence<'db>>,
     ) -> Option<MonoExprKind<'db>> {
         if ty_is_builtin(self.driver.db, result_ty, BuiltinTyCtor::Integer) {
             return Some(
@@ -922,8 +923,11 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 args,
             });
         }
-        if let Some(evidence) = self.call_evidence_for_builtin_int(span) {
-            let evidence = self.specialize_evidence(evidence.evidence);
+        if let Some(evidence) = evidence.or_else(|| {
+            self.call_evidence_for_builtin_int(span)
+                .map(|site| site.evidence)
+        }) {
+            let evidence = self.specialize_evidence(evidence);
             if let Some(name) = self.driver.resolve_class_method_call(
                 "fromInteger",
                 evidence,

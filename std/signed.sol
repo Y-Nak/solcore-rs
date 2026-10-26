@@ -103,8 +103,9 @@ impl Bounded<int8> {
 }
 
 impl Int<int8> {
-    function fromInteger(x: integer) returns (int8) {
-        return int8(wordFromInteger(x));
+    function fromInteger(comptime x: integer) returns (int8) {
+        let checked: comptime<word> = checkedIntegerWord(x, integerSub(0, 128), 127);
+        return int8(checked);
     }
 }
 
@@ -265,8 +266,9 @@ impl Bounded<int16> {
 }
 
 impl Int<int16> {
-    function fromInteger(x: integer) returns (int16) {
-        return int16(wordFromInteger(x));
+    function fromInteger(comptime x: integer) returns (int16) {
+        let checked: comptime<word> = checkedIntegerWord(x, integerSub(0, 32768), 32767);
+        return int16(checked);
     }
 }
 
@@ -426,8 +428,9 @@ impl Bounded<int32> {
 }
 
 impl Int<int32> {
-    function fromInteger(x: integer) returns (int32) {
-        return int32(wordFromInteger(x));
+    function fromInteger(comptime x: integer) returns (int32) {
+        let checked: comptime<word> = checkedIntegerWord(x, integerSub(0, 2147483648), 2147483647);
+        return int32(checked);
     }
 }
 
@@ -588,8 +591,9 @@ impl Bounded<int64> {
 }
 
 impl Int<int64> {
-    function fromInteger(x: integer) returns (int64) {
-        return int64(wordFromInteger(x));
+    function fromInteger(comptime x: integer) returns (int64) {
+        let checked: comptime<word> = checkedIntegerWord(x, integerSub(0, 9223372036854775808), 9223372036854775807);
+        return int64(checked);
     }
 }
 
@@ -749,8 +753,9 @@ impl Bounded<int128> {
 }
 
 impl Int<int128> {
-    function fromInteger(x: integer) returns (int128) {
-        return int128(wordFromInteger(x));
+    function fromInteger(comptime x: integer) returns (int128) {
+        let checked: comptime<word> = checkedIntegerWord(x, integerSub(0, 170141183460469231731687303715884105728), 170141183460469231731687303715884105727);
+        return int128(checked);
     }
 }
 
@@ -910,8 +915,9 @@ impl Bounded<int256> {
 }
 
 impl Int<int256> {
-    function fromInteger(x: integer) returns (int256) {
-        return int256(wordFromInteger(x));
+    function fromInteger(comptime x: integer) returns (int256) {
+        let checked: comptime<word> = checkedIntegerWord(x, integerSub(0, 57896044618658097711785492504343953926634992332820282019728792003956564819968), 57896044618658097711785492504343953926634992332820282019728792003956564819967);
+        return int256(checked);
     }
 }
 

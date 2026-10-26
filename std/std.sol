@@ -77,6 +77,7 @@ export {
     bshlWord,
     bshrWord,
     calldata(*),
+    checkedIntegerWord,
     concat,
     concatLit,
     ecrecover,
@@ -661,6 +662,18 @@ function subWord(l: word, r: word) returns (word) {
 }
 
 // --- Checked arithmetic helpers ---
+// Check the unbounded integer before converting it to a 256-bit word.
+// Integer instances require the result at comptime, rejecting invalid literals.
+function checkedIntegerWord(comptime value: integer, comptime min: integer, comptime max: integer) returns (word) {
+    if (integerLt(value, min)) {
+        panic(0x11);
+    }
+    if (integerLt(max, value)) {
+        panic(0x11);
+    }
+    return wordFromInteger(value);
+}
+
 // These operate on raw words and revert with a Solidity Panic when an
 // operation overflows/underflows (code 0x11) or divides by zero (0x12),
 // matching Solidity 0.8+ checked-arithmetic semantics. The per-type integer
