@@ -190,6 +190,9 @@ impl BigInt {
     }
 
     pub(super) fn from_hex_str(text: &str) -> Option<Self> {
+        let (negative, text) = text
+            .strip_prefix('-')
+            .map_or((false, text), |rest| (true, rest));
         let digits = text
             .strip_prefix("0x")
             .or_else(|| text.strip_prefix("0X"))
@@ -201,6 +204,9 @@ impl BigInt {
         for ch in digits.chars() {
             let digit = ch.to_digit(16)?;
             value = value.mul_small(16).add_small(digit);
+        }
+        if negative && !value.is_zero() {
+            value.sign = -1;
         }
         Some(value)
     }

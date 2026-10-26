@@ -241,8 +241,9 @@ where
         .boxed();
 
     let unary_op = just(Token::Bang)
-        .to(function::UnOp::Not)
-        .or(just(Token::Tilde).to(function::UnOp::BitNot))
+        .to(ParsedUnOp::Not)
+        .or(just(Token::Tilde).to(ParsedUnOp::BitNot))
+        .or(just(Token::Minus).to(ParsedUnOp::Neg))
         .map_with(|op, e| ParsedSpanned::new(op, e.span()));
     let unary = unary_op
         .repeated()

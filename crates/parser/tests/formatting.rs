@@ -43,6 +43,16 @@ fn formats_declarations_types_and_control_flow() {
 }
 
 #[test]
+fn formats_unary_minus_without_changing_operator_precedence() {
+    let source = "function f(x:word){let low=-128;let hex=-0x80;return -x*2- -(-x);}";
+    let formatted = format(source);
+    assert!(formatted.contains("let low = -128;"), "{formatted}");
+    assert!(formatted.contains("let hex = -0x80;"), "{formatted}");
+    assert!(formatted.contains("return -x * 2 - -(-x);"), "{formatted}");
+    assert_stable(source);
+}
+
+#[test]
 fn formats_yul_without_semicolon_boundaries() {
     let source = "function f(){assembly{let x:=0 x:=add(x,1) for{let i:=0}lt(i,3){i:=add(i,1)}{mstore(i,x)} switch x case 0{leave}default{revert(0,0)}}}";
     assert_eq!(

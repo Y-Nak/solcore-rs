@@ -29,17 +29,27 @@ bitwise, comparison and bounds cases across all 11 added integer types).
 Both backends generate its source fixtures at test time and execute them
 against independently calculated results.
 
-Literals and `Int.fromInteger` conversions for these new types are checked
+Integer defaulting selects the canonical `uint256` type. Arithmetic and compound
+assignments therefore remain checked without a type annotation. Programs using
+this default must import the standard library; an unavailable default type is
+an error. Explicit `word` arithmetic retains the low-level EVM wrapping behavior.
+
+Unary `-x` uses checked subtraction from zero. Negating a signed type's minimum
+value panics with code `0x11`; negating a nonzero unsigned value also overflows.
+Negative literals, including signed minima, use the type's `Int.fromInteger`
+conversion. In a required `comptime` evaluation, a failing arithmetic check is
+a compile error.
+
+Literals and `Int.fromInteger` conversions for all these integer types are checked
 against the type's bounds at compile time, before conversion to a 256-bit
-word. `Typedef.abs` remains a raw representation conversion. The existing
-`word` and `uint256` literal conversions retain their modulo-2^256 behavior.
+word. `Typedef.abs` remains a raw representation conversion. Explicit `word`
+literal conversions retain their modulo-2^256 behavior.
 
 ABI decoding rejects noncanonical upper bits with `DirtyHigherBitsForInteger()`;
 encoding masks unsigned values and sign-extends signed values to their declared
 width, including raw values constructed through `Typedef.abs`. The shared ABI
 matrix in `crates/test-utils/src/e2e/integers/abi.rs` covers all 11 types through
 calldata and memory, including tuples, arrays, and malformed input.
-
 
 ## Verification
 

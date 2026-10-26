@@ -264,14 +264,47 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         &mut self,
         anchor: AnchorId<'db>,
         base_start: usize,
-        op: ParsedSpanned<'_, function::UnOp>,
+        op: ParsedSpanned<'_, ParsedUnOp>,
         expr: ParsedExpr<'_>,
         arenas: &mut BodyArenas<'db>,
     ) -> function::ExprKind<'db> {
-        let expr = self.lower_expr(anchor, base_start, expr, arenas);
         let op_span = span_from_absolute(anchor, op.span, base_start);
+        let op = match op.elem {
+            ParsedUnOp::Not => function::UnOp::Not,
+            ParsedUnOp::BitNot => function::UnOp::BitNot,
+            ParsedUnOp::Neg => {
+                // Convert the signed mathematical literal as a whole, so a
+                // signed minimum never needs its out-of-range positive value.
+                match &expr.kind {
+                    ParsedExprKind::Lit(ParsedLitKind::Number(value)) => {
+                        return function::ExprKind::Lit(function::LitKind::Number(format!(
+                            "-{value}"
+                        )));
+                    }
+                    ParsedExprKind::Lit(ParsedLitKind::Hex(value)) => {
+                        return function::ExprKind::Lit(function::LitKind::Hex(format!(
+                            "-{value}"
+                        )));
+                    }
+                    _ => {}
+                }
+                let lhs = ParsedExpr {
+                    span: op.span,
+                    kind: ParsedExprKind::Lit(ParsedLitKind::Number("0")),
+                };
+                return self.lower_bin_op_expr(
+                    anchor,
+                    base_start,
+                    lhs,
+                    ParsedSpanned::new(function::BinOp::Sub, op.span),
+                    expr,
+                    arenas,
+                );
+            }
+        };
+        let expr = self.lower_expr(anchor, base_start, expr, arenas);
         function::ExprKind::UnaryOp {
-            op: SpannedElem::new(op.elem, op_span),
+            op: SpannedElem::new(op, op_span),
             expr,
         }
     }

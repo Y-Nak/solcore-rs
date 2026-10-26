@@ -1006,6 +1006,46 @@ function f(a: word, b: word) returns (word) {
 }
 
 #[test]
+fn unary_minus_lowers_literals_before_conversion_and_values_through_subtraction() {
+    let db = TestDb::default();
+    let (file, module) = parse_module(
+        &db,
+        "unary-minus",
+        "function f(x: word) { let decimal = -128; let hex = -(0x80); return -x * 2; }",
+    );
+    assert!(diagnostics(&db, file).is_empty());
+    let body = top_function(&db, module, "f").body(&db).expect("body");
+    let exprs = body.exprs(&db);
+    assert!(exprs.iter().any(|(_, expr)| matches!(
+        &expr.kind,
+        ExprKind::Lit(hir::ast::function::LitKind::Number(value)) if value == "-128"
+    )));
+    assert!(exprs.iter().any(|(_, expr)| matches!(
+        &expr.kind,
+        ExprKind::Lit(hir::ast::function::LitKind::Hex(value)) if value == "-0x80"
+    )));
+    let stmt = body
+        .stmts(&db)
+        .get(*body.top_level_stmts(&db).last().unwrap());
+    let StmtKind::Return(Some(result)) = &stmt.kind else {
+        panic!("expected return");
+    };
+    let ExprKind::BinOp { lhs, op, .. } = &exprs.get(*result).kind else {
+        panic!("expected multiplication");
+    };
+    assert_eq!(*op.atom(), BinOp::Mul);
+    let ExprKind::BinOp { lhs: zero, op, rhs } = &exprs.get(*lhs).kind else {
+        panic!("expected negation lowered to subtraction");
+    };
+    assert_eq!(*op.atom(), BinOp::Sub);
+    assert!(matches!(
+        &exprs.get(*zero).kind,
+        ExprKind::Lit(hir::ast::function::LitKind::Number(value)) if value == "0"
+    ));
+    assert!(matches!(&exprs.get(*rhs).kind, ExprKind::Ident(_)));
+}
+
+#[test]
 fn compound_assignments_lower_through_binary_operator_calls() {
     let db = TestDb::default();
     let (_, module) = parse_module(
