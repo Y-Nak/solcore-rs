@@ -143,7 +143,7 @@ impl<'db> Emitter<'db> {
         if self.layout_stack.contains(&layout_key) {
             return Some(AdtLayout {
                 name: name.clone(),
-                target: Ty::named_ref(span, name),
+                target: self.unsupported_recursive_layout(span, name),
                 ctors: Vec::new(),
             });
         }
@@ -192,7 +192,7 @@ impl<'db> Emitter<'db> {
         let name = def.name(self.db).unwrap_or_else(|| "Adt".to_owned());
         let layout_key = (def, args.to_vec());
         if self.layout_stack.contains(&layout_key) {
-            return Some(Ty::named_ref(span, name));
+            return Some(self.unsupported_recursive_layout(span, name));
         }
         let module = parse_file_to_hir(self.db, def.file(self.db)).module(self.db);
         let adt = find_adt(self.db, module, def)?;
@@ -202,6 +202,18 @@ impl<'db> Emitter<'db> {
         let inner = self.hull_ty(rep, span);
         self.layout_stack.pop();
         Some(Ty::named(span, name, inner))
+    }
+
+    fn unsupported_recursive_layout(&mut self, span: Span<'db>, name: String) -> Ty<'db> {
+        // NamedRef terminates layout expansion, but it is only a placeholder:
+        // neither backend can box a full aggregate into its one-word slot or
+        // unbox it when a recursive field is matched. Diagnose the unsupported
+        // representation before allowing the program to reach either backend.
+        self.push(
+            span,
+            EmitDiagnosticKind::UnsupportedRecursiveType { ty: name.clone() },
+        );
+        Ty::named_ref(span, name)
     }
 
     fn check_layout_finiteness(&mut self, def: DefId<'db>, arity: usize, span: Span<'db>) -> bool {

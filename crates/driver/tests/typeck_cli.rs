@@ -815,6 +815,52 @@ contract C {
 }
 
 #[test]
+fn cli_emits_memory_array_return_abi_and_both_backends() {
+    let dir = temp_dir("memory-array-return");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.sol");
+    fs::write(
+        &input,
+        r#"
+import * from std;
+import * from std.dispatch;
+
+contract C {
+    function get() public returns (memory<DynArray<address>>) {
+        return allocateDynamicArray(@address, 0);
+    }
+}
+"#,
+    )
+    .expect("write source");
+
+    for backend in ["--emit-yul", "--emit-sonatina"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .arg(&input)
+            .arg("--std-root")
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"))
+            .arg("--abi")
+            .arg("-o")
+            .arg(&dir)
+            .arg(backend)
+            .output()
+            .expect("run driver");
+        assert!(
+            output.status.success(),
+            "{backend} failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let abi: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(dir.join("C.abi")).expect("read ABI"))
+                .expect("valid ABI JSON");
+        assert_eq!(abi[0]["outputs"][0]["type"], "address[]");
+        assert_eq!(abi[0]["outputs"][0]["internalType"], "address[]");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn cli_abi_ignores_reachable_external_library_contracts() {
     let dir = temp_dir("abi-external-scope");
     let external = dir.join("external");

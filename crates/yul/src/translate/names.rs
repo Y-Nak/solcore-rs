@@ -179,7 +179,17 @@ pub(super) fn is_forbidden_yul_identifier(name: &str) -> bool {
             | "leave"
             | "true"
             | "false"
-            | "stop"
+            | "pc"
+            | "difficulty"
+    ) || is_yul_builtin(name)
+}
+
+// Keep call resolution aligned with Hull's `asm_builtin_sig`; reserved legacy
+// names such as `pc` and `difficulty` can still name ordinary Hull functions.
+pub(super) fn is_yul_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "stop"
             | "add"
             | "sub"
             | "mul"
@@ -206,7 +216,6 @@ pub(super) fn is_forbidden_yul_identifier(name: &str) -> bool {
             | "mulmod"
             | "signextend"
             | "keccak256"
-            | "pc"
             | "pop"
             | "mload"
             | "mstore"
@@ -254,7 +263,6 @@ pub(super) fn is_forbidden_yul_identifier(name: &str) -> bool {
             | "coinbase"
             | "timestamp"
             | "number"
-            | "difficulty"
             | "prevrandao"
             | "gaslimit"
             | "basefee"

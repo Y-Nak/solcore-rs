@@ -127,7 +127,9 @@ manually represented, and same-named non-std array/location types are rejected
 before backend execution, as is a `calldata<array<t>>` handle nested anywhere
 inside an encoded ADT result.
 
-Each case is lowered by the selected backend, compiled to EVM creation
+Each case first runs the same frontend diagnostics as the checked driver,
+including checks of reachable imported modules, and rejects errors before
+specialization. It is then lowered by the selected backend, compiled to EVM creation
 bytecode, deployed to Anvil, and called through the generated ABI selector.
 Set `E2E=1` to run execution tests. `E2E_PIPELINE_ONLY=1` stops after backend
 code generation; `E2E_REQUIRED=1` makes missing tools an error. Anvil defaults

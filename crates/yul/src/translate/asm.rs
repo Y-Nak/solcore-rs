@@ -7,7 +7,7 @@ use hir::ast::function::{
 use super::{
     TranslationError, Translator,
     location::{flatten_lhs, flatten_rhs},
-    names::{convert_yul_lit, yul_name},
+    names::{convert_yul_lit, is_yul_builtin, yul_fun_name, yul_name},
 };
 use crate::ast::{Case, Expr, FunctionName, Stmt, VarName};
 
@@ -232,9 +232,20 @@ impl<'db> Translator<'db> {
             }
             YulExprKind::Call { name, args } => {
                 let raw_name = yul_name(self.db, name);
-                let name = asm
-                    .lookup_function(&raw_name)
-                    .unwrap_or_else(|| raw_name.into());
+                // Match Hull's assembly resolution: explicit Hull names and
+                // builtins take precedence, followed by lexically scoped Yul
+                // functions and then unqualified Hull functions.
+                let name = if raw_name.starts_with("usr$") || is_yul_builtin(&raw_name) {
+                    raw_name.into()
+                } else {
+                    asm.lookup_function(&raw_name)
+                        .or_else(|| {
+                            self.user_functions
+                                .contains(&raw_name)
+                                .then(|| yul_fun_name(&raw_name))
+                        })
+                        .unwrap_or_else(|| raw_name.into())
+                };
                 Expr::call(
                     name,
                     args.iter()
