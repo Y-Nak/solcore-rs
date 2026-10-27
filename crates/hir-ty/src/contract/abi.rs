@@ -408,7 +408,9 @@ fn abi_value_type_of<'db>(
             {
                 return Ok((AbiType::Named(name), Vec::new()));
             }
-            if let Some(element) = canonical_calldata_array_element(db, user, args)? {
+            if let Some(element) = canonical_calldata_array_element(db, user, args)?
+                .or(canonical_memory_array_element(db, user, args)?)
+            {
                 let (element_ty, components) = abi_value_type_of(
                     db,
                     element,
@@ -502,6 +504,39 @@ fn canonical_calldata_array_element<'db>(
     let [element] = elements.as_slice() else {
         return Err(format!(
             "array (expected one type argument, found {})",
+            elements.len()
+        ));
+    };
+    Ok(Some(*element))
+}
+
+/// Memory arrays use the canonical `DynArray` representation. Their element
+/// codec and word-sized memory representation are checked by the generated
+/// dispatch's `ABIEncode` obligation; this only describes the ABI value type.
+fn canonical_memory_array_element<'db>(
+    db: &'db dyn Db,
+    user: &UserTyCtor<'db>,
+    args: &[Ty<'db>],
+) -> Result<Option<Ty<'db>>, String> {
+    if !is_canonical_std_def_named(db, user.def, "memory") {
+        return Ok(None);
+    }
+    let [inner] = args else {
+        return Ok(None);
+    };
+    let TyKind::Named {
+        ctor: TyCtor::User(array),
+        args: elements,
+    } = inner.kind(db)
+    else {
+        return Ok(None);
+    };
+    if !is_canonical_std_def_named(db, array.def, "DynArray") {
+        return Ok(None);
+    }
+    let [element] = elements.as_slice() else {
+        return Err(format!(
+            "DynArray (expected one type argument, found {})",
             elements.len()
         ));
     };
@@ -1213,7 +1248,9 @@ fn is_canonical_std_location(db: &dyn Db, user: &UserTyCtor<'_>) -> bool {
 }
 
 fn is_canonical_std_abi_container(db: &dyn Db, user: &UserTyCtor<'_>) -> bool {
-    is_canonical_std_location(db, user) || is_canonical_std_def_named(db, user.def, "array")
+    is_canonical_std_location(db, user)
+        || is_canonical_std_def_named(db, user.def, "array")
+        || is_canonical_std_def_named(db, user.def, "DynArray")
 }
 
 pub(super) fn contract_diag_unsupported_abi_type<'db>(

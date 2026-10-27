@@ -790,6 +790,77 @@ fn nested_calldata_arrays_recurse_in_signatures_and_abi_json(fixture: Fixture<&s
     assert!(abi.contains("\"type\": \"uint256[][]\""), "{abi}");
 }
 
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/memory_dynamic_array_outputs_recurse_in_abi_json", glob: "main.sol")]
+fn memory_dynamic_array_outputs_recurse_in_abi_json(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
+    insert_real_std_modules(&mut db);
+    let file = db.module_files[&key];
+    let module = parse_file_to_hir(&db, file).module(&db);
+    let contract = contract_named(&db, module, "Arrays");
+    let surface = contract_dispatch_surface(&db, module, contract);
+
+    assert!(surface.diagnostics.is_empty(), "{:?}", surface.diagnostics);
+    for (method, expected) in surface.methods.iter().zip([
+        vec!["address[]"],
+        vec!["address[][]"],
+        vec!["string[]"],
+        vec!["uint256", "bytes4[]"],
+    ]) {
+        assert_eq!(
+            method
+                .outputs
+                .iter()
+                .map(|param| param.ty.to_string())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+    let abi = contract_abi_json(&db, module, contract).expect("memory array ABI JSON");
+    for expected in ["address[]", "address[][]", "string[]", "bytes4[]"] {
+        assert!(abi.contains(&format!("\"type\": \"{expected}\"")), "{abi}");
+    }
+    let diagnostics = diagnostics_for_module(&db, &key);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/memory_dynamic_array_outputs_require_canonical_wrappers", glob: "*.sol")]
+fn memory_dynamic_array_outputs_require_canonical_wrappers(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
+    insert_real_std_modules(&mut db);
+    let module = parse_file_to_hir(&db, db.module_files[&key]).module(&db);
+    let contract = contract_named(&db, module, "Fake");
+    let surface = contract_dispatch_surface(&db, module, contract);
+
+    assert_eq!(
+        surface.methods[0].outputs[0].ty.to_string(),
+        "<unsupported>"
+    );
+    assert!(
+        surface
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code.as_deref() == Some("SC0231") }),
+        "{:?}",
+        surface.diagnostics
+    );
+    assert!(contract_abi_json(&db, module, contract).is_err());
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/memory_dynamic_array_outputs_require_element_encoding", glob: "main.sol")]
+fn memory_dynamic_array_outputs_require_element_encoding(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
+    insert_real_std_modules(&mut db);
+    let diagnostics = diagnostics_for_module(&db, &key);
+
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some("SC0207")
+                && diagnostic.message.contains("RunContract")
+        }),
+        "{diagnostics:?}"
+    );
+}
+
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/calldata_arrays_are_rejected_from_nested_output_positions", glob: "main.sol")]
 fn calldata_arrays_are_rejected_from_nested_output_positions(fixture: Fixture<&str>) {
     let (mut db, key) = db_with_main(fixture.content());
