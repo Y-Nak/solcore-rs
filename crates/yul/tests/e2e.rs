@@ -10,6 +10,7 @@ use std::{
 
 use dir_test::{Fixture, dir_test};
 use hir::ast::item::{ContractItem, FuncKind, FunctionDef, Item, Module};
+use hir::diag::DiagnosticLevel;
 use hir_ty::{AbiParam, AbiType, contract_dispatch_surface_for_module};
 use hull::Program;
 use nameres::{Db as _, module_id_from_key};
@@ -22,7 +23,7 @@ use solcore_test_utils::{
         parse_e2e_directive, resolve_e2e_comments, run_command, source_e2e_scenario,
         with_evm_harness,
     },
-    load_fixture_case_with_file_urls, load_reachable_modules_with_file_urls,
+    load_fixture_case_with_file_urls, load_reachable_modules_with_file_urls, render_diagnostics,
     repo_root_from_manifest, run_in_large_stack,
 };
 use specialize::{
@@ -104,6 +105,30 @@ struct RenderedFixture {
     execution: E2eExecution,
 }
 
+#[test]
+fn e2e_rejects_frontend_errors_before_specialization() {
+    run_in_large_stack(|| {
+        for (fixture, expected) in [
+            ("wildcard_collision", "SC0108"),
+            ("imported_error", "missing"),
+        ] {
+            let path = repo_root()
+                .join("crates/test-utils/tests/fixtures/e2e_frontend")
+                .join(fixture)
+                .join("main.sol");
+            let failure = render_fixture(&path)
+                .err()
+                .expect("invalid fixtures must fail before specialization");
+            assert_eq!(failure.kind, FailureKind::Pipeline);
+            assert!(
+                failure.message.starts_with("frontend diagnostics:"),
+                "{failure}"
+            );
+            assert!(failure.message.contains(expected), "{failure}");
+        }
+    });
+}
+
 fn render_fixture(path: &Path) -> Result<RenderedFixture, E2eFailure> {
     let db = Box::leak(Box::new(TestDb::default()));
     let case_root = path.parent().ok_or_else(|| {
@@ -118,6 +143,16 @@ fn render_fixture(path: &Path) -> Result<RenderedFixture, E2eFailure> {
 
     let db: &'static TestDb = &*db;
     let entry_id = module_id_from_key(db, &entry);
+    let diagnostics = hir_ty::collect_frontend_diagnostics(db, entry_id);
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
+    {
+        return Err(pipeline_error(format!(
+            "frontend diagnostics:\n{}",
+            render_diagnostics(db, &diagnostics)
+        )));
+    }
     let source_file = db
         .module_file(entry_id)
         .ok_or_else(|| pipeline_error("fixture entry source file is missing"))?;
