@@ -1,10 +1,16 @@
 use nameres::{Db as _, module_id_from_key};
 use parser::parse_file_to_hir;
-use solcore_hull::{EmitOptions, check_program_with_db, emit_module};
+use solcore_hull::{EmitDiagnosticKind, EmitOptions, check_program_with_db, emit_module};
 use solcore_test_utils::{define_frontend_test_db, load_main_source, run_in_large_stack};
 use specialize::{SpecializeOptions, specialize_module};
 
 define_frontend_test_db!(TestDb, hir_ty);
+
+enum LayoutExpectation {
+    Finite { nonempty: bool },
+    NonRegular,
+    UnsupportedRecursive,
+}
 
 #[dir_test::dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/layouts", glob: "**/main.sol")]
 fn layout_finiteness(fixture: dir_test::Fixture<&str>) {
@@ -16,16 +22,17 @@ fn layout_finiteness(fixture: dir_test::Fixture<&str>) {
         expectations.next().is_none(),
         "duplicate layout expectation"
     );
-    let (finite, nonempty) = match expectation {
-        "finite" => (true, false),
-        "finite-nonempty" => (true, true),
-        "non-regular" => (false, false),
+    let expectation = match expectation {
+        "finite" => LayoutExpectation::Finite { nonempty: false },
+        "finite-nonempty" => LayoutExpectation::Finite { nonempty: true },
+        "non-regular" => LayoutExpectation::NonRegular,
+        "unsupported-recursive" => LayoutExpectation::UnsupportedRecursive,
         other => panic!("line {line}: unknown layout expectation: {other}"),
     };
-    assert_layout_finiteness(fixture.content(), finite, nonempty);
+    assert_layout_finiteness(fixture.content(), expectation);
 }
 
-fn assert_layout_finiteness(source: &str, finite: bool, nonempty: bool) {
+fn assert_layout_finiteness(source: &str, expectation: LayoutExpectation) {
     let source = source.to_owned();
     run_in_large_stack(move || {
         let mut db = TestDb::default();
@@ -52,7 +59,7 @@ fn assert_layout_finiteness(source: &str, finite: bool, nonempty: bool) {
             specialized.diagnostics
         );
         let emitted = emit_module(&db, &specialized.module, EmitOptions::default());
-        if finite {
+        if let LayoutExpectation::Finite { nonempty } = expectation {
             assert!(
                 emitted.diagnostics.is_empty(),
                 "{source}\n{:?}",
@@ -64,10 +71,15 @@ fn assert_layout_finiteness(source: &str, finite: bool, nonempty: bool) {
             }
         } else {
             assert!(
-                emitted.diagnostics.iter().any(|d| matches!(
-                    d.kind,
-                    solcore_hull::EmitDiagnosticKind::NonRegularRecursiveType { .. }
-                )),
+                emitted.diagnostics.iter().any(|d| match expectation {
+                    LayoutExpectation::NonRegular => {
+                        matches!(d.kind, EmitDiagnosticKind::NonRegularRecursiveType { .. })
+                    }
+                    LayoutExpectation::UnsupportedRecursive => {
+                        matches!(d.kind, EmitDiagnosticKind::UnsupportedRecursiveType { .. })
+                    }
+                    LayoutExpectation::Finite { .. } => unreachable!(),
+                }),
                 "{source}\n{:?}",
                 emitted.diagnostics
             );

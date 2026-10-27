@@ -1,4 +1,4 @@
-//~ layout: finite
+//~ layout: unsupported-recursive
 enum Box<a> {
     Box(a)
 }
