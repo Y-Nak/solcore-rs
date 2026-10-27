@@ -3782,13 +3782,12 @@ dependencies = [
 [[package]]
 name = "sonatina-codegen"
 version = "0.0.3-alpha"
-source = "git+https://github.com/fe-lang/sonatina?rev=8ee24814ea9b32c762df8ef80c796e7d48797c0f#8ee24814ea9b32c762df8ef80c796e7d48797c0f"
+source = "git+https://github.com/fe-lang/sonatina?rev=6bd0ce661ea327c149429b00fee3c8608616040f#6bd0ce661ea327c149429b00fee3c8608616040f"
 dependencies = [
  "bit-set",
  "cranelift-entity",
  "dashmap 6.2.1",
  "indexmap 2.14.0",
- "rayon",
  "rpds",
  "rustc-hash",
  "smallvec",
@@ -3803,7 +3802,7 @@ dependencies = [
 [[package]]
 name = "sonatina-ir"
 version = "0.0.3-alpha"
-source = "git+https://github.com/fe-lang/sonatina?rev=8ee24814ea9b32c762df8ef80c796e7d48797c0f#8ee24814ea9b32c762df8ef80c796e7d48797c0f"
+source = "git+https://github.com/fe-lang/sonatina?rev=6bd0ce661ea327c149429b00fee3c8608616040f#6bd0ce661ea327c149429b00fee3c8608616040f"
 dependencies = [
  "bit-set",
  "bitflags 2.13.0",
@@ -3821,13 +3820,14 @@ dependencies = [
  "smol_str",
  "sonatina-macros",
  "sonatina-triple",
+ "tiny-keccak",
  "vec-collections",
 ]
 
 [[package]]
 name = "sonatina-macros"
 version = "0.0.3-alpha"
-source = "git+https://github.com/fe-lang/sonatina?rev=8ee24814ea9b32c762df8ef80c796e7d48797c0f#8ee24814ea9b32c762df8ef80c796e7d48797c0f"
+source = "git+https://github.com/fe-lang/sonatina?rev=6bd0ce661ea327c149429b00fee3c8608616040f#6bd0ce661ea327c149429b00fee3c8608616040f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3837,7 +3837,7 @@ dependencies = [
 [[package]]
 name = "sonatina-parser"
 version = "0.0.3-alpha"
-source = "git+https://github.com/fe-lang/sonatina?rev=8ee24814ea9b32c762df8ef80c796e7d48797c0f#8ee24814ea9b32c762df8ef80c796e7d48797c0f"
+source = "git+https://github.com/fe-lang/sonatina?rev=6bd0ce661ea327c149429b00fee3c8608616040f#6bd0ce661ea327c149429b00fee3c8608616040f"
 dependencies = [
  "annotate-snippets",
  "bimap",
@@ -3858,7 +3858,7 @@ dependencies = [
 [[package]]
 name = "sonatina-triple"
 version = "0.0.3-alpha"
-source = "git+https://github.com/fe-lang/sonatina?rev=8ee24814ea9b32c762df8ef80c796e7d48797c0f#8ee24814ea9b32c762df8ef80c796e7d48797c0f"
+source = "git+https://github.com/fe-lang/sonatina?rev=6bd0ce661ea327c149429b00fee3c8608616040f#6bd0ce661ea327c149429b00fee3c8608616040f"
 dependencies = [
  "thiserror",
 ]
@@ -3866,10 +3866,9 @@ dependencies = [
 [[package]]
 name = "sonatina-verifier"
 version = "0.0.3-alpha"
-source = "git+https://github.com/fe-lang/sonatina?rev=8ee24814ea9b32c762df8ef80c796e7d48797c0f#8ee24814ea9b32c762df8ef80c796e7d48797c0f"
+source = "git+https://github.com/fe-lang/sonatina?rev=6bd0ce661ea327c149429b00fee3c8608616040f#6bd0ce661ea327c149429b00fee3c8608616040f"
 dependencies = [
  "cranelift-entity",
- "rayon",
  "rpds",
  "rustc-hash",
  "smallvec",
@@ -4080,6 +4079,15 @@ checksum = "7e689342a48d2ea927c87ea50cabf8594854bf940e9310208848d680d668ed85"
 dependencies = [
  "num-conv",
  "time-core",
+]
+
+[[package]]
+name = "tiny-keccak"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c9d3793400a45f954c52e73d068316d76b6f4e36977e3fcebb13a2721e80237"
+dependencies = [
+ "crunchy",
 ]
 
 [[package]]
