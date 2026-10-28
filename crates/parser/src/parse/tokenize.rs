@@ -30,29 +30,16 @@ fn truncate_excessive_nesting(
     tokens: &mut Vec<(Token<'_>, LexSpan)>,
     errors: &mut Vec<ParsedError>,
 ) {
-    let mut depth = 0usize;
-    let mut conditional_depth = 0usize;
-    let mut conditional_bases = Vec::new();
+    let mut closers = Vec::new();
     for (token, span) in tokens.iter() {
         match token {
-            Token::If => {
-                conditional_depth += 1;
-                if conditional_depth > MAX_SYNTAX_NESTING {
-                    let span = *span;
-                    trace_recovery("nesting_limit", span);
-                    errors.push(ParsedError::new(
-                        span,
-                        format!(
-                            "conditional expression nesting exceeds the compiler limit of {MAX_SYNTAX_NESTING}"
-                        ),
-                    ));
-                    tokens.clear();
-                    return;
-                }
-            }
-            Token::LParen | Token::LBracket => {
-                depth += 1;
-                if depth > MAX_SYNTAX_NESTING {
+            Token::LParen | Token::LBracket | Token::LBrace => {
+                closers.push(match token {
+                    Token::LParen => Token::RParen,
+                    Token::LBracket => Token::RBracket,
+                    _ => Token::RBrace,
+                });
+                if closers.len() > MAX_SYNTAX_NESTING {
                     let span = *span;
                     trace_recovery("nesting_limit", span);
                     errors.push(ParsedError::new(
@@ -64,31 +51,13 @@ fn truncate_excessive_nesting(
                     tokens.clear();
                     return;
                 }
-                conditional_bases.push(conditional_depth);
             }
-            Token::LBrace => {
-                depth += 1;
-                if depth > MAX_SYNTAX_NESTING {
-                    let span = *span;
-                    trace_recovery("nesting_limit", span);
-                    errors.push(ParsedError::new(
-                        span,
-                        format!(
-                            "delimiter nesting exceeds the compiler limit of {MAX_SYNTAX_NESTING}"
-                        ),
-                    ));
-                    tokens.clear();
-                    return;
-                }
-                conditional_bases.push(0);
-                conditional_depth = 0;
-            }
-            Token::RParen | Token::RBrace | Token::RBracket => {
-                depth = depth.saturating_sub(1);
-                conditional_depth = conditional_bases.pop().unwrap_or(0);
-            }
-            Token::Comma | Token::Semi => {
-                conditional_depth = conditional_bases.last().copied().unwrap_or(0);
+            Token::RParen | Token::RBrace | Token::RBracket if closers.last() == Some(token) => {
+                // An unrelated closing token cannot end a recursive grammar
+                // scope. Recovery can skip a stray `)` and continue parsing
+                // inside a block, so counting it against an open `{` would let
+                // malformed input evade this bound before recovery runs.
+                closers.pop();
             }
             _ => {}
         }

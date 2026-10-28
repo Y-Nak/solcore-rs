@@ -842,6 +842,7 @@ dependencies = [
  "logos",
  "salsa",
  "solcore-hir",
+ "stacker",
  "tracing",
 ]
 

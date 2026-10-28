@@ -35,12 +35,31 @@ use crate::types::*;
 /// including wasm workers whose stack cannot be enlarged at runtime.
 pub(crate) const MAX_SYNTAX_NESTING: usize = 128;
 
+// In debug builds the expression combinator ladder can consume more than
+// Chumsky's stack-growth red zone between recursive entry checks. Give native
+// callers (including default 2 MiB editor/test threads) enough initial room
+// for the bounded grammar. Wasm has a fixed stack and uses the grammar limits.
+fn with_parser_stack<T>(parse: impl FnOnce() -> T) -> T {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        stacker::maybe_grow(8 * 1024 * 1024, 16 * 1024 * 1024, parse)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        parse()
+    }
+}
+
 /// Parses the top-level items currently supported by the front end.
 ///
 /// Invalid top-level spans are represented as `ParsedTopItem::Error` and also
 /// converted into user-facing parse errors. The function never panics on
 /// malformed source.
 pub(crate) fn parse_supported_items<'src>(src: &'src str) -> ParseOutput<ParsedTopItem<'src>> {
+    with_parser_stack(|| parse_supported_items_impl(src))
+}
+
+fn parse_supported_items_impl<'src>(src: &'src str) -> ParseOutput<ParsedTopItem<'src>> {
     let (tokens, comments, mut errors) = tokenize_with_comments(src);
     let token_count = tokens.len();
     let stream = chumsky::input::Stream::from_iter(tokens)
@@ -364,6 +383,13 @@ fn line_break_count(text: &str) -> usize {
 /// statement spans remain absolute to the source file; lowering later converts
 /// them to offsets relative to the body anchor.
 pub(crate) fn parse_body_statements<'src>(
+    source: &'src str,
+    body_span: LexSpan,
+) -> ParseOutput<ParsedStmt<'src>> {
+    with_parser_stack(|| parse_body_statements_impl(source, body_span))
+}
+
+fn parse_body_statements_impl<'src>(
     source: &'src str,
     body_span: LexSpan,
 ) -> ParseOutput<ParsedStmt<'src>> {

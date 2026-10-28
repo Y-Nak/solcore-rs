@@ -23,6 +23,41 @@ vm.runInThisContext(NodeModule.wrap(await readFile(soljsonPath, 'utf8')), { file
 const solc = bindSolc(soljson.exports);
 set_solc(solc.compile);
 
+test('browser WASM rejects excessive parser recursion and remains usable', () => {
+  for (const [content, expected] of [
+    [`function main() returns (word) { return ${'true ? '.repeat(512)}0${' : 0'.repeat(512)}; }`, /expression nesting/],
+    [`function main() returns (word) { return ${'lam() { return true; }() ? '.repeat(512)}0${' : 0'.repeat(512)}; }`, /expression nesting/],
+    [`type T = ${'Box<'.repeat(4096)}word${'>'.repeat(4096)};`, /type nesting/],
+    [`type T = ${'@'.repeat(4096)}word;`, /type nesting/],
+    [`function main() returns (word) { return ${'('.repeat(80)}42${')'.repeat(80)}; }`, /parse error|expression nesting/],
+    [`function main() { a${'.x'.repeat(4096)} += 1; }`, /expression nesting/],
+    [`function main() { let a = 1${' + 1'.repeat(16384)} }`, /parse error|expression nesting/],
+    [`function main() {${'if (true) { ) '.repeat(512)};${'}'.repeat(513)}`, /delimiter nesting/],
+  ]) {
+    const result = compile({ files: [{ path: 'main.sol', content }], entry: 'main.sol' });
+    assert.equal(result.success, false);
+    assert.ok(result.diagnostics.some((diagnostic) => expected.test(diagnostic.message)), JSON.stringify(result.diagnostics));
+  }
+  const content = `function main() returns (word) { return ${'('.repeat(24)}42${')'.repeat(24)}; }`;
+  const result = compile({ files: [{ path: 'main.sol', content }], entry: 'main.sol' });
+  assert.equal(result.success, true, JSON.stringify(result.diagnostics));
+});
+
+test('browser WASM bounds exponential compile-time literal growth', () => {
+  const content = `
+import * from std;
+function grow(comptime n: integer, comptime s: string) returns (comptime<string>) {
+  if (integerLt(n, 1)) { return s; }
+  else { return grow(integerSub(n, 1), concatLit(s, s)); }
+}
+contract C {
+  function main() returns (word) { return strlenLit(grow(40, "x")); }
+}`;
+  const result = compile({ files: [{ path: 'main.sol', content }], entry: 'main.sol', options: { emitHull: true } });
+  assert.equal(result.success, false);
+  assert.ok(result.diagnostics.some((diagnostic) => /fuel|budget|work limit/.test(diagnostic.message)), JSON.stringify(result.diagnostics));
+});
+
 for (const backend of ['solc', 'sonatina']) {
 const options = { emitHull: true, emitYul: true, emitSonatina: true, emitAbi: true, backend };
 

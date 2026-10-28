@@ -34,6 +34,8 @@ mod checked_closures;
 mod checked_defaults;
 #[path = "specialize/integer_literals.rs"]
 mod integer_literals;
+#[path = "specialize/resource_limits.rs"]
+mod resource_limits;
 #[path = "specialize/signed_integers.rs"]
 mod signed_integers;
 

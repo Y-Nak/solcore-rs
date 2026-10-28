@@ -14,8 +14,8 @@ use crate::lexer::Token;
 pub(crate) type LexSpan = chumsky::span::SimpleSpan;
 /// Borrowed source string paired with its absolute span.
 pub(crate) type SpannedStr<'src> = (&'src str, LexSpan);
-/// Parser error type used by Chumsky combinators.
-pub(crate) type ParserErr<'src> = extra::Err<Rich<'src, Token<'src>>>;
+/// Parser error type and recursive-expression depth used by Chumsky combinators.
+pub(crate) type ParserErr<'src> = extra::Full<Rich<'src, Token<'src>>, (), usize>;
 
 /// Lexical form of a parsed source comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -104,6 +104,7 @@ pub struct SpecializeOptions {
     /// Maximum nesting for specialization and evaluator inlining.
     pub max_depth: usize,
     pub max_type_nodes: usize,
+    /// Per-function evaluation budget and module-wide large-literal work budget.
     pub eval_fuel: usize,
 }
 
@@ -116,7 +117,7 @@ impl Default for SpecializeOptions {
             // This is a per-emitted-function work budget. It must accommodate
             // the canonical std dispatch pipeline, including e136's 31-method
             // `basic` surface, while still bounding exponential pure-call
-            // fan-out.
+            // fan-out and growth of compile-time strings and integers.
             eval_fuel: 8192,
         }
     }

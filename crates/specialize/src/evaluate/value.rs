@@ -243,6 +243,10 @@ impl BigInt {
         self.sign == 0
     }
 
+    pub(super) fn limb_len(&self) -> usize {
+        self.limbs.len()
+    }
+
     fn normalize(&mut self) {
         while self.limbs.last().is_some_and(|limb| *limb == 0) {
             self.limbs.pop();

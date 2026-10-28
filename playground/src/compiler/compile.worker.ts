@@ -9,6 +9,10 @@ const workerScope = self as unknown as {
   postMessage: (response: WorkerResponse) => void;
 };
 
+// Runs and watches share a persistent WASM sandbox. A backend download must
+// not let a later request overtake an earlier run and then lose its deployment.
+let requests = Promise.resolve();
+
 workerScope.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
   const request = event.data;
 
@@ -16,7 +20,7 @@ workerScope.addEventListener("message", (event: MessageEvent<WorkerRequest>) => 
     return;
   }
 
-  void handleCompile(request);
+  requests = requests.then(() => handleCompile(request));
 });
 
 async function handleCompile(request: WorkerRequest): Promise<void> {

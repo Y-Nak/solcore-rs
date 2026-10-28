@@ -9,6 +9,12 @@ use super::{
 };
 use crate::{lexer::Token, types::*};
 
+// Bound expression-grammar recursion before building a tree. As with the HIR
+// expression bound, this leaves headroom for native editor/test threads and wasm
+// workers; the token delimiter/type limit is larger because those frames are
+// smaller. Parentheses count here even though HIR later erases them.
+const MAX_EXPRESSION_PARSE_NESTING: usize = 32;
+
 #[derive(Debug, Clone)]
 enum ParsedPostfixOp<'src> {
     Index(ParsedExpr<'src>),
@@ -33,15 +39,80 @@ fn parsed_bin_op_expr<'src>(
     op: ParsedSpanned<'src, function::BinOp>,
     rhs: ParsedExpr<'src>,
     span: LexSpan,
+    emit: impl FnMut(Rich<'src, Token<'src>>),
 ) -> ParsedExpr<'src> {
-    ParsedExpr {
-        span,
-        kind: ParsedExprKind::BinOp {
-            lhs: Box::new(lhs),
-            op,
-            rhs: Box::new(rhs),
+    limit_expr_depth(
+        ParsedExpr {
+            span,
+            kind: ParsedExprKind::BinOp {
+                lhs: Box::new(lhs),
+                op,
+                rhs: Box::new(rhs),
+            },
         },
+        emit,
+    )
+}
+
+// Iterative grammar folds can build deep trees without recursing themselves.
+// Bound those trees as they are constructed: failed parses may drop them before
+// HIR's iterative traversal runs, and compound assignment also clones its lhs.
+fn limit_expr_depth<'src>(
+    expr: ParsedExpr<'src>,
+    mut emit: impl FnMut(Rich<'src, Token<'src>>),
+) -> ParsedExpr<'src> {
+    let mut pending = vec![(&expr, 1usize)];
+    while let Some((node, depth)) = pending.pop() {
+        if depth > super::MAX_SYNTAX_NESTING {
+            emit(Rich::custom(
+                expr.span,
+                format!(
+                    "expression nesting exceeds the compiler limit of {}",
+                    super::MAX_SYNTAX_NESTING,
+                ),
+            ));
+            return ParsedExpr {
+                span: expr.span,
+                kind: ParsedExprKind::Error,
+            };
+        }
+        match &node.kind {
+            ParsedExprKind::DotCtor { args, .. }
+            | ParsedExprKind::Tuple(args)
+            | ParsedExprKind::Array(args) => {
+                pending.extend(args.iter().map(|child| (child, depth + 1)))
+            }
+            ParsedExprKind::BinOp { lhs, rhs, .. } => {
+                pending.push((lhs, depth + 1));
+                pending.push((rhs, depth + 1));
+            }
+            ParsedExprKind::Index { base, index } => {
+                pending.push((base, depth + 1));
+                pending.push((index, depth + 1));
+            }
+            ParsedExprKind::Call { callee, args } => {
+                pending.push((callee, depth + 1));
+                pending.extend(args.iter().map(|child| (child, depth + 1)));
+            }
+            ParsedExprKind::Field { base, .. } => pending.push((base, depth + 1)),
+            ParsedExprKind::UnaryOp { expr, .. } => pending.push((expr, depth + 1)),
+            ParsedExprKind::If {
+                cond,
+                then_expr,
+                else_expr,
+            } => {
+                pending.push((cond, depth + 1));
+                pending.push((then_expr, depth + 1));
+                pending.push((else_expr, depth + 1));
+            }
+            ParsedExprKind::Error
+            | ParsedExprKind::Lit(_)
+            | ParsedExprKind::Ident(_)
+            | ParsedExprKind::Proxy { .. }
+            | ParsedExprKind::Lambda { .. } => {}
+        }
     }
+    expr
 }
 
 pub(super) fn parsed_expr_parser<'src, I>()
@@ -147,7 +218,6 @@ where
             },
         })
         .boxed();
-
     let array_expr = expr
         .clone()
         .separated_by(just(Token::Comma))
@@ -220,22 +290,27 @@ where
     let postfix = atom
         .foldl_with(
             index_op.or(call_op).or(field_op).repeated(),
-            |base, op, e| ParsedExpr {
-                span: e.span(),
-                kind: match op {
-                    ParsedPostfixOp::Index(index) => ParsedExprKind::Index {
-                        base: Box::new(base),
-                        index: Box::new(index),
+            |base, op, e| {
+                limit_expr_depth(
+                    ParsedExpr {
+                        span: e.span(),
+                        kind: match op {
+                            ParsedPostfixOp::Index(index) => ParsedExprKind::Index {
+                                base: Box::new(base),
+                                index: Box::new(index),
+                            },
+                            ParsedPostfixOp::Call(args) => ParsedExprKind::Call {
+                                callee: Box::new(base),
+                                args,
+                            },
+                            ParsedPostfixOp::Field(field) => ParsedExprKind::Field {
+                                base: Box::new(base),
+                                field,
+                            },
+                        },
                     },
-                    ParsedPostfixOp::Call(args) => ParsedExprKind::Call {
-                        callee: Box::new(base),
-                        args,
-                    },
-                    ParsedPostfixOp::Field(field) => ParsedExprKind::Field {
-                        base: Box::new(base),
-                        field,
-                    },
-                },
+                    |error| e.emit(error),
+                )
             },
         )
         .boxed();
@@ -247,25 +322,32 @@ where
         .map_with(|op, e| ParsedSpanned::new(op, e.span()));
     let unary = unary_op
         .repeated()
-        .foldr_with(postfix, |op, expr, e| ParsedExpr {
-            span: e.span(),
-            kind: ParsedExprKind::UnaryOp {
-                op,
-                expr: Box::new(expr),
-            },
+        .foldr_with(postfix, |op, expr, e| {
+            limit_expr_depth(
+                ParsedExpr {
+                    span: e.span(),
+                    kind: ParsedExprKind::UnaryOp {
+                        op,
+                        expr: Box::new(expr),
+                    },
+                },
+                |error| e.emit(error),
+            )
         })
         .boxed();
-
     let mul_op = select! {
         Token::Star => function::BinOp::Mul,
         Token::Slash => function::BinOp::Div,
         Token::Percent => function::BinOp::Mod,
     }
     .map_with(|op, e| ParsedSpanned::new(op, e.span()));
-    let mul = unary.clone().foldl_with(
-        mul_op.then(unary.clone()).repeated(),
-        |lhs, (op, rhs), e| parsed_bin_op_expr(lhs, op, rhs, e.span()),
-    );
+    let mul = unary
+        .clone()
+        .foldl_with(
+            mul_op.then(unary.clone()).repeated(),
+            |lhs, (op, rhs), e| parsed_bin_op_expr(lhs, op, rhs, e.span(), |error| e.emit(error)),
+        )
+        .boxed();
 
     let add_op = select! {
         Token::Plus => function::BinOp::Add,
@@ -275,8 +357,9 @@ where
     let add = mul
         .clone()
         .foldl_with(add_op.then(mul).repeated(), |lhs, (op, rhs), e| {
-            parsed_bin_op_expr(lhs, op, rhs, e.span())
-        });
+            parsed_bin_op_expr(lhs, op, rhs, e.span(), |error| e.emit(error))
+        })
+        .boxed();
 
     // As in Solidity, shifts bind looser than `+ -` and tighter than `&`.
     let shift_op = adjacent_tokens_parser(Token::Less, Token::Less)
@@ -286,7 +369,7 @@ where
     let shift = add
         .clone()
         .foldl_with(shift_op.then(add).repeated(), |lhs, (op, rhs), e| {
-            parsed_bin_op_expr(lhs, op, rhs, e.span())
+            parsed_bin_op_expr(lhs, op, rhs, e.span(), |error| e.emit(error))
         })
         // Boxing bounds the nested combinator type, keeping the per-level
         // stack use of the operator ladder within the debug test-thread stack.
@@ -298,8 +381,9 @@ where
     let bit_and = shift
         .clone()
         .foldl_with(bit_and_op.then(shift).repeated(), |lhs, (op, rhs), e| {
-            parsed_bin_op_expr(lhs, op, rhs, e.span())
-        });
+            parsed_bin_op_expr(lhs, op, rhs, e.span(), |error| e.emit(error))
+        })
+        .boxed();
 
     let bit_xor_op = just(Token::Caret)
         .to(function::BinOp::BitXor)
@@ -307,8 +391,9 @@ where
     let bit_xor = bit_and
         .clone()
         .foldl_with(bit_xor_op.then(bit_and).repeated(), |lhs, (op, rhs), e| {
-            parsed_bin_op_expr(lhs, op, rhs, e.span())
-        });
+            parsed_bin_op_expr(lhs, op, rhs, e.span(), |error| e.emit(error))
+        })
+        .boxed();
 
     let bit_or_op = just(Token::Pipe)
         .to(function::BinOp::BitOr)
@@ -316,7 +401,7 @@ where
     let bit_or = bit_xor
         .clone()
         .foldl_with(bit_or_op.then(bit_xor).repeated(), |lhs, (op, rhs), e| {
-            parsed_bin_op_expr(lhs, op, rhs, e.span())
+            parsed_bin_op_expr(lhs, op, rhs, e.span(), |error| e.emit(error))
         })
         .boxed();
 
@@ -338,7 +423,7 @@ where
         .clone()
         .then(rel_op.then(bit_or).or_not())
         .map_with(|(lhs, rhs), e| match rhs {
-            Some((op, rhs)) => parsed_bin_op_expr(lhs, op, rhs, e.span()),
+            Some((op, rhs)) => parsed_bin_op_expr(lhs, op, rhs, e.span(), |error| e.emit(error)),
             None => lhs,
         })
         .boxed();
@@ -352,7 +437,7 @@ where
         .clone()
         .then(eq_op.then(rel).or_not())
         .map_with(|(lhs, rhs), e| match rhs {
-            Some((op, rhs)) => parsed_bin_op_expr(lhs, op, rhs, e.span()),
+            Some((op, rhs)) => parsed_bin_op_expr(lhs, op, rhs, e.span(), |error| e.emit(error)),
             None => lhs,
         })
         .boxed();
@@ -363,8 +448,9 @@ where
     let and = eq
         .clone()
         .foldl_with(and_op.then(eq).repeated(), |lhs, (op, rhs), e| {
-            parsed_bin_op_expr(lhs, op, rhs, e.span())
-        });
+            parsed_bin_op_expr(lhs, op, rhs, e.span(), |error| e.emit(error))
+        })
+        .boxed();
 
     let or_op = just(Token::OrOr)
         .to(function::BinOp::Or)
@@ -372,8 +458,9 @@ where
     let or = and
         .clone()
         .foldl_with(or_op.then(and).repeated(), |lhs, (op, rhs), e| {
-            parsed_bin_op_expr(lhs, op, rhs, e.span())
-        });
+            parsed_bin_op_expr(lhs, op, rhs, e.span(), |error| e.emit(error))
+        })
+        .boxed();
 
     // A conditional expression is right-associative. Parse the common
     // `a ? b : c ? d : e` shape as a flat sequence and fold it from the
@@ -387,8 +474,9 @@ where
         .ignore_then(expr)
         .then_ignore(just(Token::Colon))
         .then(or.clone());
-    or.then(ternary_tail.repeated().collect::<Vec<_>>())
-        .map(|(first, tails)| {
+    let expression = or
+        .then(ternary_tail.repeated().collect::<Vec<_>>())
+        .map_with(|(first, tails), e| {
             let mut heads = Vec::with_capacity(tails.len());
             let mut last = first;
             for (then_expr, next) in tails {
@@ -400,16 +488,39 @@ where
                 .rev()
                 .fold(last, |else_expr, (cond, then_expr)| {
                     let span = LexSpan::from(cond.span.start..else_expr.span.end);
-                    ParsedExpr {
-                        span,
-                        kind: ParsedExprKind::If {
-                            cond: Box::new(cond),
-                            then_expr: Box::new(then_expr),
-                            else_expr: Box::new(else_expr),
+                    limit_expr_depth(
+                        ParsedExpr {
+                            span,
+                            kind: ParsedExprKind::If {
+                                cond: Box::new(cond),
+                                then_expr: Box::new(then_expr),
+                                else_expr: Box::new(else_expr),
+                            },
                         },
-                    }
+                        |error| e.emit(error),
+                    )
                 })
         })
+        .map_with(|expr, e| limit_expr_depth(expr, |error| e.emit(error)));
+
+    // Apply the guard in the shared builder: expressions parsed from a
+    // comptime pattern enter through a different mutually-recursive graph.
+    empty::<I, ParserErr<'src>>()
+        .try_map_with(|(), e| {
+            if *e.ctx() >= MAX_EXPRESSION_PARSE_NESTING {
+                let offset = e.span().start;
+                Err(Rich::custom(
+                    (offset..offset).into(),
+                    format!(
+                        "expression nesting exceeds the compiler limit of {MAX_EXPRESSION_PARSE_NESTING}"
+                    ),
+                ))
+            } else {
+                Ok(())
+            }
+        })
+        .ignore_then(map_ctx(|depth: &usize| depth + 1, expression))
+        .boxed()
 }
 
 fn build_pat_parser<'src, I, Pat, Expr>(

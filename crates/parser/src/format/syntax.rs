@@ -657,11 +657,16 @@ mod tests {
     }
 
     #[test]
-    fn long_flat_expression_chains_do_not_require_recursive_tree_walks() {
-        let source = format!("function f() {{ return {}0; }}", "0 + ".repeat(4096));
-        assert!(layout(&source).is_ok());
-        let source = format!("function f() {{ return x{}; }}", ".field".repeat(4096));
-        assert!(layout(&source).is_ok());
+    fn flat_expression_chains_respect_the_shared_parser_depth_limit() {
+        // Walking the formatter tree is iterative, but parsing can clone or
+        // discard a partial tree first. Keep those trees bounded on every
+        // consumer, including formatting, even when the input is well formed.
+        for (depth, accepted) in [(127, true), (128, false), (4096, false)] {
+            let source = format!("function f() {{ return {}0; }}", "0 + ".repeat(depth));
+            assert_eq!(layout(&source).is_ok(), accepted);
+            let source = format!("function f() {{ return x{}; }}", ".field".repeat(depth));
+            assert_eq!(layout(&source).is_ok(), accepted);
+        }
     }
 
     #[test]

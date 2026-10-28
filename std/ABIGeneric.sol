@@ -75,10 +75,14 @@ impl<f, g> ABIEncode<sum<f, g>> where f: ABIAttribs, f: ABIEncode, g: ABIAttribs
                 match (x) {
                     case inl(v) {
                         mstore(basePtr + offset, 0);
+                        let usedHead = 32 + ABIAttribs.headSize(@f);
+                        zeroize_memory(basePtr + offset + usedHead, ABIAttribs.headSize(prx) - usedHead);
                         return ABIEncode.encodeInto(v, basePtr, offset + 32, tail);
                     }
                     case inr(v) {
                         mstore(basePtr + offset, 1);
+                        let usedHead = 32 + ABIAttribs.headSize(@g);
+                        zeroize_memory(basePtr + offset + usedHead, ABIAttribs.headSize(prx) - usedHead);
                         return ABIEncode.encodeInto(v, basePtr, offset + 32, tail);
                     }
                 }
@@ -97,10 +101,14 @@ impl<f, g> ABIEncode<sum<f, g>> where f: ABIAttribs, f: ABIEncode, g: ABIAttribs
                 match (x) {
                     case inl(v) {
                         mstore(newBase, 0);
+                        let usedHead = 32 + ABIAttribs.headSize(pf);
+                        zeroize_memory(newBase + usedHead, innerHead - usedHead);
                         return ABIEncode.encodeInto(v, newBase, 32, newTail);
                     }
                     case inr(v) {
                         mstore(newBase, 1);
+                        let usedHead = 32 + ABIAttribs.headSize(pg);
+                        zeroize_memory(newBase + usedHead, innerHead - usedHead);
                         return ABIEncode.encodeInto(v, newBase, 32, newTail);
                     }
                 }
@@ -182,8 +190,8 @@ impl<f, g, reader> ABIDecode<ABIDecoder<sum<f, g>, reader>, sum<f, g>> where rea
 // Frame one variant's field product `v` into an ABI [tag][fields] body, mirroring
 // the static/dynamic layout of the old structural sum encoder. `tag` is the
 // variant's precomputed keccak256("Name(argSigs)") discriminant; `innerHead` is
-// the inline body footprint (32 + widest branch head) the dynamic case reserves in
-// the tail (ignored for static sums).
+// the inline body footprint (32 + widest branch head). Every variant clears
+// its unused head words so reused scratch memory cannot leak into the encoding.
 function encodeVariant<f>(
     tag: word,
     v: f,
@@ -193,10 +201,12 @@ function encodeVariant<f>(
     offset: word,
     tail: word
 ) returns (word) where f: ABIAttribs, f: ABIEncode {
+    let usedHead = 32 + ABIAttribs.headSize(@f);
     match (isStaticSum) {
         // STATIC sum: inline tag at basePtr+offset, branch at offset + 32.
         case true {
             mstore(basePtr + offset, tag);
+            zeroize_memory(basePtr + offset + usedHead, innerHead - usedHead);
             return ABIEncode.encodeInto(v, basePtr, offset + 32, tail);
             // DYNAMIC sum: head slot holds a relative offset to the [tag][branch] body,
             // which is laid out inline in the tail.
@@ -206,6 +216,7 @@ function encodeVariant<f>(
             let newBase = tail;
             let newTail = tail + innerHead;
             mstore(newBase, tag);
+            zeroize_memory(newBase + usedHead, innerHead - usedHead);
             return ABIEncode.encodeInto(v, newBase, 32, newTail);
         }
     }
