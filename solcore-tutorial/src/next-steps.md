@@ -56,10 +56,8 @@ Type constraints and runtime value checks have distinct roles.
 | --- | --- | --- |
 | Mappings, enums, and modules | [Mini NFT](../projects/mini-nft.json?tab=run&view=calls) | `Option<address>`, `mint`, `exists` |
 | Combining traits, generics, and modules | [Composition](../projects/composition.json?tab=run&view=calls) | `engine.sol` and its three contracts |
-| Dividing storage and behavior across modules | [Extensions](../projects/extensions.json?tab=run&view=calls) | Storage and transfer hooks; use the **solc** backend |
+| Dividing storage and behavior across modules | [Extensions](../projects/extensions.json?tab=run&view=calls) | Storage and transfer hooks |
 | Lambdas and locking wrappers | [Reentrancy](../projects/reentrancy.json?tab=run&view=calls) | `withWriteLock`, `withReadLock`, `lam` |
-
-Use **solc** for Extensions: its current Sonatina output compiles but exceeds the browser runner's deployment gas limit.
 
 These are examples for studying design.
 Composition's signature example omits replay protection using a nonce, chain ID, and contract address.

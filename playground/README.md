@@ -24,9 +24,9 @@ or the public runtime entry of a single contract with a no-argument constructor.
 Each run uses a new in-memory database. Constructor storage is available to `main`
 within that run. Recent actions keeps previous runs visible, including through source edits.
 
-The runner uses Osaka rules, a gas limit of 1,000,000 per transaction, and a 16 MiB
-EVM memory limit. Contract `main` receives empty calldata. A wrapper returns its
-word to the playground; the normal Compile artifacts are unchanged.
+The runner uses Osaka rules, a gas limit of 1,000,000 per call and 10,000,000 per
+deployment, and a 16 MiB EVM memory limit. Contract `main` receives empty calldata.
+A wrapper returns its word to the playground; the normal Compile artifacts are unchanged.
 
 ## Run tests
 

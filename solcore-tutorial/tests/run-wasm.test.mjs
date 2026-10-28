@@ -96,16 +96,6 @@ for (const backend of backends) {
           simulate: false,
         } });
         assert.equal(result.success, true, JSON.stringify(result.diagnostics));
-        if (project.id === 'extensions' && backend === 'sonatina') {
-          // This backend's Token runtime currently exceeds the sandbox's
-          // fixed deployment budget. Keep the documented limit visible;
-          // successful deployment should prompt removal of this exception.
-          assert.equal(result.execution?.status, 'error', JSON.stringify(result.execution));
-          assert.equal(result.execution.phase, 'prepare');
-          assert.equal(result.execution.gasLimit, 1_000_000);
-          assert.match(result.execution.message, /^Deployment failed: .*OutOfGas\(Basic\)/);
-          return;
-        }
         assert.equal(result.execution?.status, check.status ?? 'success', JSON.stringify(result.execution));
         if (check.decoded !== undefined) assert.equal(result.execution.decoded, check.decoded);
       }

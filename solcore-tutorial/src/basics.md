@@ -39,7 +39,7 @@ In `adjust`, only a true `bonus` enters the `if` body; both branches then reach 
 
 The standard library defines `uint256` around the low-level `word` type and supplies its operators through traits.
 Use `uint256` for public parameters and return values; primitive `word` is not supported there.
-Current `uint256` arithmetic wraps on overflow; do not assume automatic overflow reverts.
+`uint256` has a finite range: design calculations so their results stay within it.
 
 Each loop iteration costs gas.
 Keep inputs small: a finite loop can still exhaust the runner's gas limit.

@@ -21,7 +21,7 @@ The `a` in `Option<a>` is a type parameter.
 For `Option<uint256>`, `Some` carries an integer and `None` carries no value.
 `unwrapOr<a>` is a generic function: its control flow works for different choices of `a`.
 
-In the current standard library, `uint256` division by zero returns `0` instead of reverting.
+Integer division drops the remainder: `uint256(10) / uint256(3)` gives `3`.
 `checkedDiv` checks the divisor first and returns `Option.None` when it is zero, so callers can distinguish a missing result from a valid numeric result.
 
 `export { Option(*), checkedDiv, unwrapOr }` makes these names available to other modules.

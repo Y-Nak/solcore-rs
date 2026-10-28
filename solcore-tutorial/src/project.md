@@ -34,9 +34,9 @@ In the **Run** tab, select **Run tests** and click **Run all tests from start** 
 
 ## Think about arithmetic before coding
 
-Current `uint256` addition wraps.
-Testing only whether `count + amount > 10` could allow an overflowing addition to escape your check.
-Instead, maintain the invariant **`count <= 10`** and compare `amount` with `10 - count` before adding.
+Maintain the invariant **`count <= 10`** and compare `amount` with `10 - count` before adding.
+This checks the requested increment against the remaining capacity without first computing a potentially overflowing sum.
+Every accepted addition then stays within the bound.
 
 Explain why the subtraction is valid: the count starts at zero, and every accepted update stays within the bound.
 No other function should write an arbitrary value into `count`.
