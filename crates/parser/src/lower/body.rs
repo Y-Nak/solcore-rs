@@ -71,6 +71,11 @@ fn lower_assign_op(op: ParsedAssignOp) -> function::AssignOp {
         ParsedAssignOp::BitAndEq => function::AssignOp::BitAnd,
         ParsedAssignOp::BitOrEq => function::AssignOp::BitOr,
         ParsedAssignOp::ModEq => function::AssignOp::Mod,
+        // `assign_stmt_kind` lowers every compound assignment to `lhs = lhs op
+        // rhs`; only the shifts lack an `AssignOp`, so they cannot reach here.
+        ParsedAssignOp::ShlEq | ParsedAssignOp::ShrEq => {
+            unreachable!("compound shift assignments are desugared by the parser")
+        }
     }
 }
 

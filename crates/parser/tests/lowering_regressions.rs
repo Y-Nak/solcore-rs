@@ -1048,7 +1048,7 @@ fn unary_minus_lowers_literals_before_conversion_and_values_through_subtraction(
 #[test]
 fn compound_assignments_lower_through_binary_operator_calls() {
     let db = TestDb::default();
-    let (_, module) = parse_module(
+    let (file, module) = parse_module(
         &db,
         "compound-assignments",
         "function f(x: word, y: word) {\n\
@@ -1060,8 +1060,15 @@ fn compound_assignments_lower_through_binary_operator_calls() {
            x &= y;\n\
            x |= y;\n\
            x %= y;\n\
+           x <<= y;\n\
+           x >>= y;\n\
            x ~=;\n\
          }",
+    );
+    assert!(
+        diagnostics(&db, file).is_empty(),
+        "{:?}",
+        diagnostics(&db, file)
     );
     let function = top_function(&db, module, "f");
     let body = function.body(&db).expect("body");
@@ -1074,6 +1081,8 @@ fn compound_assignments_lower_through_binary_operator_calls() {
         BinOp::BitAnd,
         BinOp::BitOr,
         BinOp::Mod,
+        BinOp::Shl,
+        BinOp::Shr,
     ];
 
     let stmts = body.top_level_stmts(&db);

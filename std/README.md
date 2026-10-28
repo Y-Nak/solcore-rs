@@ -24,8 +24,8 @@ to the `uAddChecked` .. `sModChecked` helpers in `std.sol`, whose conditions are
 bound to `let` locals rather than nested calls to keep call nesting within the
 default parser stack. Regressions: `tests/e2e/int-ops` (ABI decode/encode and
 storage), `tests/e2e/checked-arith`, and
-the shared matrix in `crates/test-utils/src/e2e/integers.rs` (433 arithmetic,
-bitwise, comparison and bounds cases across all 11 added integer types).
+the shared matrix in `crates/test-utils/src/e2e/integers.rs` (538 arithmetic,
+bitwise, shift, comparison and bounds cases across all 11 added integer types).
 Both backends generate its source fixtures at test time and execute them
 against independently calculated results.
 
@@ -64,6 +64,18 @@ to these traits, so such a block must import `std.unchecked.unsigned` or
 lexical: called functions and lambda bodies inside the block stay checked, and
 nested blocks are rejected. Regressions: `tests/e2e/unchecked-scope` and the
 unchecked part of the shared matrix in `crates/test-utils/src/e2e/integers.rs`.
+
+## Shift operators
+
+`std.sol` declares `ShiftAmount<n>`, `Shl<t, n>`, and `Shr<t, n>`. The compiler
+lowers `<<`, `>>`, `<<=`, and `>>=` to `Shl.bshl` and `Shr.bshr`. Instances for
+`word` and `uint256` are in `std.sol`; `unsigned.sol` and `signed.sol` provide
+the `uintN` and `intN` instances. As in Solidity, the result has the type of the
+shifted value, only unsigned types (`word`, `uint8` .. `uint256`) are shift
+amounts, bits shifted past the width are discarded, `>>` is arithmetic for
+signed types, and shifts never revert, inside or outside `unchecked`.
+Regressions: `tests/e2e/shift-operators` and the shift part of the shared
+matrix in `crates/test-utils/src/e2e/integers.rs`.
 
 ## Verification
 

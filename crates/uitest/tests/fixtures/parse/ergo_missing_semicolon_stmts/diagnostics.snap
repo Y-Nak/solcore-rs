@@ -11,4 +11,4 @@ error[SC0001]: parse error: unexpected `return`
   |     ^^^^^^ unexpected token
 4 | }
   |
-  = note: expecting `&&`, `&`, `(`, `.`, `;`, `?`, `[`, `^`, `|`, or `||`
+  = note: expecting `&&`, `&`, `(`, `.`, `;`, `<`, `>`, `?`, `[`, `^`, `|`, or `||`

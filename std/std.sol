@@ -1,7 +1,7 @@
 import { add, sub, mul, div, mod, sdiv, smod, addmod as addmod_, mulmod as mulmod_, and as and_, or as or_, xor as xor_, shl, shr, eq, not as not_, gt as gt_, slt, sgt, iszero, keccak256, mstore, mload, mcopy, sstore, sload, gas, caller as caller_, callvalue as callvalue_, calldatasize, calldataload, calldatacopy, returndatasize, returndatacopy, log1 as log1_, call, staticcall, revert_, invalid } from std.opcodes;
 
 pragma no-patterson-condition ABIEncode, Num, Array, ArrayPush, Eq, Ord;
-pragma no-coverage-condition ABIDecode, MemoryType, Array, ArrayPush, RValueIdxAccess;
+pragma no-coverage-condition ABIDecode, MemoryType, Array, ArrayPush, RValueIdxAccess, Shl, Shr;
 
 export {
     ABIAttribs,
@@ -45,6 +45,9 @@ export {
     Proxy(*),
     RVA,
     RValueIdxAccess,
+    ShiftAmount,
+    Shl,
+    Shr,
     StorageCopy,
     StorageSize,
     StorageType,
@@ -574,6 +577,23 @@ trait BitNot<t> {
     function bnot(x: t) returns (t);
 }
 
+// Shifts follow Solidity: the result has the type of the shifted value, the
+// shift amount may be any unsigned type (a type with a ShiftAmount instance;
+// signed amounts are rejected), and shifts never revert. Bits shifted out are
+// discarded; an amount of at least the width yields 0 (or -1 for `>>` of a
+// negative signed value).
+trait ShiftAmount<n> {
+    function amount(x: n) returns (word);
+}
+
+trait Shl<t, n> {
+    function bshl(l: t, r: n) returns (t);
+}
+
+trait Shr<t, n> {
+    function bshr(l: t, r: n) returns (t);
+}
+
 trait Bounded<t> {
     function minVal() returns (t);
     function maxVal() returns (t);
@@ -881,6 +901,25 @@ impl BitAnd<word> {
     }
 }
 
+impl ShiftAmount<word> {
+    function amount(x: word) returns (word) {
+        return x;
+    }
+}
+
+// bshlWord(x, y) shifts y by x bits.
+impl<n> Shl<word, n> where n: ShiftAmount {
+    function bshl(l: word, r: n) returns (word) {
+        return bshlWord(ShiftAmount.amount(r), l);
+    }
+}
+
+impl<n> Shr<word, n> where n: ShiftAmount {
+    function bshr(l: word, r: n) returns (word) {
+        return bshrWord(ShiftAmount.amount(r), l);
+    }
+}
+
 impl BitOr<word> {
     function bor(l: word, r: word) returns (word) {
         return borWord(l, r);
@@ -1022,6 +1061,24 @@ impl BitXor<uint256> {
 impl BitNot<uint256> {
     function bnot(x: uint256) returns (uint256) {
         return Typedef.abs(BitNot.bnot(Typedef.rep(x)));
+    }
+}
+
+impl ShiftAmount<uint256> {
+    function amount(x: uint256) returns (word) {
+        return Typedef.rep(x);
+    }
+}
+
+impl<n> Shl<uint256, n> where n: ShiftAmount {
+    function bshl(l: uint256, r: n) returns (uint256) {
+        return Typedef.abs(Shl.bshl(Typedef.rep(l), r));
+    }
+}
+
+impl<n> Shr<uint256, n> where n: ShiftAmount {
+    function bshr(l: uint256, r: n) returns (uint256) {
+        return Typedef.abs(Shr.bshr(Typedef.rep(l), r));
     }
 }
 

@@ -650,6 +650,9 @@ impl TypeckDiagnostic {
                 let help = if pred.starts_with("operator Unchecked") || pred.contains(": Unchecked")
                 {
                     "arithmetic inside `unchecked` requires `import * from std.unchecked.unsigned;` (word, uintN) or `import * from std.unchecked.signed;` (intN)"
+                } else if pred.contains(": Shl<") || pred.contains(": Shr<") {
+                    // As in Solidity, only unsigned types are shift amounts.
+                    "the shift amount must be an unsigned type (`word`, `uint8` .. `uint256`); signed amounts are not allowed"
                 } else {
                     "add a matching impl or strengthen the surrounding type context"
                 };

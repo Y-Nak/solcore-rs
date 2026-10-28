@@ -119,6 +119,17 @@ pub(super) fn shr_word(value: &BigInt, shift: &BigInt) -> BigInt {
     }
 }
 
+pub(super) fn sar_word(value: &BigInt, shift: &BigInt) -> BigInt {
+    let value = value.mod_word();
+    if value.bit(255) {
+        // For negative words, ~((~value) >> shift) sign-extends and rounds
+        // toward negative infinity, including shifts of 256 or more.
+        not_word(&shr_word(&not_word(&value), shift))
+    } else {
+        shr_word(&value, shift)
+    }
+}
+
 fn word_bitwise(lhs: &BigInt, rhs: &BigInt, f: impl Fn(u32, u32) -> u32) -> BigInt {
     let lhs = lhs.word_limbs();
     let rhs = rhs.word_limbs();

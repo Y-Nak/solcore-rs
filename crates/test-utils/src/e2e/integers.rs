@@ -56,6 +56,10 @@ enum Operand {
     Max,
     BeforeMax,
     Half,
+    /// The type's width in bits, as a shift amount.
+    Width,
+    /// One bit less than the type's width, as a shift amount.
+    BeforeWidth,
 }
 
 #[derive(Clone, Copy)]
@@ -69,13 +73,17 @@ enum Operation {
     Or,
     Xor,
     Not,
+    /// `x << n` with a `uint256` amount: bits past the width are discarded.
+    Shl,
+    /// `x >> n` with a `uint256` amount: arithmetic for signed types.
+    Shr,
     Compare,
     Bounds,
     /// Unary `-x`; only exercised by the unchecked matrix.
     Neg,
 }
 
-const OPERATIONS: [Operation; 11] = [
+const OPERATIONS: [Operation; 13] = [
     Operation::Add,
     Operation::Sub,
     Operation::Mul,
@@ -85,6 +93,8 @@ const OPERATIONS: [Operation; 11] = [
     Operation::Or,
     Operation::Xor,
     Operation::Not,
+    Operation::Shl,
+    Operation::Shr,
     Operation::Compare,
     Operation::Bounds,
 ];
@@ -101,6 +111,8 @@ impl Operation {
             Self::Or => "or",
             Self::Xor => "xor",
             Self::Not => "not",
+            Self::Shl => "shl",
+            Self::Shr => "shr",
             Self::Compare => "cmp",
             Self::Bounds => "bounds",
             Self::Neg => "neg",
@@ -118,6 +130,9 @@ impl Operation {
             Self::Or => "x | y",
             Self::Xor => "x ^ y",
             Self::Not => "~x",
+            // The amount stays the unsigned `uint256` parameter.
+            Self::Shl => "x << b",
+            Self::Shr => "x >> b",
             Self::Neg => "-x",
             Self::Compare | Self::Bounds => unreachable!("these operations have custom bodies"),
         }
@@ -132,7 +147,7 @@ impl Operation {
     }
 
     fn inputs(self, signed: bool) -> &'static [(Operand, Operand)] {
-        use Operand::{BeforeMax, Constant as N, Half, Max, Min};
+        use Operand::{BeforeMax, BeforeWidth, Constant as N, Half, Max, Min, Width};
         match (signed, self) {
             (true, Self::Add) => &[
                 (N(1), N(2)),
@@ -177,6 +192,20 @@ impl Operation {
             (true, Self::Or) => &[(N(-16), N(5)), (Min, Max)],
             (true, Self::Xor) => &[(N(-1), N(5)), (Min, N(-1))],
             (true, Self::Not) => &[(N(0), N(0)), (N(-1), N(0)), (Max, N(0))],
+            (true, Self::Shl) => &[
+                (N(1), N(0)),
+                (N(1), BeforeWidth),
+                (Max, N(1)),
+                (N(-1), Width),
+                (N(5), N(300)),
+            ],
+            (true, Self::Shr) => &[
+                (N(-5), N(1)),
+                (Min, BeforeWidth),
+                (Max, BeforeWidth),
+                (N(-1), N(300)),
+                (N(5), N(300)),
+            ],
             (true, Self::Compare) => &[(N(-1), N(0)), (N(0), N(-1)), (N(-3), N(-3)), (Min, Max)],
             (false, Self::Add) => &[(N(1), N(2)), (Max, N(0)), (Max, N(1)), (Max, Max)],
             (false, Self::Sub) => &[(N(5), N(3)), (Max, Max), (N(0), N(1)), (N(3), N(5))],
@@ -193,6 +222,19 @@ impl Operation {
             (false, Self::Or) => &[(N(0xf0), N(0x0f)), (BeforeMax, N(1))],
             (false, Self::Xor) => &[(Max, N(1)), (N(0xff), N(0x0f))],
             (false, Self::Not) => &[(N(0), N(0)), (Max, N(0)), (N(0x0f), N(0))],
+            (false, Self::Shl) => &[
+                (N(1), N(0)),
+                (N(1), BeforeWidth),
+                (Max, N(1)),
+                (Max, Width),
+                (N(1), N(300)),
+            ],
+            (false, Self::Shr) => &[
+                (Max, N(1)),
+                (Max, BeforeWidth),
+                (Max, Width),
+                (N(1), N(300)),
+            ],
             (false, Self::Compare) => &[(N(1), N(2)), (N(2), N(1)), (Max, Max), (N(0), Max)],
             (_, Self::Bounds) => &[(Min, Max)],
             (true, Self::Neg) => &[(N(5), N(0)), (Min, N(0)), (N(0), N(0))],
@@ -216,7 +258,15 @@ impl IntegerType {
             Operand::Max => self.max.clone(),
             Operand::BeforeMax => &self.max - 1,
             Operand::Half => BigInt::from(1) << (self.bits / 2),
+            Operand::Width => self.bits.into(),
+            Operand::BeforeWidth => (self.bits - 1).into(),
         }
+    }
+
+    /// Reduces a mathematical result to the type's width (two's complement).
+    fn wrap(&self, value: BigInt) -> BigInt {
+        let modulus = BigInt::from(1) << self.bits;
+        ((value - &self.min) % &modulus + &modulus) % &modulus + &self.min
     }
 
     fn expected(&self, operation: Operation, a: &BigInt, b: &BigInt) -> String {
@@ -235,6 +285,10 @@ impl IntegerType {
             Operation::Xor => a ^ b,
             Operation::Not if self.signed => !a,
             Operation::Not => a ^ &self.max,
+            // Shifts never revert: `<<` drops the bits past the width and
+            // BigInt's `>>` rounds toward negative infinity, like `sar`.
+            Operation::Shl => self.wrap(a << shift_amount(b)),
+            Operation::Shr => a >> shift_amount(b),
             Operation::Compare => {
                 let comparisons = [a < b, a > b, a <= b, a >= b, a == b, a != b];
                 comparisons
@@ -275,9 +329,7 @@ impl IntegerType {
             Operation::Neg => -a,
             _ => unreachable!("only arithmetic runs in the unchecked matrix"),
         };
-        let modulus = BigInt::from(1) << self.bits;
-        let wrapped = ((value - &self.min) % &modulus + &modulus) % &modulus + &self.min;
-        literal(&wrapped)
+        literal(&self.wrap(value))
     }
 
     fn unchecked_source(&self, name: &str) -> String {
@@ -356,10 +408,15 @@ impl IntegerType {
                 operation.name()
             )
             .unwrap();
+            // A shift amount stays the `uint256` parameter `b`.
+            let typed_operands = match operation {
+                Operation::Shl | Operation::Shr => 1,
+                _ => operation.arity(),
+            };
             for (&variable, &parameter) in ["x", "y"]
                 .iter()
                 .zip(["a", "b"].iter())
-                .take(operation.arity())
+                .take(typed_operands)
             {
                 writeln!(
                     source,
@@ -403,6 +460,10 @@ impl IntegerType {
     }
 }
 
+fn shift_amount(amount: &BigInt) -> usize {
+    usize::try_from(amount).expect("matrix shift amounts are small")
+}
+
 fn panic(code: u8) -> String {
     format!("revert(0x4e487b71{code:064x})")
 }
@@ -421,7 +482,7 @@ fn word(value: &BigInt) -> BigInt {
     ((value % &modulus) + &modulus) % &modulus
 }
 
-/// Returns one source fixture per integer type (11 types, 433 execution cases).
+/// Returns one source fixture per integer type (11 types, 538 execution cases).
 /// Smaller contracts keep each dispatcher within the default evaluation fuel.
 fn fixtures() -> Vec<(String, String)> {
     integer_types()
@@ -497,7 +558,7 @@ mod tests {
         assert_eq!(fixtures.len(), 11);
         let mut cases = 0;
         for (name, source) in fixtures {
-            assert_eq!(source.matches("function ").count(), 11, "{name}");
+            assert_eq!(source.matches("function ").count(), 13, "{name}");
             cases += source.matches("// #[").count();
             let formatted = format_source(&source, &FormatOptions::default())
                 .unwrap_or_else(|error| panic!("{name}: {error:?}"));
@@ -507,7 +568,7 @@ mod tests {
                 "{name}: formatting must be idempotent"
             );
         }
-        assert_eq!(cases, 433);
+        assert_eq!(cases, 538);
     }
 
     #[test]

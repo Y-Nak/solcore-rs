@@ -6,6 +6,9 @@ import * from std;
 import { SigString } from std.dispatch;
 import { mstore, sstore, sload } from std.opcodes;
 
+// The shift amount type is open (any `ShiftAmount`), as in std.sol.
+pragma no-coverage-condition Shl, Shr;
+
 export { uint8, uint16, uint32, uint64, uint128 };
 
 // --- uint8 (8-bit unsigned) ---
@@ -64,6 +67,22 @@ impl BitXor<uint8> {
 impl BitNot<uint8> {
     function bnot(x: uint8) returns (uint8) {
         return Typedef.abs(BitAnd.band(BitNot.bnot(Typedef.rep(x)), 0xff));
+    }
+}
+impl ShiftAmount<uint8> {
+    function amount(x: uint8) returns (word) {
+        return Typedef.rep(x);
+    }
+}
+// Bits shifted past the width are discarded.
+impl<n> Shl<uint8, n> where n: ShiftAmount {
+    function bshl(l: uint8, r: n) returns (uint8) {
+        return Typedef.abs(BitAnd.band(Shl.bshl(Typedef.rep(l), r), 0xff));
+    }
+}
+impl<n> Shr<uint8, n> where n: ShiftAmount {
+    function bshr(l: uint8, r: n) returns (uint8) {
+        return Typedef.abs(Shr.bshr(Typedef.rep(l), r));
     }
 }
 impl Eq<uint8> {
@@ -200,6 +219,22 @@ impl BitNot<uint16> {
         return Typedef.abs(BitAnd.band(BitNot.bnot(Typedef.rep(x)), 0xffff));
     }
 }
+impl ShiftAmount<uint16> {
+    function amount(x: uint16) returns (word) {
+        return Typedef.rep(x);
+    }
+}
+// Bits shifted past the width are discarded.
+impl<n> Shl<uint16, n> where n: ShiftAmount {
+    function bshl(l: uint16, r: n) returns (uint16) {
+        return Typedef.abs(BitAnd.band(Shl.bshl(Typedef.rep(l), r), 0xffff));
+    }
+}
+impl<n> Shr<uint16, n> where n: ShiftAmount {
+    function bshr(l: uint16, r: n) returns (uint16) {
+        return Typedef.abs(Shr.bshr(Typedef.rep(l), r));
+    }
+}
 impl Eq<uint16> {
     function eq(x: uint16, y: uint16) returns (bool) {
         return Eq.eq(Typedef.rep(x), Typedef.rep(y));
@@ -332,6 +367,22 @@ impl BitXor<uint32> {
 impl BitNot<uint32> {
     function bnot(x: uint32) returns (uint32) {
         return Typedef.abs(BitAnd.band(BitNot.bnot(Typedef.rep(x)), 0xffffffff));
+    }
+}
+impl ShiftAmount<uint32> {
+    function amount(x: uint32) returns (word) {
+        return Typedef.rep(x);
+    }
+}
+// Bits shifted past the width are discarded.
+impl<n> Shl<uint32, n> where n: ShiftAmount {
+    function bshl(l: uint32, r: n) returns (uint32) {
+        return Typedef.abs(BitAnd.band(Shl.bshl(Typedef.rep(l), r), 0xffffffff));
+    }
+}
+impl<n> Shr<uint32, n> where n: ShiftAmount {
+    function bshr(l: uint32, r: n) returns (uint32) {
+        return Typedef.abs(Shr.bshr(Typedef.rep(l), r));
     }
 }
 impl Eq<uint32> {
@@ -468,6 +519,22 @@ impl BitNot<uint64> {
         return Typedef.abs(BitAnd.band(BitNot.bnot(Typedef.rep(x)), 0xffffffffffffffff));
     }
 }
+impl ShiftAmount<uint64> {
+    function amount(x: uint64) returns (word) {
+        return Typedef.rep(x);
+    }
+}
+// Bits shifted past the width are discarded.
+impl<n> Shl<uint64, n> where n: ShiftAmount {
+    function bshl(l: uint64, r: n) returns (uint64) {
+        return Typedef.abs(BitAnd.band(Shl.bshl(Typedef.rep(l), r), 0xffffffffffffffff));
+    }
+}
+impl<n> Shr<uint64, n> where n: ShiftAmount {
+    function bshr(l: uint64, r: n) returns (uint64) {
+        return Typedef.abs(Shr.bshr(Typedef.rep(l), r));
+    }
+}
 impl Eq<uint64> {
     function eq(x: uint64, y: uint64) returns (bool) {
         return Eq.eq(Typedef.rep(x), Typedef.rep(y));
@@ -600,6 +667,22 @@ impl BitXor<uint128> {
 impl BitNot<uint128> {
     function bnot(x: uint128) returns (uint128) {
         return Typedef.abs(BitAnd.band(BitNot.bnot(Typedef.rep(x)), 0xffffffffffffffffffffffffffffffff));
+    }
+}
+impl ShiftAmount<uint128> {
+    function amount(x: uint128) returns (word) {
+        return Typedef.rep(x);
+    }
+}
+// Bits shifted past the width are discarded.
+impl<n> Shl<uint128, n> where n: ShiftAmount {
+    function bshl(l: uint128, r: n) returns (uint128) {
+        return Typedef.abs(BitAnd.band(Shl.bshl(Typedef.rep(l), r), 0xffffffffffffffffffffffffffffffff));
+    }
+}
+impl<n> Shr<uint128, n> where n: ShiftAmount {
+    function bshr(l: uint128, r: n) returns (uint128) {
+        return Typedef.abs(Shr.bshr(Typedef.rep(l), r));
     }
 }
 impl Eq<uint128> {

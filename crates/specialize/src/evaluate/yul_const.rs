@@ -6,8 +6,8 @@ use super::{
     TypeReg, VEnv, YulState, ident_text,
     known::{int_expr, known_int},
     value::{
-        BigInt, bitand_word, bitor_word, bitxor_word, not_word, shl_word, shr_word, signed_word,
-        signextend_word, word_div, word_mod, word_sdiv, word_smod,
+        BigInt, bitand_word, bitor_word, bitxor_word, not_word, sar_word, shl_word, shr_word,
+        signed_word, signextend_word, word_div, word_mod, word_sdiv, word_smod,
     },
 };
 use crate::ir::{MonoExpr, MonoExprKind};
@@ -86,6 +86,7 @@ fn yul_op_is_interpretable(name: &str, arity: usize) -> bool {
             | ("not", 1)
             | ("shl", 2)
             | ("shr", 2)
+            | ("sar", 2)
     )
 }
 
@@ -350,6 +351,7 @@ pub(super) fn eval_yul_op(name: &str, values: &[BigInt]) -> Option<BigInt> {
         ("not", [a]) => Some(not_word(a)),
         ("shl", [sh, value]) => Some(shl_word(value, sh)),
         ("shr", [sh, value]) => Some(shr_word(value, sh)),
+        ("sar", [sh, value]) => Some(sar_word(value, sh)),
         _ => None,
     }
 }

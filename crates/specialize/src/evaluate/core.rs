@@ -33,7 +33,8 @@ use super::{
         match_expr_arms_with, match_known_patterns_with, pattern_bindings, string_expr,
     },
     value::{
-        BigInt, bitand_word, bitor_word, bitxor_word, not_word, word_div, word_low_byte, word_mod,
+        BigInt, bitand_word, bitor_word, bitxor_word, not_word, shl_word, shr_word, word_div,
+        word_low_byte, word_mod,
     },
     yul_const::{
         eval_yul_op, merge_yul_state, subst_yul_block, venv_to_yul_state, venv_to_yul_subst,
@@ -2391,6 +2392,8 @@ impl<'db> Evaluator<'db> {
                 BinOp::UncheckedDiv | BinOp::UncheckedMod if rhs_int.mod_word().is_zero() => None,
                 BinOp::UncheckedDiv => Some(int_expr(word_div(lhs_int, rhs_int), ty, span)),
                 BinOp::UncheckedMod => Some(int_expr(word_mod(lhs_int, rhs_int), ty, span)),
+                BinOp::Shl => Some(int_expr(shl_word(&lhs_int, &rhs_int), ty, span)),
+                BinOp::Shr => Some(int_expr(shr_word(&lhs_int, &rhs_int), ty, span)),
                 BinOp::BitAnd => Some(int_expr(bitand_word(&lhs_int, &rhs_int), ty, span)),
                 BinOp::BitOr => Some(int_expr(bitor_word(&lhs_int, &rhs_int), ty, span)),
                 BinOp::BitXor => Some(int_expr(bitxor_word(&lhs_int, &rhs_int), ty, span)),

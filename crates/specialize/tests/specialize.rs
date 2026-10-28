@@ -3261,6 +3261,117 @@ contract C {
 }
 
 #[test]
+fn constant_shifts_fold() {
+    let output = specialize_src_with_std(
+        r#"
+import * from std;
+
+contract C {
+  function main() public returns (uint256) {
+    return (uint256(3) << 255) >> 254;
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    // (3 << 255) keeps only the lowest bit at position 255.
+    assert_eq!(main_return_number(&output), Some("2".to_owned()));
+}
+
+#[test]
+fn signed_right_shifts_fold_at_comptime() {
+    let cases = [
+        ("-5", "1", "-3"),
+        ("-6", "1", "-3"),
+        ("5", "1", "2"),
+        ("-5", "0", "-5"),
+        ("0", "0", "0"),
+        ("0", "300", "0"),
+        ("-5", "255", "-1"),
+        ("5", "255", "0"),
+        ("-5", "256", "-1"),
+        ("5", "256", "0"),
+        ("-5", "300", "-1"),
+        ("5", "300", "0"),
+        (
+            "-5",
+            "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "-1",
+        ),
+        (
+            "5",
+            "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "0",
+        ),
+    ];
+    for ty in ["int8", "int16", "int32", "int64", "int128", "int256"] {
+        let checks = cases
+            .iter()
+            .enumerate()
+            .map(|(index, (value, amount, expected))| {
+                format!(
+                    "let x{index}: comptime<{ty}> = {value};\n\
+                     let r{index}: comptime<{ty}> = x{index} >> uint256({amount});\n\
+                     if (r{index} != {expected}) {{ return {}; }}\n",
+                    index + 1
+                )
+            })
+            .collect::<String>();
+        let source = format!(
+            r#"
+import * from std;
+import * from std.signed;
+
+function shift(comptime x: {ty}, comptime amount: uint256) returns (comptime<{ty}>) {{
+  return x >> amount;
+}}
+
+contract C {{
+  function main() public returns (word) {{
+    {checks}
+    let viaParameter: comptime<{ty}> = shift(-9, uint256(2));
+    if (viaParameter != -3) {{ return 99; }}
+    return 0;
+  }}
+}}
+"#
+        );
+        let output = specialize_src_with_std(&source);
+        assert_eq!(output.diagnostics, Vec::new(), "{ty}");
+        assert_eq!(main_return_number(&output).as_deref(), Some("0"), "{ty}");
+    }
+}
+
+#[test]
+fn signed_right_shifts_fold_int256_bounds_at_comptime() {
+    let output = specialize_src_with_std(
+        r#"
+import * from std;
+import * from std.signed;
+
+contract C {
+  function main() public returns (word) {
+    let min: comptime<int256> = -0x8000000000000000000000000000000000000000000000000000000000000000;
+    let half: comptime<int256> = min >> 1;
+    let sign: comptime<int256> = min >> 255;
+    let saturated: comptime<int256> = min >> 256;
+    let max: comptime<int256> = 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
+    let positive: comptime<int256> = max >> 255;
+    if (half != -0x4000000000000000000000000000000000000000000000000000000000000000) { return 1; }
+    if (sign != -1) { return 2; }
+    if (saturated != -1) { return 3; }
+    if (positive != 0) { return 4; }
+    return 0;
+  }
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(main_return_number(&output).as_deref(), Some("0"));
+}
+
+#[test]
 fn unfolding_never_discards_an_unused_checked_operation() {
     let output = specialize_src_with_std(
         r#"

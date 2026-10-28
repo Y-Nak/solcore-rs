@@ -1199,6 +1199,17 @@ impl<'db> Emitter<'db> {
         rhs: &MonoExpr<'db>,
     ) -> Expr<'db> {
         match op {
+            // EVM shifts take the shift amount first: `shl(shift, value)`.
+            BinOp::Shl | BinOp::Shr => {
+                return Expr {
+                    span,
+                    ty,
+                    kind: ExprKind::Call {
+                        callee: if op == BinOp::Shl { "shl" } else { "shr" }.into(),
+                        args: vec![self.emit_expr(rhs), self.emit_expr(lhs)],
+                    },
+                };
+            }
             BinOp::NotEq => {
                 let eq = Expr {
                     span,
@@ -1524,6 +1535,8 @@ fn bin_op_name(op: BinOp) -> Option<&'static str> {
         BinOp::Eq => Some("primEqWord"),
         BinOp::Lt => Some("lt"),
         BinOp::Gt => Some("gt"),
+        // Emitted with swapped arguments by `emit_bin_op`.
+        BinOp::Shl | BinOp::Shr => None,
         BinOp::NotEq | BinOp::LtEq | BinOp::GtEq | BinOp::And | BinOp::Or | BinOp::Error => None,
     }
 }

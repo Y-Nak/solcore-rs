@@ -4,7 +4,10 @@
 // Typedef.abs preserves the raw representation; ABI decoding validates it.
 import * from std;
 import { SigString } from std.dispatch;
-import { sdiv, smod, sgt, signextend, mstore, sstore, sload } from std.opcodes;
+import { sdiv, smod, sgt, sar, signextend, mstore, sstore, sload } from std.opcodes;
+
+// The shift amount type is open (any `ShiftAmount`), as in std.sol.
+pragma no-coverage-condition Shl, Shr;
 
 export { int8, int16, int32, int64, int128, int256 };
 
@@ -74,6 +77,20 @@ impl BitXor<int8> {
 impl BitNot<int8> {
     function bnot(x: int8) returns (int8) {
         return Typedef.abs(signextend(0, BitNot.bnot(Typedef.rep(x))));
+    }
+}
+
+// Bits shifted past the width are discarded and the result is sign-extended.
+impl<n> Shl<int8, n> where n: ShiftAmount {
+    function bshl(l: int8, r: n) returns (int8) {
+        return Typedef.abs(signextend(0, Shl.bshl(Typedef.rep(l), r)));
+    }
+}
+
+// Arithmetic shift: rounds toward negative infinity.
+impl<n> Shr<int8, n> where n: ShiftAmount {
+    function bshr(l: int8, r: n) returns (int8) {
+        return Typedef.abs(sar(ShiftAmount.amount(r), Typedef.rep(l)));
     }
 }
 
@@ -238,6 +255,20 @@ impl BitNot<int16> {
     }
 }
 
+// Bits shifted past the width are discarded and the result is sign-extended.
+impl<n> Shl<int16, n> where n: ShiftAmount {
+    function bshl(l: int16, r: n) returns (int16) {
+        return Typedef.abs(signextend(1, Shl.bshl(Typedef.rep(l), r)));
+    }
+}
+
+// Arithmetic shift: rounds toward negative infinity.
+impl<n> Shr<int16, n> where n: ShiftAmount {
+    function bshr(l: int16, r: n) returns (int16) {
+        return Typedef.abs(sar(ShiftAmount.amount(r), Typedef.rep(l)));
+    }
+}
+
 impl Eq<int16> {
     function eq(x: int16, y: int16) returns (bool) {
         return Eq.eq(Typedef.rep(x), Typedef.rep(y));
@@ -395,6 +426,20 @@ impl BitXor<int32> {
 impl BitNot<int32> {
     function bnot(x: int32) returns (int32) {
         return Typedef.abs(signextend(3, BitNot.bnot(Typedef.rep(x))));
+    }
+}
+
+// Bits shifted past the width are discarded and the result is sign-extended.
+impl<n> Shl<int32, n> where n: ShiftAmount {
+    function bshl(l: int32, r: n) returns (int32) {
+        return Typedef.abs(signextend(3, Shl.bshl(Typedef.rep(l), r)));
+    }
+}
+
+// Arithmetic shift: rounds toward negative infinity.
+impl<n> Shr<int32, n> where n: ShiftAmount {
+    function bshr(l: int32, r: n) returns (int32) {
+        return Typedef.abs(sar(ShiftAmount.amount(r), Typedef.rep(l)));
     }
 }
 
@@ -559,6 +604,20 @@ impl BitNot<int64> {
     }
 }
 
+// Bits shifted past the width are discarded and the result is sign-extended.
+impl<n> Shl<int64, n> where n: ShiftAmount {
+    function bshl(l: int64, r: n) returns (int64) {
+        return Typedef.abs(signextend(7, Shl.bshl(Typedef.rep(l), r)));
+    }
+}
+
+// Arithmetic shift: rounds toward negative infinity.
+impl<n> Shr<int64, n> where n: ShiftAmount {
+    function bshr(l: int64, r: n) returns (int64) {
+        return Typedef.abs(sar(ShiftAmount.amount(r), Typedef.rep(l)));
+    }
+}
+
 impl Eq<int64> {
     function eq(x: int64, y: int64) returns (bool) {
         return Eq.eq(Typedef.rep(x), Typedef.rep(y));
@@ -719,6 +778,20 @@ impl BitNot<int128> {
     }
 }
 
+// Bits shifted past the width are discarded and the result is sign-extended.
+impl<n> Shl<int128, n> where n: ShiftAmount {
+    function bshl(l: int128, r: n) returns (int128) {
+        return Typedef.abs(signextend(15, Shl.bshl(Typedef.rep(l), r)));
+    }
+}
+
+// Arithmetic shift: rounds toward negative infinity.
+impl<n> Shr<int128, n> where n: ShiftAmount {
+    function bshr(l: int128, r: n) returns (int128) {
+        return Typedef.abs(sar(ShiftAmount.amount(r), Typedef.rep(l)));
+    }
+}
+
 impl Eq<int128> {
     function eq(x: int128, y: int128) returns (bool) {
         return Eq.eq(Typedef.rep(x), Typedef.rep(y));
@@ -876,6 +949,20 @@ impl BitXor<int256> {
 impl BitNot<int256> {
     function bnot(x: int256) returns (int256) {
         return Typedef.abs(BitNot.bnot(Typedef.rep(x)));
+    }
+}
+
+// Bits shifted past the width are discarded and the result is sign-extended.
+impl<n> Shl<int256, n> where n: ShiftAmount {
+    function bshl(l: int256, r: n) returns (int256) {
+        return Typedef.abs(Shl.bshl(Typedef.rep(l), r));
+    }
+}
+
+// Arithmetic shift: rounds toward negative infinity.
+impl<n> Shr<int256, n> where n: ShiftAmount {
+    function bshr(l: int256, r: n) returns (int256) {
+        return Typedef.abs(sar(ShiftAmount.amount(r), Typedef.rep(l)));
     }
 }
 

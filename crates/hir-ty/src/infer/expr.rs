@@ -1310,6 +1310,14 @@ impl<'db> InferCtx<'db> {
             BinOp::Mod => self.infer_operator_call_expected(
                 body, expr, lhs_expr, rhs_expr, "Mod", "mod", expected,
             ),
+            // The shift amount may have a different type than the shifted
+            // value (any type with a `ShiftAmount` instance).
+            BinOp::Shl => self.infer_operator_call_expected(
+                body, expr, lhs_expr, rhs_expr, "Shl", "bshl", expected,
+            ),
+            BinOp::Shr => self.infer_operator_call_expected(
+                body, expr, lhs_expr, rhs_expr, "Shr", "bshr", expected,
+            ),
             BinOp::UncheckedAdd => self.infer_operator_call_expected(
                 body,
                 expr,
