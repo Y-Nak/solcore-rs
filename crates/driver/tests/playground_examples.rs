@@ -40,7 +40,7 @@ fn playground_examples_compile() {
             let mut command = Command::new(env!("CARGO_BIN_EXE_solcore-driver"));
             command.arg("--std-root").arg(&std_root);
             if has_contract {
-                command.arg("--emit-hull=/dev/null");
+                command.arg("--emit-hull");
             }
             let output = command.arg(&file).output().expect("driver invocation");
 

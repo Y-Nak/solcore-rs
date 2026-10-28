@@ -1,8 +1,7 @@
 name: CI
 
+# Releases and validation run locally; pushes/tags must not start hosted CI.
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 permissions:
