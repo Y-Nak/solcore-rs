@@ -7,7 +7,11 @@ use super::*;
 const FUNCTION_SCHEME_MAX_FIXPOINT_ITERATIONS: u32 = 32;
 
 /// Lowers the scheme for one function-like definition in `module`.
-#[salsa::tracked(cycle_fn = function_scheme_cycle, cycle_initial = function_scheme_cycle_initial)]
+#[salsa::tracked(
+    cycle_fn = function_scheme_cycle,
+    cycle_initial = function_scheme_cycle_initial,
+    returns(clone)
+)]
 pub fn function_scheme<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
@@ -73,7 +77,7 @@ fn function_scheme_cycle_initial<'db>(
 }
 
 /// Lowers the scheme for one contract field in `module`.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn field_scheme<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
@@ -85,7 +89,7 @@ pub fn field_scheme<'db>(
 }
 
 /// Lowers the scheme for one ADT constructor in `module`.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn adt_ctor_scheme<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
@@ -98,7 +102,7 @@ pub fn adt_ctor_scheme<'db>(
 }
 
 /// Lowers the scheme for one type-class method in `module`.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn class_method_scheme<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
@@ -166,7 +170,7 @@ pub(super) fn adt_ctor_schemes_by_name_for_entry<'db>(
         .collect()
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub(super) fn module_for_def<'db>(
     db: &'db dyn Db,
     entry: ModuleId<'db>,
@@ -175,14 +179,14 @@ pub(super) fn module_for_def<'db>(
     crate::support::module_for_def_via_graph(db, entry, def)
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub(super) fn module_hir<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Option<Module<'db>> {
     let file = db.module_file(module)?;
     let source = parse_file_to_hir(db, file).module(db);
     Some(crate::prepare_module(db, source).module(db))
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub(super) fn item_resolutions_for_module<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
@@ -195,7 +199,7 @@ pub(super) fn item_resolutions_for_module<'db>(
     ))
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub(super) fn item_resolution_facts_for_module<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
@@ -208,7 +212,11 @@ pub(super) fn item_resolution_facts_for_module<'db>(
     ))
 }
 
-#[salsa::tracked(cycle_fn = function_scheme_in_hir_module_cycle, cycle_initial = function_scheme_in_hir_module_cycle_initial)]
+#[salsa::tracked(
+    cycle_fn = function_scheme_in_hir_module_cycle,
+    cycle_initial = function_scheme_in_hir_module_cycle_initial,
+    returns(clone)
+)]
 pub(super) fn function_scheme_in_hir_module<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
@@ -252,7 +260,7 @@ fn function_scheme_in_hir_module_cycle_initial<'db>(
     )
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub(super) fn field_scheme_in_hir_module<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
@@ -262,7 +270,7 @@ pub(super) fn field_scheme_in_hir_module<'db>(
     field_scheme_in_module(db, module, &item_resolutions, field)
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub(super) fn adt_ctor_scheme_in_hir_module<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
@@ -273,7 +281,7 @@ pub(super) fn adt_ctor_scheme_in_hir_module<'db>(
     adt_ctor_scheme_in_module(db, module, &item_resolutions, ty, index)
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub(super) fn class_method_scheme_in_hir_module<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
@@ -284,7 +292,7 @@ pub(super) fn class_method_scheme_in_hir_module<'db>(
     class_method_scheme_in_module(db, module, &item_resolutions, class, &name)
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub(super) fn adt_ctor_schemes_by_name_in_hir_module<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
@@ -304,7 +312,7 @@ pub(super) fn adt_ctor_schemes_by_name_in_hir_module<'db>(
         .collect()
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 fn adt_ctor_indices_by_name<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
@@ -317,7 +325,7 @@ fn adt_ctor_indices_by_name<'db>(
     adt_ctor_indices_by_name_in_module(db, hir_module, ty, &name)
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 fn adt_ctor_indices_by_name_in_hir_module<'db>(
     db: &'db dyn Db,
     module: Module<'db>,

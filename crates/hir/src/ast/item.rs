@@ -54,6 +54,7 @@ pub struct AdtDef<'db> {
 
     /// Declared type name.
     #[tracked]
+    #[returns(clone)]
     pub name: SpannedElem<'db, Ident<'db>>,
 
     /// Type parameters in source order.
@@ -132,7 +133,7 @@ impl<'db> AdtDef<'db> {
 ///
 /// Constructor fields are represented as a single tuple-like type reference so
 /// nullary, unary, and n-ary constructors share one representation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct AdtCtor<'db> {
     /// Constructor name.
     pub name: SpannedElem<'db, Ident<'db>>,
@@ -171,7 +172,7 @@ impl<'db> Spanned<'db> for AdtCtor<'db> {
 }
 
 /// Kind of callable declaration represented by [`FunctionDef`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum FuncKind {
     /// Ordinary function or method declared with `function`.
     Function,
@@ -182,7 +183,7 @@ pub enum FuncKind {
 }
 
 /// Lexical form of a source comment attached to a declaration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum SourceCommentKind {
     /// A `// ...` comment.
     Line,
@@ -198,7 +199,7 @@ pub enum SourceCommentKind {
 /// payloads in their own tracked fields lets consumers depend on documentation
 /// independently from the corresponding semantic item data when its spans are
 /// otherwise unchanged.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct SourceComment {
     /// Whether the source used line or block comment syntax.
     pub kind: SourceCommentKind,
@@ -289,6 +290,7 @@ pub struct TypeAlias<'db> {
 
     /// Alias name.
     #[tracked]
+    #[returns(clone)]
     pub name: SpannedElem<'db, Ident<'db>>,
 
     /// Type parameters declared by this alias.
@@ -298,6 +300,7 @@ pub struct TypeAlias<'db> {
 
     /// Aliased type.
     #[tracked]
+    #[returns(clone)]
     pub ty: TypeRef<'db>,
 }
 
@@ -357,6 +360,7 @@ pub struct ClassDef<'db> {
 
     /// Class head predicate naming the class.
     #[tracked]
+    #[returns(clone)]
     pub head: PredRef<'db>,
 
     /// Method signatures declared by the class.
@@ -459,6 +463,7 @@ pub struct InstanceDef<'db> {
 
     /// Instance head predicate.
     #[tracked]
+    #[returns(clone)]
     pub head: PredRef<'db>,
 
     /// Method implementations declared in the instance body.
@@ -489,7 +494,7 @@ impl<'db> InstanceDef<'db> {
 ///
 /// Fields are private to their containing contract scope and are represented by
 /// declaration order during name resolution.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct FieldInit<'db> {
     /// Span covering the initializer expression.
     pub span: Span<'db>,
@@ -512,7 +517,7 @@ impl<'db> Spanned<'db> for FieldInit<'db> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct FieldDef<'db> {
     name: SpannedElem<'db, Ident<'db>>,
     ty: TypeRef<'db>,
@@ -553,7 +558,7 @@ impl<'db> Spanned<'db> for FieldDef<'db> {
 }
 
 /// Items that can appear inside a contract body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum ContractItem<'db> {
     /// Contract-local function, constructor, fallback, or method-like item.
     FunctionDef(FunctionDef<'db>),
@@ -619,6 +624,7 @@ pub struct ContractDef<'db> {
 
     /// Contract name.
     #[tracked]
+    #[returns(clone)]
     pub name: SpannedElem<'db, Ident<'db>>,
 
     /// Contract type parameters in source order.
@@ -726,7 +732,7 @@ impl<'db> Import<'db> {
 }
 
 /// Constructor selector used by imports and exports.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum ConstructorSelector<'db> {
     /// Select every constructor of the named data type.
     All,
@@ -735,7 +741,7 @@ pub enum ConstructorSelector<'db> {
 }
 
 /// One selected name in an import selector.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct SelectedName<'db> {
     /// Imported item name.
     pub name: SpannedElem<'db, Ident<'db>>,
@@ -748,7 +754,7 @@ pub struct SelectedName<'db> {
 }
 
 /// Name hidden from an import.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ImportHiddenName<'db> {
     /// Hidden item name.
     pub name: SpannedElem<'db, Ident<'db>>,
@@ -757,7 +763,7 @@ pub struct ImportHiddenName<'db> {
 }
 
 /// Import selector.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum ImportSelector<'db> {
     /// Import all exported names from the target module.
     Wildcard,
@@ -798,6 +804,7 @@ pub struct Import<'db> {
 
     /// Optional module alias.
     #[tracked]
+    #[returns(clone)]
     pub alias: Option<SpannedElem<'db, Ident<'db>>>,
 
     /// Optional selected-import list.
@@ -818,7 +825,7 @@ impl<'db> Spanned<'db> for Import<'db> {
 }
 
 /// One exported name in an export declaration.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ExportedName<'db> {
     /// Exported item name.
     pub name: SpannedElem<'db, Ident<'db>>,
@@ -829,7 +836,7 @@ pub struct ExportedName<'db> {
 }
 
 /// Export declaration payload.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum ExportKind<'db> {
     /// Explicit export list from the current module.
     List(Vec<ExportedName<'db>>),
@@ -899,6 +906,7 @@ pub struct Pragma<'db> {
 
     /// Pragma name.
     #[tracked]
+    #[returns(clone)]
     pub name: SpannedElem<'db, Ident<'db>>,
 
     /// Pragma arguments/items in source order.
@@ -914,7 +922,7 @@ impl<'db> Spanned<'db> for Pragma<'db> {
 }
 
 /// Top-level module item.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum Item<'db> {
     /// Function declaration or definition.
     FunctionDef(FunctionDef<'db>),

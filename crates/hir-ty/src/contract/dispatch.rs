@@ -34,7 +34,7 @@ use crate::{
 const MAX_DERIVED_ABI_EVIDENCE: usize = 1_024;
 
 /// Typed dispatch/ABI surface for one contract.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct DispatchSurface<'db> {
     /// Owning contract definition.
     pub contract: DefId<'db>,
@@ -57,7 +57,7 @@ pub struct DispatchSurface<'db> {
 }
 
 /// One public method in the dispatch surface.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct DispatchMethod<'db> {
     /// Function definition.
     pub def: DefId<'db>,
@@ -78,7 +78,7 @@ pub struct DispatchMethod<'db> {
 }
 
 /// Constructor dispatch/ABI entry.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum DispatchConstructor {
     /// No source constructor: implicit non-payable unit constructor.
     Implicit,
@@ -94,7 +94,7 @@ pub enum DispatchConstructor {
 }
 
 /// Fallback dispatch/ABI entry.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum DispatchFallback<'db> {
     /// No source fallback: default non-payable unit fallback.
     Default,
@@ -135,7 +135,7 @@ pub fn contract_dispatch_surface_for_module<'db>(
     contract_dispatch_surface_with_resolutions(db, module, &item_resolutions, contract)
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 fn contract_dispatch_surface_by_def<'db>(
     db: &'db dyn Db,
     contract_def: DefId<'db>,

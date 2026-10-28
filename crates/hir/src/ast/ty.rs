@@ -16,7 +16,7 @@ use crate::{
 /// A `TypeRef` names source syntax, not a resolved semantic type. Name
 /// resolution maps named references to definitions, builtins, or type variables
 /// later while keeping occurrence spans available for diagnostics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct TypeRef<'db> {
     shape: TypeRefShape<'db>,
     occurrence: TypeRefOccurrence<'db>,
@@ -56,7 +56,7 @@ pub struct TypeRefShape<'db> {
 }
 
 /// Span-free shape of an unresolved type reference.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum TypeRefShapeKind<'db> {
     /// Named type constructor with optional qualifier and type arguments.
     Named {
@@ -100,7 +100,7 @@ struct TypeRefOccurrence<'db> {
 /// Every variant carries enough span information to report errors at the syntax
 /// that introduced it. `Error` is a silent recovery sentinel; parse diagnostics
 /// are emitted elsewhere.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum TypeRefKind<'db> {
     /// Named type constructor with optional qualifier and type arguments.
     Named {
@@ -197,7 +197,7 @@ fn type_shape_from_occurrence<'db>(kind: &TypeRefKind<'db>) -> TypeRefShapeKind<
 /// Predicates bind a main type to a class and optional class arguments, for
 /// example `T: Int` or `T: Class(U)`. The class name is resolved separately
 /// from the participating type references.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct PredRef<'db> {
     shape: PredRefShape<'db>,
     occurrence: PredRefOccurrence<'db>,
@@ -231,7 +231,7 @@ pub struct PredRefShape<'db> {
 }
 
 /// Span-free shape of an unresolved predicate reference.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct PredRefShapeKind<'db> {
     /// Main type being constrained.
     pub ty: TypeRefShape<'db>,
@@ -249,7 +249,7 @@ struct PredRefOccurrence<'db> {
 }
 
 /// Source-level class predicate syntax.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct PredRefKind<'db> {
     /// Main type being constrained.
     pub ty: TypeRef<'db>,

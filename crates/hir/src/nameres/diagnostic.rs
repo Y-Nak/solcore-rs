@@ -5,7 +5,7 @@ use super::*;
 /// This stays on the typed name-resolution diagnostic instead of the generic
 /// rendering surface so semantic clients can distinguish auto-importable bare
 /// terms from names whose spelling occurs in a different lookup position.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum UndefinedNameKind {
     /// An unqualified term lookup, such as a function or value expression.
     Term,
@@ -39,7 +39,7 @@ pub enum UndefinedNameKind {
 /// The variants mirror the `SC010x` local resolver codes and store
 /// lifetime-free label spans. Lowering to the generic user-facing diagnostic is
 /// deferred until the driver or another diagnostic edge asks for it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum NameresDiagnostic {
     /// `SC0101`: failed term, field, module, or qualified-name lookup.
     UndefinedName {

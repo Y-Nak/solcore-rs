@@ -3,7 +3,7 @@ use super::*;
 
 /// Definitions needed to synthesize the storage instances backed by a
 /// compiler-owned `Generic` representation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub(super) struct DerivedStorageClauseSource<'db> {
     /// Marker exported by `std.StorageGeneric`.
     pub marker: DefId<'db>,

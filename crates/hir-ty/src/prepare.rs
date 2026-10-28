@@ -111,7 +111,7 @@ impl<'db> PreparedModule<'db> {
 }
 
 /// Why a definition exists only in a prepared module.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum GeneratedOriginKind {
     /// Compiler-owned contract runtime entry backed by `std.dispatch`.
     ContractDispatchMain,
@@ -180,7 +180,7 @@ pub fn contract_dispatch_name_type_name(contract: &str, method: &str) -> String 
 }
 
 /// User-source provenance for one compiler-owned definition.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct GeneratedOrigin<'db> {
     pub def: DefId<'db>,
     pub kind: GeneratedOriginKind,
@@ -190,7 +190,7 @@ pub struct GeneratedOrigin<'db> {
 }
 
 /// Deterministically ordered generated-definition provenance.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct GeneratedOriginMap<'db> {
     entries: Vec<GeneratedOrigin<'db>>,
 }
@@ -233,7 +233,7 @@ impl<'db> GeneratedOriginMap<'db> {
 /// `typeck -> prepare -> typeck` query cycles. Generated contract entries use
 /// the same unqualified standard-library names as the reference compiler and
 /// therefore rely on the source module's explicit imports.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn prepare_module<'db>(db: &'db dyn Db, source: Module<'db>) -> PreparedModule<'db> {
     let module_def = source.def_id_value(db);
     let mut generated_items = Vec::new();
@@ -299,14 +299,14 @@ fn contract_has_prepared_dispatch(db: &dyn Db, contract: ContractDef<'_>) -> boo
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 struct PreparedContractArtifacts<'db> {
     contract: ContractDef<'db>,
     top_level_items: Vec<Item<'db>>,
     origins: Vec<GeneratedOrigin<'db>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 struct RawMethod<'db> {
     def: DefId<'db>,
     name: String,
@@ -316,7 +316,7 @@ struct RawMethod<'db> {
     ret: TypeRef<'db>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 struct RawFallback<'db> {
     name: String,
     payable: bool,
@@ -324,7 +324,7 @@ struct RawFallback<'db> {
     ret: TypeRef<'db>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 struct RawConstructor<'db> {
     def: Option<DefId<'db>>,
     span: Span<'db>,
@@ -334,7 +334,7 @@ struct RawConstructor<'db> {
     payable: bool,
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 fn prepare_contract_constructor<'db>(
     db: &'db dyn Db,
     contract: ContractDef<'db>,
@@ -1005,7 +1005,7 @@ fn yul_expr_stmt<'db>(span: Span<'db>, expr: YulExpr<'db>) -> YulStmt<'db> {
     }
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 fn prepare_contract_dispatch<'db>(
     db: &'db dyn Db,
     module_def: DefId<'db>,

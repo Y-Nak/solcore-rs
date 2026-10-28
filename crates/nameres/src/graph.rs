@@ -4,7 +4,7 @@ use super::*;
 ///
 /// The parser/lowerer owns syntax diagnostics; this query only classifies the
 /// lowered import/export items for graph construction.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 #[tracing::instrument(
     target = "nameres::query",
     level = "debug",
@@ -98,7 +98,7 @@ fn array_literal_span<'db>(db: &'db dyn Db, module: Module<'db>) -> Option<Span<
 /// Import edges represent direct imports. Reference edges include both imports
 /// and module references that appear in exports/re-exports, because those also
 /// participate in public-interface cycles.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn module_graph<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleGraph<'db> {
     let reachable = collect_reachable_modules(db, entry);
     ModuleGraph {
@@ -111,7 +111,7 @@ pub fn module_graph<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleGraph<'
 
 /// Returns modules reachable from `entry` in the same traversal order as
 /// [`module_graph`].
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn reachable_modules<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> Vec<ModuleId<'db>> {
     collect_reachable_modules(db, entry).modules
 }
@@ -173,7 +173,7 @@ fn collect_reachable_modules<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> Reac
 }
 
 /// Runs full resolution for every module reachable from `entry`.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn resolve_reachable_full<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleGraph<'db> {
     let graph = module_graph(db, entry);
     for module in &graph.modules {

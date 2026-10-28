@@ -2,7 +2,7 @@ use super::*;
 use crate::display::{display_ty_source, display_type_ref_source};
 
 /// User-facing information about a callable definition.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct CalleeDiagnostic {
     /// Callable display name.
     pub name: String,
@@ -13,7 +13,7 @@ pub struct CalleeDiagnostic {
 }
 
 /// User-facing information about a callable parameter.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ParameterDiagnostic {
     /// Zero-based parameter index.
     pub index: usize,
@@ -29,7 +29,7 @@ pub struct ParameterDiagnostic {
 ///
 /// Diagnostics store display-string type snapshots so they are lifetime-free
 /// and do not expose ephemeral inference variables after inference finishes.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum TypeckDiagnostic {
     /// `SC0201`: two types could not be unified.
     Mismatch {

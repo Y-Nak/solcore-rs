@@ -137,6 +137,7 @@ use crate::display::{display_class_source, display_pred_source, display_ty_sourc
 #[salsa::interned(debug)]
 pub struct CanonicalGoal<'db> {
     /// Canonical class predicate.
+    #[returns(clone)]
     pub pred: Pred<'db>,
     /// Goal variables that may be solved by instance matching.
     #[returns(ref)]
@@ -152,7 +153,7 @@ pub struct TraitClauseSetId<'db> {
 }
 
 /// Stable sources that define a module-backed trait environment.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ModuleTraitEnvSource<'db> {
     /// Modules whose visible class definitions contribute superclass clauses.
     pub superclass_modules: Vec<ModuleId<'db>>,
@@ -168,7 +169,7 @@ pub struct ModuleTraitEnvSource<'db> {
 }
 
 /// Stable source of synthesized `Generic` clauses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct DerivedGenericClauseSource<'db> {
     /// Module whose local ADTs may receive synthesized `Generic` clauses.
     pub module: ModuleId<'db>,
@@ -181,7 +182,7 @@ pub struct DerivedGenericClauseSource<'db> {
 }
 
 /// Source layout for a base trait environment.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum BaseTraitEnvSource<'db> {
     /// File-backed module environment. Clause contents are queried from these
     /// stable sources so edits to one origin do not churn the whole env key.
@@ -214,13 +215,15 @@ pub struct LocalGivensId<'db> {
 #[salsa::interned(debug)]
 pub struct TraitEnvId<'db> {
     /// Module-level instance, superclass, and builtin clauses.
+    #[returns(clone)]
     pub base: BaseTraitEnvId<'db>,
     /// Local assumptions available while checking a polymorphic body.
+    #[returns(clone)]
     pub givens: LocalGivensId<'db>,
 }
 
 /// One type-class program clause: `head :- conditions`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ProgramClause<'db> {
     /// Number of de Bruijn binders in scope for this clause.
     pub binder_count: u32,
@@ -233,7 +236,7 @@ pub struct ProgramClause<'db> {
 }
 
 /// Source of a program clause.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum ClauseOrigin<'db> {
     /// User-defined instance declaration.
     Instance { def: DefId<'db>, kind: InstanceKind },
@@ -250,7 +253,7 @@ pub enum ClauseOrigin<'db> {
 /// Instance selection policy, classified once when a clause is constructed.
 /// Standard defaults are library fallbacks; application and dependency
 /// defaults share a higher tier without privileging any particular trait.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum InstanceKind {
     Regular,
     Default,
@@ -281,7 +284,7 @@ impl<'db> ClauseOrigin<'db> {
 }
 
 /// Family of compiler-synthesized clauses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum DerivedClauseKind<'db> {
     /// Automatically derived `Generic` instance.
     Generic {
@@ -331,7 +334,7 @@ pub enum DerivedClauseKind<'db> {
 }
 
 /// Solver-facing plan for one class requested by an ADT `derive` attribute.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct DerivedClassPlan<'db> {
     /// ADT whose instance is synthesized.
     pub adt: DefId<'db>,
@@ -350,7 +353,7 @@ pub struct DerivedClassPlan<'db> {
 }
 
 /// Queryable plan for an automatically derived `Generic` instance.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct DerivedGenericPlan<'db> {
     /// ADT whose instance is synthesized.
     pub adt: DefId<'db>,
@@ -363,7 +366,7 @@ pub struct DerivedGenericPlan<'db> {
 }
 
 /// One constructor arm in a synthesized `Generic.from` body.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct DerivedGenericFromArm<'db> {
     /// Constructor ordinal in source declaration order.
     pub ctor_index: u32,
@@ -380,7 +383,7 @@ pub struct DerivedGenericFromArm<'db> {
 }
 
 /// One representation arm in a synthesized `Generic.to` body.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct DerivedGenericToArm<'db> {
     /// Constructor ordinal in source declaration order.
     pub ctor_index: u32,
@@ -397,7 +400,7 @@ pub struct DerivedGenericToArm<'db> {
 }
 
 /// Lifetime-free evidence tree for a solved obligation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum Evidence<'db> {
     /// Evidence built by selecting an instance and recursively solving its
     /// context predicates.
@@ -436,14 +439,14 @@ pub enum Evidence<'db> {
 }
 
 /// Substitution snapshot attached to a solution candidate.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, salsa::SalsaValue)]
 pub struct Substitution<'db> {
     /// Clause variable assignments in binder-index order.
     pub values: Vec<(u32, Ty<'db>)>,
 }
 
 /// One possible proof candidate.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct Candidate<'db> {
     /// Candidate substitution.
     pub subst: Substitution<'db>,
@@ -452,7 +455,7 @@ pub struct Candidate<'db> {
 }
 
 /// Solver answer.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum Solution<'db> {
     /// Exactly one proof exists.
     Unique {
@@ -471,7 +474,7 @@ pub enum Solution<'db> {
 }
 
 /// Internal solver report used to surface fuel exhaustion.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct SolverReport<'db> {
     /// Solver answer.
     pub solution: Solution<'db>,
@@ -484,7 +487,7 @@ pub struct SolverReport<'db> {
 }
 
 /// Internal tabled-engine counters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, salsa::SalsaValue)]
 pub struct SolverStats {
     /// Number of table entries allocated during this solve.
     pub table_size: usize,
@@ -534,7 +537,7 @@ pub fn canonical_goal_with_allowed<'db>(
     CanonicalGoal::new(db, pred, allowed_vars)
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn solve<'db>(
     db: &'db dyn Db,
     env: TraitEnvId<'db>,
@@ -544,7 +547,7 @@ pub fn solve<'db>(
 }
 
 /// Tracked solver query that includes fuel exhaustion details.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn solve_report<'db>(
     db: &'db dyn Db,
     env: TraitEnvId<'db>,

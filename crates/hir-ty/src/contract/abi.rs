@@ -46,7 +46,7 @@ impl<'db> AbiAdtEvidence<'db> {
 }
 
 /// ABI parameter or tuple component.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct AbiParam {
     /// Parameter name. Outputs and tuple components use the empty name,
     /// matching the reference ABI emitter.
@@ -57,7 +57,7 @@ pub struct AbiParam {
     pub components: Vec<AbiParam>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum AbiType {
     Uint256,
     Bool,
@@ -94,7 +94,7 @@ impl AbiType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct AbiSelector(pub [u8; 4]);
 
 impl AbiSelector {
@@ -115,7 +115,7 @@ pub struct AbiSignature<'db> {
 }
 
 /// Computes the ABI selector for a canonical signature.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn abi_selector<'db>(db: &'db dyn Db, signature: AbiSignature<'db>) -> AbiSelector {
     let hash = hir::keccak::keccak256(signature.text(db).as_bytes());
     AbiSelector([hash[0], hash[1], hash[2], hash[3]])

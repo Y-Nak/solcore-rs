@@ -4,7 +4,7 @@ use super::*;
 ///
 /// Missing source files yield an empty list; module loading diagnostics are
 /// emitted by graph construction.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn module_instances<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<Origin<'db>> {
     let Some(file) = db.module_file(module) else {
         return Vec::new();
@@ -24,7 +24,7 @@ pub fn module_instances<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<Orig
 }
 
 /// Collects local and import-chain instance origins for `module`.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn instance_imports<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> InstanceImports<'db> {
     let local = module_instances(db, module);
     let mut imported = Vec::new();
@@ -40,7 +40,7 @@ pub fn instance_imports<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Instance
 /// Unlike the general module graph, this follows import edges only. Re-export
 /// references do not bring an explicit instance into scope and therefore must
 /// not make compiler-synthesized instances visible either.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn instance_import_modules<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<ModuleId<'db>> {
     let mut modules = vec![module];
     let mut seen = FxHashSet::default();

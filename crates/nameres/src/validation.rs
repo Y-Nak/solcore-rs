@@ -4,14 +4,14 @@ use super::*;
 ///
 /// The public interface is forced before duplicate export validation so checks
 /// that depend on re-exported interfaces see the converged value.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn validate_module<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> ValidationSummary {
     let _ = public_interface(db, module);
     ValidationSummary { checked: true }
 }
 
 /// Validates every module reachable from `entry`.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn validate_reachable<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> Vec<ModuleId<'db>> {
     let modules = reachable_modules(db, entry);
     for module in &modules {
