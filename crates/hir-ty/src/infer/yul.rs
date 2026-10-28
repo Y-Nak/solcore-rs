@@ -224,6 +224,16 @@ impl<'db> InferCtx<'db> {
                 continue;
             };
             let fn_name = (*name.atom()).text(self.db).to_owned();
+            // Yul reserves builtin operation names. Allowing a source
+            // function to reuse one also made the two backends disagree:
+            // one resolved the call as a builtin, the other as this function.
+            if self.yul_builtin_sig(&fn_name).is_some() {
+                self.diagnostics
+                    .push(TypeckDiagnostic::ReservedYulFunction {
+                        span: self.label_span(name.span(self.db)),
+                        name: fn_name.clone(),
+                    });
+            }
             let sig = YulFunctionSig {
                 params: self.yul_word_tys(params.len()),
                 ret: self.yul_return_ty(rets.len()),

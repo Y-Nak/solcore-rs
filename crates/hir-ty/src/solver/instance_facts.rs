@@ -5,7 +5,7 @@ use super::*;
 /// Keeping normalization errors beside the predicate lets the soundness pass
 /// preserve its source-order diagnostics without lowering the predicate a
 /// second time after the solver clause has already been built.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub(super) struct InstanceConditionFact<'db> {
     pub(super) pred: Pred<'db>,
     pub(super) span: LabelSpan,
@@ -13,7 +13,7 @@ pub(super) struct InstanceConditionFact<'db> {
 }
 
 /// Lowered, alias-normalized facts for one source instance.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub(super) struct InstanceFact<'db> {
     pub(super) instance: InstanceDef<'db>,
     pub(super) def: DefId<'db>,
@@ -49,7 +49,7 @@ impl<'db> InstanceFact<'db> {
 
 /// Module-wide instance facts shared by trait-environment construction and
 /// soundness checking.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub(super) struct InstanceModuleFacts<'db> {
     pub(super) module: Module<'db>,
     pub(super) imports: nameres::ModuleImportSurface<'db>,

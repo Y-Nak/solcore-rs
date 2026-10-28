@@ -1395,12 +1395,16 @@ function arrayLitInit<t>(arr: memory<DynArray<t>>, i: uint256, v: t) returns (me
 }
 
 function allocateDynamicArray<t>(prx: Proxy<t>, length: word) returns (memory<DynArray<t>>) {
-    // size of allocation in bytes
+    // Include the length header without allowing word arithmetic to wrap the
+    // allocation size. Otherwise enormous arrays can alias later allocations.
+    if (length >= ~0 / 32) {
+        assembly {
+            revert(0, 0)
+        }
+    }
     let sz: word = (length + 1) * 32;
-
-    // get start of array & increment free by sz
-    let free: word = get_free_memory();
-    set_free_memory(free + sz);
+    // The allocator also checks overflow of the current pointer plus size.
+    let free: word = allocate_memory(sz);
 
     // write array length and return
     mstore(free, length);

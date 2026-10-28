@@ -10,7 +10,7 @@ pub(crate) enum AbiEvidenceRole {
 
 /// Definitions needed to synthesize the ABI instances backed by a compiler-
 /// owned `Generic` representation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub(super) struct DerivedAbiClauseSource<'db> {
     /// Marker exported by `std.ABIGeneric`.
     pub marker: DefId<'db>,

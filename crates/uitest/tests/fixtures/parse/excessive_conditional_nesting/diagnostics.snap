@@ -3,31 +3,41 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/excessive_conditional_nesting/main.sol
 ---
-error[SC0001]: expression nesting exceeds the compiler limit of 32
-  --> /main/main.sol:34:5
-   |
-33 |     true ? 0 :
-34 |     true ? 0 :
-   |     ^^^^
-35 |     true ? 0 :
-   |
----
-
-error[SC0001]: expression nesting exceeds the compiler limit of 32
-  --> /main/main.sol:34:12
-   |
-33 |     true ? 0 :
-34 |     true ? 0 :
-   |            ^
-35 |     true ? 0 :
-   |
----
-
-error[SC0001]: expression nesting exceeds the compiler limit of 32
-   --> /main/main.sol:35:5
+error[SC0001]: expression nesting exceeds the compiler limit of 128
+   --> /main/main.sol:5:5
     |
- 34 |       true ? 0 :
- 35 | /     true ? 0 :
+  4 |       true ? 0 :
+  5 | /     true ? 0 :
+  6 | |     true ? 0 :
+  7 | |     true ? 0 :
+  8 | |     true ? 0 :
+  9 | |     true ? 0 :
+ 10 | |     true ? 0 :
+ 11 | |     true ? 0 :
+ 12 | |     true ? 0 :
+ 13 | |     true ? 0 :
+ 14 | |     true ? 0 :
+ 15 | |     true ? 0 :
+ 16 | |     true ? 0 :
+ 17 | |     true ? 0 :
+ 18 | |     true ? 0 :
+ 19 | |     true ? 0 :
+ 20 | |     true ? 0 :
+ 21 | |     true ? 0 :
+ 22 | |     true ? 0 :
+ 23 | |     true ? 0 :
+ 24 | |     true ? 0 :
+ 25 | |     true ? 0 :
+ 26 | |     true ? 0 :
+ 27 | |     true ? 0 :
+ 28 | |     true ? 0 :
+ 29 | |     true ? 0 :
+ 30 | |     true ? 0 :
+ 31 | |     true ? 0 :
+ 32 | |     true ? 0 :
+ 33 | |     true ? 0 :
+ 34 | |     true ? 0 :
+ 35 | |     true ? 0 :
  36 | |     true ? 0 :
  37 | |     true ? 0 :
  38 | |     true ? 0 :

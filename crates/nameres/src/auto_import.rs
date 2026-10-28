@@ -258,7 +258,7 @@ fn has_ambiguous_member_surface(item_refs: &[&ItemRef<'_>]) -> bool {
 /// namespace-blind selector surface are omitted. Both cases can expose only a
 /// provisional or ambiguous import and therefore cannot produce a safe
 /// automatic edit.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 #[tracing::instrument(
     target = "nameres::query",
     level = "debug",

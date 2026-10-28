@@ -29,7 +29,7 @@ pub struct Ty<'db> {
 }
 
 /// Shape of a ground semantic type.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum TyKind<'db> {
     /// Error sentinel used after an earlier diagnostic.
     Error,
@@ -62,14 +62,14 @@ pub enum TyKind<'db> {
 /// Index `0` names the first binder in the scheme's binder list. The index is
 /// scoped by the scheme that owns the type and is deliberately independent of
 /// the HIR definition that introduced the binder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct BoundTyVar {
     /// Zero-based binder index in the owning scheme.
     pub index: u32,
 }
 
 /// Resolved type constructor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum TyCtor<'db> {
     /// Compiler-defined constructor.
     Builtin(BuiltinTyCtor),
@@ -78,7 +78,7 @@ pub enum TyCtor<'db> {
 }
 
 /// Built-in type constructors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum BuiltinTyCtor {
     /// Machine word type.
     Word,
@@ -97,7 +97,7 @@ pub enum BuiltinTyCtor {
 }
 
 /// User-defined type constructor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct UserTyCtor<'db> {
     /// Definition identity of the constructor.
     pub def: DefId<'db>,
@@ -106,7 +106,7 @@ pub struct UserTyCtor<'db> {
 }
 
 /// Kind of user-defined type constructor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum UserTyCtorKind {
     /// Algebraic data type constructor.
     Adt,
@@ -117,7 +117,7 @@ pub enum UserTyCtorKind {
 }
 
 /// Resolved type-class identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum ClassId<'db> {
     /// Compiler-defined class.
     Builtin(BuiltinClassId),
@@ -126,7 +126,7 @@ pub enum ClassId<'db> {
 }
 
 /// Built-in class identifiers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum BuiltinClassId {
     /// `invokable`.
     Invokable,
@@ -145,7 +145,7 @@ pub struct Pred<'db> {
 }
 
 /// Shape of a semantic predicate.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum PredKind<'db> {
     /// Type-class membership predicate.
     InClass {
@@ -174,6 +174,7 @@ pub struct QualTy<'db> {
     #[returns(ref)]
     pub preds: Vec<Pred<'db>>,
     /// Underlying type.
+    #[returns(clone)]
     pub ty: Ty<'db>,
 }
 
@@ -187,6 +188,7 @@ pub struct TyScheme<'db> {
     #[returns(copy)]
     pub binder_count: u32,
     /// Qualified body type.
+    #[returns(clone)]
     pub body: QualTy<'db>,
 }
 

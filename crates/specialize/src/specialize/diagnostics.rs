@@ -245,7 +245,7 @@ impl fmt::Display for SpecializeDiagnosticKind<'_> {
             }
             Self::ComptimeFuelExhausted { function, limit } => write!(
                 f,
-                "comptime evaluation fuel exhausted in {function} at {limit} unfold steps"
+                "comptime evaluation fuel exhausted in {function} at {limit} work units"
             ),
             Self::ComptimeRecursion { function } => write!(
                 f,
@@ -257,7 +257,7 @@ impl fmt::Display for SpecializeDiagnosticKind<'_> {
             ),
             Self::ReductionFuelExhausted { function, limit } => write!(
                 f,
-                "compile-time reduction fuel exhausted in {function} at {limit} unfold steps"
+                "compile-time reduction fuel exhausted in {function} at {limit} work units"
             ),
             Self::IntegerErasure { context, ty } => {
                 write!(f, "runtime lowering cannot represent `{ty}` in {context}")

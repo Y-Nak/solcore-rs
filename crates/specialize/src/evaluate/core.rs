@@ -181,6 +181,9 @@ pub(super) struct Evaluator<'db> {
     // Unlike inline fuel, clone fuel is never reset per emitted function. A
     // recursive function deriving a fresh literal therefore terminates.
     clone_fuel: usize,
+    // Generated functions must not reclaim the work spent creating large
+    // literals when their ordinary per-function evaluation budget is reset.
+    literal_fuel: usize,
     // Mono functions are module-global. Hull's object reachability copies a
     // shared clone into every object that calls it, so module-wide dedup is safe.
     clone_names: FxHashMap<StringCloneKey, String>,
@@ -330,6 +333,7 @@ impl<'db> Evaluator<'db> {
             fuel_limit: fuel,
             fuel,
             clone_fuel: fuel,
+            literal_fuel: fuel,
             clone_names: FxHashMap::default(),
             pending_clones: VecDeque::new(),
             next_clone_id: 0,
@@ -2228,7 +2232,7 @@ impl<'db> Evaluator<'db> {
     }
 
     fn eval_primitive(
-        &self,
+        &mut self,
         intrinsic: MonoIntrinsic,
         args: &[MonoExpr<'db>],
         ty: MonoTy<'db>,
@@ -2242,13 +2246,13 @@ impl<'db> Evaluator<'db> {
                 known_int(arg).map(|value| int_expr(value.mod_word(), ty, span))
             }
             (MonoIntrinsic::IntegerAdd, [lhs, rhs]) => {
-                Some(int_expr(known_int(lhs)?.add(&known_int(rhs)?), ty, span))
+                self.eval_integer_arithmetic(BinOp::Add, known_int(lhs)?, known_int(rhs)?, ty, span)
             }
             (MonoIntrinsic::IntegerSub, [lhs, rhs]) => {
-                Some(int_expr(known_int(lhs)?.sub(&known_int(rhs)?), ty, span))
+                self.eval_integer_arithmetic(BinOp::Sub, known_int(lhs)?, known_int(rhs)?, ty, span)
             }
             (MonoIntrinsic::IntegerMul, [lhs, rhs]) => {
-                Some(int_expr(known_int(lhs)?.mul(&known_int(rhs)?), ty, span))
+                self.eval_integer_arithmetic(BinOp::Mul, known_int(lhs)?, known_int(rhs)?, ty, span)
             }
             (MonoIntrinsic::IntegerLt, [lhs, rhs]) => Some(bool_expr(
                 known_int(lhs)?.cmp(&known_int(rhs)?) == Ordering::Less,
@@ -2258,11 +2262,9 @@ impl<'db> Evaluator<'db> {
             (MonoIntrinsic::IntegerEq, [lhs, rhs]) => {
                 Some(bool_expr(known_int(lhs)? == known_int(rhs)?, ty, span))
             }
-            (MonoIntrinsic::ConcatLit, [lhs, rhs]) => Some(string_expr(
-                format!("{}{}", known_string(lhs)?, known_string(rhs)?),
-                ty,
-                span,
-            )),
+            (MonoIntrinsic::ConcatLit, [lhs, rhs]) => {
+                self.eval_string_concat(known_string(lhs)?, known_string(rhs)?, ty, span)
+            }
             (MonoIntrinsic::StrlenLit, [arg]) => {
                 let len = known_string(arg)?.len() as u64;
                 Some(int_expr(BigInt::from_u64(len), ty, span))
@@ -2331,7 +2333,7 @@ impl<'db> Evaluator<'db> {
     }
 
     fn eval_binop(
-        &self,
+        &mut self,
         lhs: &MonoExpr<'db>,
         op: BinOp,
         rhs: &MonoExpr<'db>,
@@ -2341,15 +2343,15 @@ impl<'db> Evaluator<'db> {
         if op == BinOp::Add
             && let (Some(lhs), Some(rhs)) = (known_string(lhs), known_string(rhs))
         {
-            return Some(string_expr(format!("{lhs}{rhs}"), ty, span));
+            return self.eval_string_concat(lhs, rhs, ty, span);
         }
         let lhs_int = known_int(lhs)?;
         let rhs_int = known_int(rhs)?;
         if ty_is_builtin(self.db, ty.ty(), BuiltinTyCtor::Integer) {
             return match op {
-                BinOp::Add => Some(int_expr(lhs_int.add(&rhs_int), ty, span)),
-                BinOp::Sub => Some(int_expr(lhs_int.sub(&rhs_int), ty, span)),
-                BinOp::Mul => Some(int_expr(lhs_int.mul(&rhs_int), ty, span)),
+                BinOp::Add | BinOp::Sub | BinOp::Mul => {
+                    self.eval_integer_arithmetic(op, lhs_int, rhs_int, ty, span)
+                }
                 BinOp::Eq => Some(bool_expr(lhs_int == rhs_int, ty, span)),
                 BinOp::NotEq => Some(bool_expr(lhs_int != rhs_int, ty, span)),
                 BinOp::Lt => Some(bool_expr(lhs_int < rhs_int, ty, span)),
@@ -2401,6 +2403,83 @@ impl<'db> Evaluator<'db> {
             };
         }
         None
+    }
+
+    fn eval_string_concat(
+        &mut self,
+        lhs: String,
+        rhs: String,
+        ty: MonoTy<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        // A short recursive program can double a literal on every call. Call
+        // fuel alone does not bound the memory used by those intermediate
+        // values. Charge before allocating, leaving ordinary small strings on
+        // the existing scalar evaluation budget.
+        let bytes = lhs.len().saturating_add(rhs.len());
+        let work = bytes.saturating_sub(64).div_ceil(64);
+        if !self.charge_bulk_work(work, "concatLit", span) {
+            return None;
+        }
+        Some(string_expr(format!("{lhs}{rhs}"), ty, span))
+    }
+
+    fn eval_integer_arithmetic(
+        &mut self,
+        op: BinOp,
+        lhs: BigInt,
+        rhs: BigInt,
+        ty: MonoTy<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        let limbs = if op == BinOp::Mul {
+            lhs.limb_len().saturating_add(rhs.limb_len())
+        } else {
+            lhs.limb_len().max(rhs.limb_len()).saturating_add(1)
+        };
+        // Both schoolbook multiplication and conversion of the result back to
+        // decimal are quadratic in its limb count. Include that work before
+        // performing either operation; word-sized arithmetic stays unchanged.
+        let work = if limbs > 32 {
+            limbs.saturating_mul(limbs).div_ceil(64)
+        } else {
+            0
+        };
+        let operation = match op {
+            BinOp::Add => "integerAdd",
+            BinOp::Sub => "integerSub",
+            BinOp::Mul => "integerMul",
+            _ => return None,
+        };
+        if !self.charge_bulk_work(work, operation, span) {
+            return None;
+        }
+        let value = match op {
+            BinOp::Add => lhs.add(&rhs),
+            BinOp::Sub => lhs.sub(&rhs),
+            BinOp::Mul => lhs.mul(&rhs),
+            _ => return None,
+        };
+        Some(int_expr(value, ty, span))
+    }
+
+    fn charge_bulk_work(&mut self, work: usize, operation: &str, span: Span<'db>) -> bool {
+        if work <= self.fuel && work <= self.literal_fuel {
+            self.fuel -= work;
+            self.literal_fuel -= work;
+            return true;
+        }
+        self.fuel = 0;
+        self.literal_fuel = 0;
+        self.push_inline_limit_diagnostic(
+            operation.to_owned(),
+            self.inline_chain_is_comptime(self.comptime_mode),
+            span,
+            InlineBudgetExhaustion::TotalWork {
+                limit: self.fuel_limit,
+            },
+        );
+        false
     }
 
     fn eval_unary(
@@ -2880,8 +2959,8 @@ impl<'db> Evaluator<'db> {
         if self.has_inline_failure_diagnostic() {
             return;
         }
-        // Both limits bound evaluator unfold steps. Keep the established
-        // SC0410/SC0414 fuel diagnostics for compatibility, but report the
+        // Keep the established SC0410/SC0414 fuel diagnostics for both
+        // call unfolding and bulk literal work, but report the
         // limit that actually stopped evaluation: total work or inline depth.
         let limit = exhaustion.diagnostic_limit();
         let kind = if comptime {

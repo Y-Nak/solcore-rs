@@ -25,14 +25,14 @@ use crate::{
 /// plan records rewrites that need resolved storage fields, ABI/dispatch
 /// context, solved call-site evidence, or backend-compatibility metadata and
 /// are consumed by specialization and later backend phases.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct FrontendDesugarPlan<'db> {
     /// Per-body transform plan entries.
     pub bodies: Vec<BodyDesugarPlan<'db>>,
 }
 
 /// Backend-facing transform plan for one function body.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct BodyDesugarPlan<'db> {
     /// Function/method definition.
     pub function: DefId<'db>,
@@ -43,7 +43,7 @@ pub struct BodyDesugarPlan<'db> {
 }
 
 /// One planned backend-facing frontend rewrite.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum FrontendTransform<'db> {
     /// `if` statement rewritten to a two-arm match on desugared bool.
     IfStmtToMatch {
@@ -128,7 +128,7 @@ pub enum FrontendTransform<'db> {
 }
 
 /// Category of bool node in a frontend transform.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum BoolNode<'db> {
     /// Expression constructor.
     Expr(Id<Expr<'db>>),
@@ -145,7 +145,7 @@ pub type IndirectArgShape<'db> = ProductShape<Id<Expr<'db>>>;
 /// [`crate::pre_typeck_desugar_plan`]. Type checking must use that pre-typeck
 /// view; entries here are for specialization/backend replay and compatibility
 /// metadata.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn frontend_desugar_plan<'db>(
     db: &'db dyn Db,
     module: Module<'db>,

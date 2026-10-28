@@ -639,7 +639,7 @@ impl<'db> InferCtx<'db> {
     }
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 #[tracing::instrument(
     target = "hir_ty::query",
     level = "debug",

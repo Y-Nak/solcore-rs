@@ -5,7 +5,7 @@ use super::*;
 /// This query collects declarations before resolving bodies so forward
 /// references between top-level items are legal. It also emits duplicate-name
 /// diagnostics for the type and term namespaces.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 #[tracing::instrument(
     target = "hir::query",
     level = "debug",
@@ -22,7 +22,7 @@ pub fn item_scope<'db>(db: &'db dyn Db, module: Module<'db>) -> ItemScope<'db> {
 }
 
 /// Returns item-level lookup facts without duplicate-name diagnostics.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 #[tracing::instrument(
     target = "hir::query",
     level = "debug",
@@ -38,7 +38,7 @@ pub fn item_scope_facts<'db>(db: &'db dyn Db, module: Module<'db>) -> ItemScopeF
 ///
 /// This is the standalone HIR query. Inter-module callers should use
 /// [`resolve_item_types_with_imports`] so imported names participate in lookup.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 #[tracing::instrument(
     target = "hir::query",
     level = "debug",
@@ -53,7 +53,7 @@ pub fn resolve_item_types<'db>(db: &'db dyn Db, module: Module<'db>) -> ItemReso
 }
 
 /// Resolves item-signature type and predicate facts without diagnostics.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 #[tracing::instrument(
     target = "hir::query",
     level = "debug",
@@ -104,7 +104,7 @@ pub fn resolve_item_type_facts_with_imports<'db>(
 /// `context` supplies the module, optional enclosing contract, parameters, and
 /// inherited type variables. The returned map is silent for parser `Error`
 /// nodes; parse diagnostics are produced during lowering.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 #[tracing::instrument(
     target = "hir::query",
     level = "debug",
@@ -161,7 +161,7 @@ pub fn resolve_body_with_imports_and_policy<'db>(
 
 /// Resolves all item signatures and function bodies in a module without
 /// imports.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 #[tracing::instrument(
     target = "hir::query",
     level = "debug",

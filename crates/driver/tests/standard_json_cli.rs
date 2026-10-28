@@ -89,3 +89,27 @@ fn standard_json_reports_request_errors_in_json() {
     assert!(has_error(&response), "response: {response:#}");
     assert_eq!(response["errors"][0]["type"], "StandardJsonError");
 }
+
+#[test]
+fn standard_json_rejects_source_aliases_instead_of_compiling_the_wrong_file() {
+    for alias in ["dir/./main.sol", "dir//main.sol"] {
+        let output = run_standard_json(json!({
+            "language": "Solcore",
+            "sources": {
+                alias: {"content": "function main() returns (word) { return missing; }"},
+                "dir/main.sol": {"content": "function main() returns (word) { return 0; }"},
+            },
+            "settings": {"solcore": {"entrypoint": alias, "stage": "frontend"}},
+        }));
+        let response = response(&output);
+
+        assert!(has_error(&response), "response: {response:#}");
+        assert_eq!(response["errors"][0]["type"], "StandardJsonError");
+        assert!(
+            response["errors"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains(alias)
+        );
+    }
+}

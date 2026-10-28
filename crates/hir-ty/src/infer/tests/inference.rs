@@ -6,6 +6,44 @@ fn companion_source(fixture: &Fixture<&str>, name: &str) -> String {
         .expect("companion inference source")
 }
 
+#[test]
+fn inline_yul_functions_cannot_shadow_builtins() {
+    for name in ["add", "sstore", "stop", "revert", "memoryguard", "clz"] {
+        let db = TestDb::default();
+        let source = format!(
+            "function f() {{ assembly {{ function {name}(a, b) -> result {{ result := 9 }} }} }}"
+        );
+        let module = parse_module(&db, &source);
+        let (_, result) = infer_function(&db, module, "f");
+        assert!(
+            result.diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic,
+                TypeckDiagnostic::ReservedYulFunction { name: actual, .. } if actual == name
+            )),
+            "{name}: {:?}",
+            result.diagnostics,
+        );
+    }
+}
+
+#[test]
+fn ordinary_inline_yul_functions_remain_callable_in_nested_scopes() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        "function f() returns (word) {
+            let value: word;
+            assembly {
+                function customAdd(a, b) -> result { result := add(a, b) }
+                { value := customAdd(1, 2) }
+            }
+            return value;
+        }",
+    );
+    let (_, result) = infer_function(&db, module, "f");
+    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
+}
+
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/inference/explicit_polymorphic_function_scheme_uses_declared_body_type", glob: "main.sol")]
 fn explicit_polymorphic_function_scheme_uses_declared_body_type(fixture: Fixture<&str>) {
     let db = TestDb::default();

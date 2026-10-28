@@ -25,7 +25,7 @@ use rustc_hash::FxHashMap;
 use crate::{diag::Offset, input::SourceFile};
 
 /// Disambiguator for defs/bodies sharing the same canonical base key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, salsa::SalsaValue)]
 pub struct Disambiguator(u32);
 
 impl Disambiguator {
@@ -50,7 +50,7 @@ impl Disambiguator {
 ///
 /// The kind is part of structural identity so same-named functions, types, and
 /// bodies do not collide under one owner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum DefKind {
     /// Synthetic definition for a lowered module/file.
     Module,
@@ -81,7 +81,7 @@ pub enum DefKind {
 }
 
 /// Lifetime-free canonical def key.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub(crate) struct DefKey {
     pub(crate) file: SourceFile,
     pub(crate) owner: Option<Box<DefKey>>,
@@ -100,16 +100,22 @@ pub(crate) struct DefKey {
 #[salsa::interned(debug)]
 pub struct DefId<'db> {
     /// Source file that owns this definition's structural key.
+    #[returns(clone)]
     pub file: SourceFile,
     /// Lexical/semantic owner, or `None` for the module root.
+    #[returns(clone)]
     pub owner: Option<DefId<'db>>,
     /// Category of definition this key represents.
+    #[returns(clone)]
     pub kind: DefKind,
     /// Surface name when the syntax has one.
+    #[returns(clone)]
     pub name: Option<String>,
     /// Structural identity supplement for name-insufficient definitions.
+    #[returns(clone)]
     pub fingerprint: Option<String>,
     /// Duplicate ordinal for otherwise identical keys under one owner.
+    #[returns(clone)]
     pub disambiguator: Disambiguator,
 }
 
@@ -143,7 +149,7 @@ impl<'db> DefId<'db> {
 ///
 /// This is produced by lowering and looked up only when anchor-relative spans
 /// need to cross an output boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct DefLocation {
     /// File that currently contains the definition base.
     pub file: SourceFile,
@@ -155,7 +161,7 @@ pub struct DefLocation {
 ///
 /// The precomputed hash is an index aid only; equality on `def_id` remains the
 /// authority so hash collisions cannot resolve to the wrong definition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct DefLocationEntry<'db> {
     /// Stable hash of `def_id` used to binary-search the table.
     pub hash: u64,
@@ -170,7 +176,7 @@ pub struct DefLocationEntry<'db> {
 /// The table is produced during lowering and injected back into HIR through the
 /// database. It is intentionally consulted only when relative spans cross an
 /// output boundary and need absolute offsets.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, salsa::SalsaValue)]
 pub struct DefLocationTable<'db> {
     /// Entries sorted by `DefLocationEntry::hash` ascending.
     pub entries: Box<[DefLocationEntry<'db>]>,

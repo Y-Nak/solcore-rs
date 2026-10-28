@@ -48,7 +48,11 @@ impl<'db> RawInterface<'db> {
 /// re-exports. Salsa handles cycles by starting from an empty interface and
 /// re-running until interface equality stabilizes; diagnostics that require the
 /// final fixed point are emitted by [`validate_module`].
-#[salsa::tracked(cycle_fn = public_interface_cycle, cycle_initial = public_interface_initial)]
+#[salsa::tracked(
+    cycle_fn = public_interface_cycle,
+    cycle_initial = public_interface_initial,
+    returns(clone)
+)]
 #[tracing::instrument(
     target = "nameres::query",
     level = "debug",

@@ -15,7 +15,7 @@ use std::{
 /// The `T` marker prevents accidentally indexing an expression arena with a
 /// statement ID. IDs are stable for the lifetime of the arena because the arena
 /// never removes or reorders items.
-#[derive(Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct Id<T> {
     raw: u32,
     _marker: PhantomData<fn() -> T>,
@@ -51,17 +51,17 @@ impl<T> Id<T> {
 /// The arena gives HIR bodies stable intra-body IDs without interning every
 /// expression or statement in Salsa. Items can be mutated before the body is
 /// frozen into a tracked value; after that, callers normally use shared access.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue, Default)]
 pub struct Arena<T>
 where
-    T: salsa::Update,
+    T: salsa::SalsaValue,
 {
     items: Vec<T>,
 }
 
 impl<T> Arena<T>
 where
-    T: salsa::Update,
+    T: salsa::SalsaValue,
 {
     /// Creates an empty arena.
     pub fn new() -> Self {
@@ -119,7 +119,7 @@ where
 
 impl<T> Index<Id<T>> for Arena<T>
 where
-    T: salsa::Update,
+    T: salsa::SalsaValue,
 {
     type Output = T;
 
@@ -130,7 +130,7 @@ where
 
 impl<T> IndexMut<Id<T>> for Arena<T>
 where
-    T: salsa::Update,
+    T: salsa::SalsaValue,
 {
     fn index_mut(&mut self, index: Id<T>) -> &mut Self::Output {
         self.get_mut(index)

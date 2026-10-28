@@ -151,8 +151,13 @@ fn validate_source_name(name: &str) -> Result<(), String> {
         .components()
         .all(|component| matches!(component, Component::Normal(_)));
     if name.is_empty()
+        || name != name.trim()
         || name.contains('\\')
         || name.contains(':')
+        || name.contains('\0')
+        // Path::components normalizes interior `.` and repeated separators.
+        // Reject aliases before the VFS can silently overwrite another source.
+        || name.split('/').any(|part| part.is_empty() || part == ".")
         || !has_only_normal_components
         || path.extension().and_then(|extension| extension.to_str()) != Some("sol")
     {
@@ -295,7 +300,17 @@ mod tests {
 
     #[test]
     fn rejects_source_paths_that_escape_the_virtual_workspace() {
-        for source_name in ["../main.sol", "/main.sol", "dir\\main.sol", "main.solc"] {
+        for source_name in [
+            "../main.sol",
+            "/main.sol",
+            "dir\\main.sol",
+            "main.solc",
+            "dir/./main.sol",
+            "dir//main.sol",
+            "main.sol/",
+            "bad\0/main.sol",
+            " main.sol",
+        ] {
             assert!(validate_source_name(source_name).is_err(), "{source_name}");
         }
     }

@@ -4,7 +4,7 @@ use super::*;
 ///
 /// Missing source files produce an empty environment so graph/load errors can
 /// be reported separately without panicking downstream HIR resolution.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 #[tracing::instrument(
     target = "nameres::query",
     level = "debug",
@@ -56,7 +56,7 @@ pub fn module_env_for_hir_module<'db>(
 }
 
 /// Returns imported-name facts for a module without diagnostics.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 #[tracing::instrument(
     target = "nameres::query",
     level = "debug",
@@ -80,7 +80,7 @@ pub(super) fn module_has_parse_errors<'db>(db: &'db dyn Db, module: ModuleId<'db
 ///
 /// Standard library modules are currently validated but skipped for full local
 /// HIR body resolution to keep driver runs focused on user code.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn resolve_module_full<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> FullResolutionSummary {
     let _ = validate_module(db, module);
     if matches!(module.library(db), LibraryId::Std) {

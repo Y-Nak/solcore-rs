@@ -65,13 +65,13 @@ impl hir::Db for TestDb {
 #[salsa::db]
 impl solcore_parser::Db for TestDb {}
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 fn function_relative_span<'db>(db: &'db dyn hir::Db, function: FunctionDef<'db>) -> (u32, u32) {
     let span = function.span(db);
     (span.begin().as_u32(), span.end().as_u32())
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 fn function_leading_comment_text<'db>(
     db: &'db dyn hir::Db,
     function: FunctionDef<'db>,
@@ -83,7 +83,7 @@ fn function_leading_comment_text<'db>(
         .collect()
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 fn nested_item_semantic_names<'db>(
     db: &'db dyn hir::Db,
     adt: AdtDef<'db>,
@@ -117,7 +117,7 @@ fn nested_item_semantic_names<'db>(
     (ctor, method, field)
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 fn nested_item_comment_texts<'db>(
     db: &'db dyn hir::Db,
     adt: AdtDef<'db>,
@@ -130,7 +130,7 @@ fn nested_item_comment_texts<'db>(
     (ctor, method, field)
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 fn lambda_first_stmt_relative_span<'db>(db: &'db dyn hir::Db, body: FuncBody<'db>) -> (u32, u32) {
     let stmt_id = body
         .top_level_stmts(db)

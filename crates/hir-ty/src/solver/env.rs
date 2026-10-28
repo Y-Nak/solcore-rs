@@ -1,7 +1,7 @@
 use super::derived_generic::AdtDeriveInfo;
 use super::*;
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn trait_env_for_module<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> TraitEnvId<'db> {
     if let Some(file) = db.module_file(module) {
         let source = parse_file_to_hir(db, file).module(db);
@@ -224,7 +224,7 @@ pub fn trait_env_with_givens<'db>(
 /// Instantiates the declared direct superclasses of a class predicate without
 /// selecting any instances. Method-body assumptions and executable dictionary
 /// capture must agree on this same superclass surface.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn direct_superclass_predicates<'db>(
     db: &'db dyn Db,
     base: BaseTraitEnvId<'db>,
@@ -353,14 +353,14 @@ fn extend_clause_set<'db>(
     clauses.extend(set.clauses(db).iter().cloned());
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 fn builtin_trait_clause_set<'db>(db: &'db dyn Db) -> TraitClauseSetId<'db> {
     let mut builder = TraitClauseBuilder::new(db);
     builder.add_builtin_instances();
     builder.finish()
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 fn module_superclass_clause_set<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
@@ -384,7 +384,7 @@ fn instance_fact_for_origin<'db>(
         .find(|fact| fact.def == def_id)
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 fn derived_generic_clause_set<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
@@ -405,7 +405,7 @@ fn derived_generic_clause_set<'db>(
     builder.finish()
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 fn imported_derived_generic_clause_set<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
@@ -417,7 +417,7 @@ fn imported_derived_generic_clause_set<'db>(
     builder.finish()
 }
 
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 fn derived_class_clause_set<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> TraitClauseSetId<'db> {
     let mut builder = TraitClauseBuilder::new(db);
     if let Some((scope, item_resolutions)) = scope_resolution_for_module_id(db, module) {

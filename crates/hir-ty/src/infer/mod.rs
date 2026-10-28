@@ -150,7 +150,7 @@ fn is_ufcs_call<'db>(
 }
 
 /// Type-checking context for one body inference query.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct BodyTyContext<'db> {
     /// HIR module containing the root body.
     pub module: Module<'db>,
@@ -177,7 +177,7 @@ pub struct BodyTyContext<'db> {
 }
 
 /// Scheme for a resolved ADT constructor.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct AdtCtorScheme<'db> {
     /// Owning ADT definition.
     pub ty: DefId<'db>,
@@ -190,7 +190,7 @@ pub struct AdtCtorScheme<'db> {
 }
 
 /// Ground type assigned to an expression.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ExprTy<'db> {
     /// Body containing the expression.
     pub body: FuncBody<'db>,
@@ -201,7 +201,7 @@ pub struct ExprTy<'db> {
 }
 
 /// Ground type assigned to a pattern.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct PatTy<'db> {
     /// Body containing the pattern.
     pub body: FuncBody<'db>,
@@ -212,7 +212,7 @@ pub struct PatTy<'db> {
 }
 
 /// Ground type assigned to a let binding.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct LetTy<'db> {
     /// Body containing the let statement.
     pub body: FuncBody<'db>,
@@ -223,7 +223,7 @@ pub struct LetTy<'db> {
 }
 
 /// Source of a deferred obligation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum ObligationSource<'db> {
     /// Obligation created by an integer literal.
     IntegerLiteral {
@@ -278,7 +278,7 @@ pub enum ObligationSource<'db> {
 }
 
 /// Resolved callable identity attached to a call-site obligation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum CallSiteCallee<'db> {
     /// User function or method.
     Function(DefId<'db>),
@@ -307,7 +307,7 @@ pub enum CallSiteCallee<'db> {
 }
 
 /// Deferred class obligation published by inference.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct DeferredObligation<'db> {
     /// Predicate that remains for the future solver.
     pub pred: Pred<'db>,
@@ -316,7 +316,7 @@ pub struct DeferredObligation<'db> {
 }
 
 /// Evidence recorded for a solved deferred obligation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ObligationEvidence<'db> {
     /// Index into [`InferenceResult::obligations`].
     pub obligation: usize,
@@ -325,7 +325,7 @@ pub struct ObligationEvidence<'db> {
 }
 
 /// Evidence addressable by the expression that triggered a constrained call.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct CallSiteEvidence<'db> {
     /// Body containing the call.
     pub body: FuncBody<'db>,
@@ -342,7 +342,7 @@ pub struct CallSiteEvidence<'db> {
 }
 
 /// Deferred comptime check that must be validated after specialization.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ComptimeObligation<'db> {
     /// Body containing the expression that must be comptime.
     pub body: FuncBody<'db>,
@@ -353,7 +353,7 @@ pub struct ComptimeObligation<'db> {
 }
 
 /// Source of a deferred comptime obligation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum ComptimeObligationKind<'db> {
     /// Initializer of a comptime or comptime-only (`integer`/`string`) let binding.
     LetInit {
@@ -386,7 +386,7 @@ pub enum ComptimeObligationKind<'db> {
 }
 
 /// Body inference result.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct InferenceResult<'db> {
     /// Generalized function type inferred for the root body.
     pub root_scheme: TyScheme<'db>,
