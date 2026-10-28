@@ -14,11 +14,33 @@ local function normalize_cmd(cmd)
 end
 
 local function default_cmd()
+  local compiler = vim.env.SOLCORE_PATH
+  if compiler ~= nil and compiler:match("%S") then
+    return { compiler, "lsp" }
+  end
   local from_env = vim.env.SOLCORE_LSP_SERVER
-  if from_env ~= nil and from_env ~= "" then
+  if from_env ~= nil and from_env:match("%S") then
     return { from_env }
   end
-  return { "solcore-lsp" }
+  local windows = vim.fn.has("win32") == 1
+  local name = windows and "solcore.exe" or "solcore"
+  local home = vim.fn.expand("~")
+  local cargo = vim.env.CARGO_HOME
+  if cargo == nil or cargo == "" then cargo = home .. "/.cargo" end
+  local directories = { cargo .. "/bin", home .. "/.local/bin" }
+  for directory in string.gmatch(vim.env.PATH or "", windows and "[^;]+" or "[^:]+") do
+    table.insert(directories, directory)
+  end
+  for _, directory in ipairs(directories) do
+    -- Never resolve an empty/relative PATH entry against the workspace.
+    local absolute = directory:sub(1, 1) == "/"
+      or (windows and (directory:match("^%a:[/\\]") or directory:match("^\\\\")))
+    local candidate = directory .. "/" .. name
+    if absolute and vim.fn.executable(candidate) == 1 then
+      return { candidate, "lsp" }
+    end
+  end
+  return nil
 end
 
 local function executable(cmd)
@@ -63,7 +85,10 @@ end
 
 function M.command(opts)
   opts = opts or {}
-  return normalize_cmd(opts.cmd or opts.command) or default_cmd()
+  local explicit = normalize_cmd(opts.cmd or opts.command)
+  if explicit then return explicit end
+  if opts.path and opts.path ~= "" then return { opts.path, "lsp" } end
+  return default_cmd()
 end
 
 function M.start(opts)
@@ -73,7 +98,7 @@ function M.start(opts)
 
   if not executable(cmd) then
     vim.notify(
-      string.format("Solcore LSP server not found: %s", cmd[1] or "<empty command>"),
+      string.format("Solcore LSP server not found: %s. Install Solcore or set setup({ path = '/path/to/solcore' }).", cmd and cmd[1] or "solcore"),
       vim.log.levels.WARN
     )
     return nil

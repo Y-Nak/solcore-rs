@@ -6,16 +6,15 @@
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "26.1"))
 ;; Keywords: languages
-;; URL: https://github.com/Y-Nak/solcore-rs
+;; URL: https://github.com/argotorg/solcore-rs
 
 ;;; Commentary:
 
 ;; Major mode, font-lock highlighting, and optional LSP client registration for
 ;; Solcore `.sol' files.
 ;;
-;; The LSP server command is resolved from SOLCORE_LSP_SERVER when that
-;; environment variable is non-empty.  Otherwise `solcore-lsp-server-command'
-;; is used, which defaults to running `solcore-lsp' from PATH.
+;; The native language server is bundled in the compiler (`solcore lsp').
+;; Explicit configuration overrides environment and installed compiler paths.
 
 ;;; Code:
 
@@ -32,13 +31,14 @@
   :safe #'integerp
   :group 'solcore)
 
-(defcustom solcore-lsp-server-command '("solcore-lsp")
-  "Fallback command used to start the Solcore LSP server.
+(defcustom solcore-lsp-server-command nil
+  "Explicit command used to start the Solcore LSP server.
 
-SOLCORE_LSP_SERVER takes precedence when it is set to a non-empty
-value.  This option may be a string command line or a list of the
-program name followed by arguments."
+When nil, discover the compiler and run it with the lsp argument.
+Otherwise this takes precedence over environment variables and may
+be a command line or a list of the program followed by arguments."
   :type '(choice
+          (const :tag "Discover installed Solcore" nil)
           (repeat :tag "Command and arguments" string)
           (string :tag "Shell-like command line"))
   :group 'solcore)
@@ -170,11 +170,35 @@ left to the caller so declaration patterns can consume whitespace once."
 
 (defun solcore--lsp-server-command ()
   "Return the command used to start the Solcore LSP server."
-  (let ((env-command (getenv "SOLCORE_LSP_SERVER")))
-    (solcore--split-command
-     (if (solcore--blank-string-p env-command)
-         solcore-lsp-server-command
-       env-command))))
+  (let* ((compiler (getenv "SOLCORE_PATH"))
+         (legacy (getenv "SOLCORE_LSP_SERVER"))
+         (cargo (getenv "CARGO_HOME"))
+         (directories
+          (append
+           (list (if (solcore--blank-string-p cargo)
+                     (expand-file-name "~/.cargo/bin")
+                   (concat cargo "/bin"))
+                 (expand-file-name "~/.local/bin"))
+           exec-path))
+         (name (if (eq system-type 'windows-nt) "solcore.exe" "solcore")))
+    (cond
+     (solcore-lsp-server-command
+      (solcore--split-command solcore-lsp-server-command))
+     ((not (solcore--blank-string-p compiler)) (list compiler "lsp"))
+     ((not (solcore--blank-string-p legacy)) (list legacy))
+     (t
+      (let ((found
+             (catch 'found
+               (dolist (directory directories)
+                 ;; nil/relative entries mean the current project directory.
+                 (when (and directory (file-name-absolute-p directory))
+                   (let ((candidate (expand-file-name name directory)))
+                     (when (and (file-regular-p candidate)
+                                (file-executable-p candidate))
+                       (throw 'found candidate))))))))
+        (unless found
+          (user-error "Install Solcore or set solcore-lsp-server-command to '(\"/path/to/solcore\" \"lsp\")"))
+        (list found "lsp"))))))
 
 (defun solcore-calculate-indentation ()
   "Return the preferred indentation for the current line."

@@ -10,7 +10,11 @@ This directory contains Emacs support for Solcore `.sol` files:
 
 ## Install
 
-Add this directory to `load-path` and load the mode:
+Extract the `emacs-solcore` archive from GitHub Releases and add its directory
+to `load-path`, then load the mode. Install the compiler release separately,
+keeping `std/` next to `solcore`. Updating the compiler updates its server;
+restart Eglot or lsp-mode to use the new version. Replace the mode directory to
+update editor support.
 
 ```elisp
 (add-to-list 'load-path "/path/to/solcore-rs/editors/emacs-solcore")
@@ -27,30 +31,26 @@ With `use-package`:
 
 ## LSP server command
 
-The mode resolves the native stdio LSP server command in this order:
+The default starts the compiler with `solcore lsp`. Discovery order is:
 
-1. Use `SOLCORE_LSP_SERVER` when the environment variable is set and non-empty.
-2. Otherwise run `solcore-lsp` from `PATH`.
+1. Non-nil `solcore-lsp-server-command` (complete command and arguments).
+2. `SOLCORE_PATH` (compiler executable, automatically appending `lsp`).
+3. Legacy `SOLCORE_LSP_SERVER` (standalone executable with no arguments).
+4. `$CARGO_HOME/bin/solcore`, or `~/.cargo/bin/solcore` when unset.
+5. `~/.local/bin/solcore`.
+6. Absolute directories in Emacs `exec-path`.
 
-For example:
-
-```sh
-export SOLCORE_LSP_SERVER=/absolute/path/to/solcore-lsp
-emacs
-```
-
-You can also set it from Emacs before starting the LSP client:
+Explicit configuration takes precedence over environment settings. For example:
 
 ```elisp
-(setenv "SOLCORE_LSP_SERVER" "/absolute/path/to/solcore-lsp")
+(setq solcore-lsp-server-command '("/absolute/path/to/solcore" "lsp"))
+;; Existing standalone server installations remain supported:
+;; (setq solcore-lsp-server-command '("/absolute/path/to/solcore-lsp"))
 ```
 
-If you want a fallback other than `solcore-lsp`, customize
-`solcore-lsp-server-command`:
-
-```elisp
-(setq solcore-lsp-server-command '("/absolute/path/to/solcore-lsp"))
-```
+Or set `SOLCORE_PATH=/absolute/path/to/solcore` before launching Emacs. This
+variable contains an executable path, not a shell command line. Reset
+`solcore-lsp-server-command` to nil to restore automatic discovery.
 
 ## lsp-mode
 

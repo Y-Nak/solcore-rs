@@ -33,7 +33,7 @@ pub(crate) fn run_compiler() {
             return;
         }
         Ok(ParsedArgs::Version) => {
-            println!("Version: solcore-rs {}", env!("CARGO_PKG_VERSION"));
+            println!("solcore {}", env!("CARGO_PKG_VERSION"));
             return;
         }
         Err(message) => {
