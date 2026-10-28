@@ -4,7 +4,7 @@ import * from std;
 import * from std.Generic;
 import * from std.StorageGeneric;
 
-export { Option(*), checkedDiv, unwrapOr, contains };
+export { Option(*), checkedDiv, unwrapOr };
 
 enum Option<a> {
     None,
@@ -26,17 +26,6 @@ function unwrapOr<a>(option: Option<a>, orElse: a) returns (a) {
         }
         default {
             return orElse;
-        }
-    }
-}
-
-function contains<a>(option: Option<a>, value: a) returns (bool) where a: Eq {
-    match (option) {
-        case Option.Some(inner) {
-            return inner == value;
-        }
-        default {
-            return false;
         }
     }
 }

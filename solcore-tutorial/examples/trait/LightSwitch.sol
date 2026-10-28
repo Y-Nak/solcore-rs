@@ -25,11 +25,31 @@ impl Toggle<Switch> {
     }
 }
 
+enum Door {
+    Closed,
+    Open
+}
+
+impl Toggle<Door> {
+    function toggle(value: Door) returns (Door) {
+        match (value) {
+            case Door.Closed {
+                return Door.Open;
+            }
+            case Door.Open {
+                return Door.Closed;
+            }
+        }
+    }
+}
+
 contract LightSwitch {
     state: Switch;
+    door: Door;
 
     constructor() {
         state = Switch.Off;
+        door = Door.Closed;
     }
 
     // #[send()]
@@ -41,6 +61,23 @@ contract LightSwitch {
     function isOn() public returns (bool) {
         match (state) {
             case Switch.On {
+                return true;
+            }
+            default {
+                return false;
+            }
+        }
+    }
+
+    // #[send()]
+    function flipDoor() public {
+        door = Toggle.toggle(door);
+    }
+
+    // #[() -> true]
+    function isOpen() public returns (bool) {
+        match (door) {
+            case Door.Open {
                 return true;
             }
             default {

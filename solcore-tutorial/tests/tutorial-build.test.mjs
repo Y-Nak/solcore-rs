@@ -9,7 +9,7 @@ const route = `?project=../projects/option.json#/project${view}`;
 const link = `<a href="../projects/option.json${view}">Try it</a>`;
 
 test("standalone tutorial links select a generic bundled project editor", () => {
-  const page = join(bookRoot, "06-modules.html");
+  const page = join(bookRoot, "modules.html");
   assert.equal(rebasePlaygroundLinks(link, page, bookRoot), `<a href="playground/index.html${route}">Try it</a>`);
 });
 
@@ -37,7 +37,7 @@ test("rewriting preserves unrelated links, source text, and already rewritten li
     '<a href="https://doc.rust-lang.org/book/">Rust Book</a>',
     '<a href="https://playground.solcore.soliditylang.org/">Playground home</a>',
     `<a href="playground/index.html${route}">Ready</a>`,
-    '<a href="07-traits.html">Next</a>',
+    '<a href="traits.html">Next</a>',
     '<code>../projects/option.json</code>',
   ].join("\n");
   assert.equal(rebasePlaygroundLinks(html, join(bookRoot, "index.html"), bookRoot), html);

@@ -2,7 +2,7 @@
   {
     "id": "contract-output",
     "name": "Hello contract",
-    "description": "A small contract that emits Hull, Yul, and ABI JSON.",
+    "description": "A first contract with a public function returning 42.",
     "entry": "Hello.sol",
     "files": [
       "Hello.sol"
@@ -20,7 +20,7 @@
   {
     "id": "trait",
     "name": "Trait",
-    "description": "A trait implemented for a custom enum drives a stored on-chain state machine.",
+    "description": "One Toggle trait defines an operation implemented for both Switch and Door.",
     "entry": "LightSwitch.sol",
     "files": [
       "LightSwitch.sol"
@@ -116,7 +116,7 @@
   {
     "id": "comptime",
     "name": "Comptime",
-    "description": "Evaluates a typed computation during specialization and embeds its result.",
+    "description": "Evaluates a typed computation at compile time and embeds its result.",
     "entry": "Answer.sol",
     "files": [
       "Answer.sol"
@@ -134,7 +134,7 @@
   {
     "id": "tutorial-counter",
     "name": "Tutorial: counter",
-    "description": "A counter introduces constructor initialization, persistent storage, and stateful tests.",
+    "description": "A counter introduces zero-initialized persistent storage and stateful tests.",
     "entry": "Counter.sol",
     "files": [
       "Counter.sol"
@@ -143,7 +143,7 @@
   {
     "id": "tutorial-bounded-counter",
     "name": "Tutorial: bounded counter",
-    "description": "The tutorial capstone: preserve a capacity invariant with an explicit guard and test expected reverts.",
+    "description": "Practice persistent state: preserve a capacity invariant with an explicit guard and test expected reverts.",
     "entry": "BoundedCounter.sol",
     "files": [
       "BoundedCounter.sol"

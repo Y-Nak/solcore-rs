@@ -10,7 +10,7 @@ const projects = await loadProjects();
 // the compiler output: losing a directive must fail the teaching contract.
 const expectedTests = {
   'std-usage': 4,
-  trait: 2,
+  trait: 4,
   generics: 6,
   option: 4,
   'pattern-matching': 6,
@@ -22,9 +22,12 @@ const expectedTests = {
 };
 const address = '0x1111111111111111111111111111111111111111';
 
-// Further-reading projects have no inline directives. Exercise their public
+// These projects have no test comments. Exercise their public
 // functions explicitly, including constructors and the advertised guards.
 const manualChecks = {
+  'contract-output': [
+    { contract: 'Hello', signature: 'answer()', decoded: '42' },
+  ],
   'mini-nft': [
     { contract: 'MiniNFT', signature: 'exists(uint256)', arguments: [0], decoded: 'false' },
     { contract: 'MiniNFT', signature: 'mint()', decoded: '0' },
@@ -50,7 +53,7 @@ const manualChecks = {
 };
 
 test('every tutorial catalog project has an execution expectation', () => {
-  const expected = ['contract-output', ...Object.keys(expectedTests), ...Object.keys(manualChecks)];
+  const expected = [...Object.keys(expectedTests), ...Object.keys(manualChecks)];
   assert.deepEqual(projects.map(project => project.id).sort(), expected.sort());
 });
 
@@ -63,13 +66,6 @@ for (const backend of backends) {
       const compiled = compile(input);
       assert.equal(compiled.success, true, JSON.stringify(compiled.diagnostics));
       assert.equal(compiled.execution, null, 'compiling does not execute a lesson');
-
-      if (project.id === 'contract-output') {
-        const result = run(input);
-        assert.equal(result.execution?.status, 'success', JSON.stringify(result));
-        assert.equal(result.execution.returnWord, '42');
-        return;
-      }
 
       if (Object.hasOwn(expectedTests, project.id)) {
         const count = expectedTests[project.id];

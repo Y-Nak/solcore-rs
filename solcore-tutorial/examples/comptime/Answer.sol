@@ -1,8 +1,8 @@
 import * from std;
 import * from std.dispatch;
 
-// Evaluated during specialization: the deployed code contains only the
-// result, not the computation.
+// Evaluated while compiling: the deployed code uses the result instead of
+// performing this addition when answer() is called.
 function double(comptime value: uint256) returns (comptime<uint256>) {
     return value + value;
 }

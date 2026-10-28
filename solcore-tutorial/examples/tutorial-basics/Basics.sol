@@ -6,7 +6,7 @@ function double(value: uint256) returns (uint256) {
 }
 
 contract Basics {
-    // A local binding can be reassigned without a `mut` keyword.
+    // A local binding can be reassigned during the call.
     // #[(21, true) -> 42]
     // #[(21, false) -> 21]
     // #[(0, true) -> 0]

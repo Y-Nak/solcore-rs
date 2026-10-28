@@ -4,11 +4,7 @@ import * from std.dispatch;
 contract BoundedCounter {
     count: uint256;
 
-    constructor() {
-        count = uint256(0);
-    }
-
-    // Invariant: count <= 10, established by the constructor.
+    // Invariant: count <= 10, established by zero-initialized storage.
     // Check the remaining capacity before adding, so neither operation wraps.
     // Every accepted update preserves the invariant.
     // #[send(4)]

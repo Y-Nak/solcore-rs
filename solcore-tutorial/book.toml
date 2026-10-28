@@ -15,8 +15,8 @@ input-404 = ""
 default-theme = "light"
 preferred-dark-theme = "navy"
 additional-css = ["theme/tutorial.css"]
-additional-js = ["theme/tutorial.js"]
-git-repository-url = "https://github.com/Y-Nak/solcore-rs"
+additional-js = ["theme/solcore-highlight.js", "theme/tutorial.js"]
+git-repository-url = "https://github.com/argotorg/solcore-rs"
 
 [output.html.playground]
 runnable = false

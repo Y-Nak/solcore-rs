@@ -9,7 +9,7 @@
     "build:book": "node scripts/build.mjs",
     "preview": "node scripts/preview.mjs",
     "test": "node --test tests/tutorial.test.mjs tests/tutorial-build.test.mjs",
-    "test:wasm": "node --test tests/run-wasm.test.mjs",
+    "test:wasm": "node --test tests/run-wasm.test.mjs tests/exercises-wasm.test.mjs",
     "test:bundle": "node scripts/check-tutorial-bundle.mjs"
   }
 }

@@ -25,7 +25,7 @@ for (const link of document.querySelectorAll("a[href]")) {
       link.textContent = `${exercise.dataset.title || "Solcore example"} — prose preview`;
       const note = document.createElement("p");
       note.className = "tutorial-preview-note";
-      note.textContent = "Build the complete tutorial to edit and run this example. See Local tools and troubleshooting for instructions.";
+      note.textContent = "Build the complete tutorial to edit and run this example. See the tutorial README for setup instructions.";
       exercise.append(note);
     }
     continue;

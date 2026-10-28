@@ -4,25 +4,24 @@
 
 # First steps
 
-- [Your first Solcore program](01-first-program.md)
-- [Values, functions, and control flow](02-basics.md)
-- [Public functions and tests](03-tests.md)
-- [Contracts and persistent state](04-state.md)
+- [Your first Solcore program](first-program.md)
+- [Values, functions, and control flow](basics.md)
+- [Public functions and tests](tests.md)
+- [Contracts and persistent state](state.md)
 
 # Modeling a program
 
-- [Enums and pattern matching](05-enums.md)
-- [Modules and optional values](06-modules.md)
-- [Traits and implementations](07-traits.md)
-- [Generics and constraints](08-generics.md)
-- [Compile-time computation](09-comptime.md)
+- [Enums and pattern matching](enums.md)
+- [Modules and optional values](modules.md)
+- [Traits and implementations](traits.md)
+- [Generics and constraints](generics.md)
+- [Compile-time computation](comptime.md)
 
-# Putting it together
+# Practice and next steps
 
-- [Build a bounded counter](11-project.md)
-- [Where to go next](10-next-steps.md)
+- [Build a bounded counter](project.md)
+- [Where to go next](next-steps.md)
 
 ---
 
-[Local tools and troubleshooting](appendix-tools.md)
-[How this tutorial is maintained](appendix-design.md)
+[Using the editor](using-the-editor.md)

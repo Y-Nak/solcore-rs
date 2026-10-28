@@ -20,7 +20,7 @@ export async function checkTutorialBundle(bookRoot) {
   bookRoot = resolve(bookRoot);
   const files = await filesIn(bookRoot);
   const names = files.map((file) => relative(bookRoot, file).replaceAll("\\", "/"));
-  for (const required of ["index.html", "playground/index.html", "theme/tutorial.js", "theme/tutorial.css", "LICENSE"]) {
+  for (const required of ["index.html", "playground/index.html", "theme/tutorial.js", "theme/solcore-highlight.js", "theme/tutorial.css", "LICENSE"]) {
     if (!names.includes(required)) throw new Error(`Tutorial bundle is missing ${required}`);
   }
   for (const resource of [/^playground\/assets\/solcore_wasm_bg-.*\.wasm$/, /^playground\/assets\/solcore_lsp_bg-.*\.wasm$/]) {
