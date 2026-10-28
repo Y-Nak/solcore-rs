@@ -19,6 +19,8 @@ const expectedTests = {
   'tutorial-basics': 5,
   'tutorial-counter': 3,
   'tutorial-bounded-counter': 5,
+  'tutorial-ticket-office-starter': 2,
+  'tutorial-ticket-office': 18,
 };
 const address = '0x1111111111111111111111111111111111111111';
 

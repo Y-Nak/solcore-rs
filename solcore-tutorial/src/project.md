@@ -2,7 +2,7 @@
 
 **Goal:** combine persistent state, a condition, rejection, and tests in a small feature you can explain.
 This exercise revisits the counter from [Contracts and persistent state](state.md) and the revert behavior from [Enums and pattern matching](enums.md).
-For projects combining modules, enums, and traits, continue to [Where to go next](next-steps.md).
+Then build [an event booking contract](ticket-office.md) that combines modules, enums, traits, generics, and compile-time computation.
 
 Start from the Counter example below and keep its `count`, `add`, and `read` members.
 Your counter should accept a total of at most **10** units.

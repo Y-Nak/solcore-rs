@@ -20,6 +20,7 @@
 # Practice and next steps
 
 - [Build a bounded counter](project.md)
+- [Build an event booking contract](ticket-office.md)
 - [Where to go next](next-steps.md)
 
 ---

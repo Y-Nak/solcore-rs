@@ -1,7 +1,8 @@
 # Where to go next
 
 **Goal:** use an enum behind a module interface to preserve an invariant, then choose a project that combines more of the features you have learned.
-The bounded-counter exercise revisits state and rejection; this example brings together enums, pattern matching, modules, and persistent storage.
+The [event booking exercise](ticket-office.md) combines the language features in a complete reservation workflow.
+This example explores a different module boundary: hiding an enum's constructor to preserve a storage invariant.
 
 <div class="tutorial-exercise" data-title="AMM invariants">
 <a class="tutorial-example" href="../projects/invariants.json?tab=run&amp;view=tests">Open AMM invariants in a full tab</a>

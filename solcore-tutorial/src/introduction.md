@@ -2,14 +2,14 @@
 
 Learn to write a small Solcore contract, run it in your browser, and explain why it behaves as it does.
 You will start with a function returning `42`, then work through values, tests, persistent state, enums, modules, traits, generics, and compile-time computation.
-A later exercise revisits the counter to check both successful and rejected calls.
+Later exercises revisit the counter, then combine these features in an event booking contract with reservations, cancellation, and access control.
 
 ## Who this is for
 
 You should already be comfortable with variables, functions, and reading short programs in some language.
 You do not need previous smart-contract experience, a wallet, or a local blockchain.
 We introduce the contract concepts as they become necessary.
-Allow about two to three hours for a first pass, including the exercises; each chapter can also be studied separately.
+Allow about two to three hours for a first pass through the individual features, with extra time for the event booking project; each chapter can also be studied separately.
 
 Solcore is an experimental Core Solidity compiler and a prototype implementation of Solidity's new type system.
 It produces code for the Ethereum Virtual Machine (EVM), the runtime that executes Ethereum contracts.

@@ -148,5 +148,29 @@
     "files": [
       "BoundedCounter.sol"
     ]
+  },
+  {
+    "id": "tutorial-ticket-office-starter",
+    "name": "TicketOffice: starter",
+    "description": "Complete an event booking contract using pricing traits, generic functions, enum state, modules, and compile-time capacity.",
+    "entry": "TicketOffice.sol",
+    "files": [
+      "TicketOffice.sol",
+      "pricing.sol",
+      "booking.sol",
+      "context.sol"
+    ]
+  },
+  {
+    "id": "tutorial-ticket-office",
+    "name": "TicketOffice: solution",
+    "description": "A complete event booking ledger with two pricing policies, per-caller reservations, cancellation, and organizer-controlled closing.",
+    "entry": "TicketOffice.sol",
+    "files": [
+      "TicketOffice.sol",
+      "pricing.sol",
+      "booking.sol",
+      "context.sol"
+    ]
   }
 ]
