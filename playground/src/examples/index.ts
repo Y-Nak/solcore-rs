@@ -128,7 +128,7 @@ export const examples: PlaygroundExample[] = [
   {
     id: "extensions",
     name: "Extensions",
-    description: "A token built from owner, pause and cap modules: each module exports a state struct that the contract stores as a field, and every balance change goes through one update function.",
+    description: "A token built from owner, pause and cap modules: each module exports a state struct that the contract stores as a field, and transfer, mint and burn all call one update function.",
     entry: "Token.sol",
     files: [
       { path: "Token.sol", content: extensionsToken },
