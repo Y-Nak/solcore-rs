@@ -1,38 +1,65 @@
-# Solcore editor grammar
+# Solcore for VS Code
 
-This directory contains a VS Code extension for Solcore `.sol` files. It ships
-the reusable TextMate grammar used by the playground and starts the native
-`solcore-lsp` stdio server when a Solcore file opens.
+Syntax highlighting and LSP support for Solcore `.sol` files. The extension
+starts the language server bundled in the compiler with `solcore lsp`.
 
-The package is shaped like a small VS Code extension:
+## Install
 
-- `syntaxes/solcore.tmLanguage.json` provides TextMate scopes.
-- `language-configuration.json` provides comments, brackets, auto-close pairs,
-  indentation, folding markers, and the Solcore word pattern.
-- `extension.js` starts `solcore-lsp` through `vscode-languageclient`.
-- `package.json` wires the `.sol` extension to the grammar, configuration, and
-  language client.
+Install the native compiler release first, keeping `std/` beside `solcore`.
+Download the `.vsix` file from the same GitHub release. In VS Code, run
+**Extensions: Install from VSIX**, or use:
+
+```sh
+code --install-extension /path/to/solcore-language-0.1.0.vsix
+```
+
+This distribution does not require a Marketplace publisher account. Upgrading
+the compiler updates the server independently of the extension; restart VS Code
+after replacing the compiler. Install a newer VSIX to update the extension.
+
+For Remote SSH, WSL, or containers, install the compiler on the remote host.
+The extension is a workspace extension and resolves paths on that host.
 
 ## Language server
 
-Build or install the native server first:
+Set `solcore.path` to the compiler executable if it is not discovered:
 
-```sh
-cargo install --path ../../crates/lsp --features native --locked
+```json
+{
+  "solcore.path": "/absolute/path/to/solcore"
+}
 ```
 
-The extension resolves the server command in this order:
+Discovery uses `solcore.path`, then the legacy `solcore.lsp.serverPath`, then
+`SOLCORE_PATH`, then legacy `SOLCORE_LSP_SERVER`, then `$CARGO_HOME/bin` (or
+`~/.cargo/bin`), `~/.local/bin`, and absolute directories on `PATH`.
+`solcore.lsp.serverPath` and `SOLCORE_LSP_SERVER` start a standalone server with
+no arguments; all compiler paths start with `lsp`. Explicit settings take
+precedence even if invalid, so a configuration mistake is reported clearly.
+Do not append `lsp` to a path setting.
 
-1. `solcore.lsp.serverPath` VS Code setting.
-2. `SOLCORE_LSP_SERVER` environment variable.
-3. `solcore-lsp` on `PATH`.
+Changing either path setting restarts the server without reloading the window.
+If startup fails, the extension offers to open settings. In untrusted workspaces,
+syntax highlighting remains available and the native server starts only after
+you trust the workspace.
 
-Changing `solcore.lsp.serverPath` stops the current client and starts the server
-at the new path without requiring a window reload. If startup fails, the
-extension offers to open that setting directly.
+## Build a release VSIX locally
 
-## Development
+Node.js 22 or newer is required by the pinned packaging tool:
 
-Run `npm install` in this directory before launching an Extension Development
-Host. Other editors that consume TextMate grammars can use
-`syntaxes/solcore.tmLanguage.json` directly.
+```sh
+npm ci
+npm run test:unit
+npm run package -- --out /absolute/path/to/solcore-language-0.1.0.vsix
+```
+
+The lockfile pins the packaging tool and language client dependencies. Packaging
+includes runtime dependencies and the license, excludes tests and packaging
+files, and does not publish anything. The repository release script runs these
+steps together with the native and playground builds.
+
+The extension uses the official
+[VSIX packaging workflow](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#packaging-extensions).
+
+For development, launch this directory in an Extension Development Host after
+`npm ci`. The reusable grammar lives in `syntaxes/solcore.tmLanguage.json`.

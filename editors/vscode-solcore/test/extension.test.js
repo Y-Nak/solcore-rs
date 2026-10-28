@@ -5,7 +5,9 @@ const Module = require("node:module");
 const path = require("node:path");
 const test = require("node:test");
 
-function loadExtension({ startResults = [Promise.resolve()] } = {}) {
+function loadExtension({ startResults = [Promise.resolve()], trusted = true } = {}) {
+  let compilerPath = "/installed/solcore";
+  let trustListener;
   let configuredPath = "";
   let configurationListener;
   const errors = [];
@@ -16,6 +18,7 @@ function loadExtension({ startResults = [Promise.resolve()] } = {}) {
   class FakeLanguageClient {
     constructor(_id, _name, serverOptions) {
       this.command = serverOptions.command;
+      this.args = serverOptions.args;
       this.startResult = startResults[clients.length] ?? Promise.resolve();
       this.started = 0;
       this.stopped = 0;
@@ -55,13 +58,18 @@ function loadExtension({ startResults = [Promise.resolve()] } = {}) {
       },
     },
     workspace: {
+      isTrusted: trusted,
+      onDidGrantWorkspaceTrust(listener) {
+        trustListener = listener;
+        return { dispose() {} };
+      },
       createFileSystemWatcher() {
         return { dispose() {} };
       },
-      getConfiguration() {
+      getConfiguration(section) {
         return {
           get() {
-            return configuredPath;
+            return section === "solcore" ? compilerPath : configuredPath;
           },
         };
       },
@@ -97,13 +105,21 @@ function loadExtension({ startResults = [Promise.resolve()] } = {}) {
     executedCommands,
     extension,
     output,
+    grantTrust() {
+      vscode.workspace.isTrusted = true;
+      trustListener();
+    },
     setConfiguredPath(value) {
+      compilerPath = "";
       configuredPath = value;
     },
-    signalConfigurationChange() {
+    setCompilerPath(value) {
+      compilerPath = value;
+    },
+    signalConfigurationChange(changed = "solcore.lsp.serverPath") {
       configurationListener({
         affectsConfiguration(name) {
-          return name === "solcore.lsp.serverPath";
+          return name === changed;
         },
       });
     },
@@ -124,12 +140,12 @@ test("spawn failure explains how to configure the server executable", async () =
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(harness.errors.length, 1);
-  assert.match(harness.errors[0], /solcore\.lsp\.serverPath/);
+  assert.match(harness.errors[0], /solcore\.path/);
   assert.match(harness.errors[0], /ENOENT/);
   assert.deepEqual(harness.executedCommands, [
-    ["workbench.action.openSettings", "solcore.lsp.serverPath"],
+    ["workbench.action.openSettings", "solcore.path"],
   ]);
-  assert.match(harness.output[0], /Failed to start solcore-lsp: ENOENT/);
+  assert.match(harness.output[0], /Failed to start \/installed\/solcore lsp: ENOENT/);
 });
 
 test("serverPath changes restart the client without a window reload", async () => {
@@ -141,10 +157,36 @@ test("serverPath changes restart the client without a window reload", async () =
   await harness.extension.deactivate();
 
   assert.equal(harness.clients.length, 2);
-  assert.equal(harness.clients[0].command, "solcore-lsp");
+  assert.equal(harness.clients[0].command, "/installed/solcore");
+  assert.deepEqual(harness.clients[0].args, ["lsp"]);
   assert.equal(harness.clients[0].started, 1);
   assert.equal(harness.clients[0].stopped, 1);
   assert.equal(harness.clients[1].command, "/opt/solcore/bin/solcore-lsp");
+  assert.deepEqual(harness.clients[1].args, []);
   assert.equal(harness.clients[1].started, 1);
   assert.equal(harness.clients[1].stopped, 1);
+});
+
+
+test("untrusted workspaces keep highlighting without launching a process", async () => {
+  const harness = loadExtension({ trusted: false });
+  harness.extension.activate(context());
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.clients.length, 0);
+  harness.grantTrust();
+  await harness.extension.deactivate();
+  assert.equal(harness.clients.length, 1);
+});
+
+test("compiler path changes replace the bundled LSP process", async () => {
+  const harness = loadExtension();
+  harness.extension.activate(context());
+  await new Promise((resolve) => setImmediate(resolve));
+  harness.setCompilerPath("/new version/solcore");
+  harness.signalConfigurationChange("solcore.path");
+  await harness.extension.deactivate();
+  assert.equal(harness.clients.length, 2);
+  assert.equal(harness.clients[0].stopped, 1);
+  assert.equal(harness.clients[1].command, "/new version/solcore");
+  assert.deepEqual(harness.clients[1].args, ["lsp"]);
 });
