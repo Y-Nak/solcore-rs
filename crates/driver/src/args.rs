@@ -615,6 +615,10 @@ pub(crate) fn help_text(program: &str) -> String {
 Solcore Rust driver
 
 Usage: {program} [OPTIONS] [<input.sol>]
+       {program} lsp [--stdio]
+
+Commands:
+  lsp                                Run the bundled language server over stdin/stdout
 
 Options:
   -f, --file FILE                    Input source file (alternative to positional input)

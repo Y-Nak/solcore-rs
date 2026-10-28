@@ -1,12 +1,8 @@
-//! Native stdio entry point for the Solcore language server.
+//! Compatibility entry point for the standalone Solcore language server.
 
-#[cfg(feature = "native")]
-#[tokio::main]
-async fn main() {
-    solcore_lsp::native::run_stdio().await;
-}
-
-#[cfg(not(feature = "native"))]
 fn main() {
-    eprintln!("solcore-lsp server requires the `native` feature");
+    std::process::exit(solcore_lsp::native::run_cli(
+        "solcore-lsp",
+        std::env::args_os().skip(1).collect(),
+    ));
 }

@@ -3529,6 +3529,7 @@ dependencies = [
  "solcore-hir",
  "solcore-hir-ty",
  "solcore-hull",
+ "solcore-lsp",
  "solcore-nameres",
  "solcore-parser",
  "solcore-sonatina",
