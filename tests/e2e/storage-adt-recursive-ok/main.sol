@@ -5,7 +5,8 @@ import * from std.StorageGeneric;
 
 // The counterpart of storage-adt-recursive-fail.sol: skipping storage
 // derivation for a recursive type is a SKIP, not a hard error. The type still
-// gets its Generic instance and remains usable everywhere except storage.
+// gets its Generic instance. Recursive runtime values are unsupported by the
+// backends, so this fixture only uses the non-recursive Point at runtime.
 
 enum IntList {
     Nil,

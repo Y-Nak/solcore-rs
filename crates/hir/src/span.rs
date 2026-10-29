@@ -30,7 +30,7 @@ use crate::{
 /// `Def` anchors make offsets relative to the recorded base offset of a
 /// definition. A def anchor is only resolvable while the database can provide a
 /// matching location entry for that definition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum AnchorKind<'db> {
     /// Offsets are absolute within this source file.
     Root(SourceFile),
@@ -112,7 +112,7 @@ impl<'db> AnchorId<'db> {
 /// `begin` and `end` are measured from the anchor's base, not necessarily from
 /// the start of the source file. The invariant is `begin <= end`; empty spans
 /// are allowed and commonly represent recovered or synthetic syntax positions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct Span<'db> {
     anchor: AnchorId<'db>,
     begin: Offset,
@@ -210,13 +210,13 @@ impl<'db> Add for Span<'db> {
 /// The wrapper is used throughout the HIR for names, parameter lists, and other
 /// non-interned atoms where consumers need to report diagnostics against the
 /// original syntax without making the atom itself span-aware.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
-pub struct SpannedElem<'db, T: salsa::Update> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
+pub struct SpannedElem<'db, T> {
     atom: T,
     span: Span<'db>,
 }
 
-impl<'db, T: salsa::Update> SpannedElem<'db, T> {
+impl<'db, T: salsa::SalsaValue> SpannedElem<'db, T> {
     /// Pairs `atom` with its anchor-relative source span.
     pub fn new(atom: T, span: Span<'db>) -> Self {
         Self { atom, span }
@@ -228,7 +228,7 @@ impl<'db, T: salsa::Update> SpannedElem<'db, T> {
     }
 }
 
-impl<'db, T: salsa::Update> Spanned<'db> for SpannedElem<'db, T> {
+impl<'db, T: salsa::SalsaValue> Spanned<'db> for SpannedElem<'db, T> {
     fn span(&self, _db: &'db dyn Db) -> Span<'db> {
         self.span
     }

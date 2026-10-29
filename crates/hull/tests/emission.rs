@@ -331,7 +331,16 @@ fn regressions_dispatch_array_public_return(fixture: Fixture<&str>) {
         assert_check_diagnostics(db, &emitted.program, false);
         let hull = pretty_program(db, &emitted.program);
         assert!(hull.contains("ABIEncode"), "{hull}");
-        assert!(hull.contains("mcopy"), "{hull}");
+        assert_contains_in_order(
+            &hull,
+            &[
+                "let elements : word",
+                "for (",
+                "value := IndexAccess_get",
+                "newTail := ABIEncode_encodeInto",
+                "return newTail",
+            ],
+        );
     });
 }
 
@@ -373,7 +382,10 @@ fn regressions_dispatch_std_address_dispatch(fixture: Fixture<&str>) {
             assert!(hull.contains("$ABIDecoder_"), "{hull}");
             assert!(hull.contains("address_"), "{hull}");
             assert!(hull.contains("(160, raw)"), "{hull}");
-            assert!(hull.contains("0x7cc04fa7"), "{hull}");
+            assert!(
+                hull.contains("0x7cc04fa7") || hull.contains(&0x7cc04fa7_u32.to_string()),
+                "{hull}"
+            );
         },
     );
 }

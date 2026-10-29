@@ -2,23 +2,22 @@
 
 const vscode = require("vscode");
 const { LanguageClient, TransportKind } = require("vscode-languageclient/node");
+const { resolveServer } = require("./server-command");
 
 let client;
 let lifecycle = Promise.resolve();
 
 function serverCommand() {
-  const configured = vscode.workspace
-    .getConfiguration("solcore.lsp")
-    .get("serverPath", "")
-    .trim();
-
-  return configured || process.env.SOLCORE_LSP_SERVER || "solcore-lsp";
+  return resolveServer({
+    compilerPath: vscode.workspace.getConfiguration("solcore").get("path", ""),
+    serverPath: vscode.workspace.getConfiguration("solcore.lsp").get("serverPath", ""),
+  });
 }
 
-function createClient(command, outputChannel, fileWatcher) {
+function createClient({ command, args }, outputChannel, fileWatcher) {
   const serverOptions = {
     command,
-    args: [],
+    args,
     transport: TransportKind.stdio,
     options: {
       env: { ...process.env },
@@ -52,14 +51,14 @@ function reportStartFailure(command, error, outputChannel) {
   outputChannel.appendLine(`Failed to start ${command}: ${detail}`);
   void vscode.window
     .showErrorMessage(
-      `Failed to start the Solcore language server (${command}): ${detail}. Configure solcore.lsp.serverPath to the solcore-lsp executable.`,
+      `Failed to start the Solcore language server (${command}): ${detail}. Configure solcore.path to the solcore executable.`,
       "Open Settings",
     )
     .then((selection) => {
       if (selection === "Open Settings") {
         return vscode.commands.executeCommand(
           "workbench.action.openSettings",
-          "solcore.lsp.serverPath",
+          "solcore.path",
         );
       }
       return undefined;
@@ -84,10 +83,15 @@ async function replaceClient(outputChannel, fileWatcher) {
     }
   }
 
-  const command = serverCommand();
-  const next = createClient(command, outputChannel, fileWatcher);
-  client = next;
+  if (vscode.workspace.isTrusted === false) return;
+
+  let command = "solcore lsp";
+  let next;
   try {
+    const server = serverCommand();
+    command = [server.command, ...server.args].join(" ");
+    next = createClient(server, outputChannel, fileWatcher);
+    client = next;
     await next.start();
   } catch (error) {
     if (client === next) {
@@ -110,9 +114,12 @@ function activate(context) {
   void scheduleClientReplacement(outputChannel, fileWatcher);
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration("solcore.lsp.serverPath")) {
+      if (event.affectsConfiguration("solcore.path") || event.affectsConfiguration("solcore.lsp.serverPath")) {
         void scheduleClientReplacement(outputChannel, fileWatcher);
       }
+    }),
+    vscode.workspace.onDidGrantWorkspaceTrust(() => {
+      void scheduleClientReplacement(outputChannel, fileWatcher);
     }),
   );
 }

@@ -9,7 +9,7 @@ use crate::{
 /// This mirrors `AnchorKind<'db>` without storing database-lifetime values.
 /// Def anchors are stored as structural keys so they can be interned again when
 /// a diagnostic is rendered.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub(super) enum LabelAnchor {
     Root(SourceFile),
     Def(DefKey),
@@ -20,7 +20,7 @@ pub(super) enum LabelAnchor {
 /// The snapshot keeps relative offsets and enough anchor identity to resolve
 /// later. It intentionally avoids absolute offsets so byte-shift invariance is
 /// preserved until rendering.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct LabelSpan {
     pub(super) anchor: LabelAnchor,
     pub(super) begin: Offset,
@@ -90,7 +90,7 @@ impl LabelSpan {
 /// Offsets are byte-based, not character-based. The `u32` storage keeps span
 /// values compact inside HIR and diagnostics; conversion from larger indices is
 /// fallible through [`Offset::try_from_usize`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, salsa::SalsaValue)]
 pub struct Offset(u32);
 
 impl Offset {

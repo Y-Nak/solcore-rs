@@ -25,6 +25,9 @@ where
         .or(just(Token::AmpEq).to(ParsedAssignOp::BitAndEq))
         .or(just(Token::PipeEq).to(ParsedAssignOp::BitOrEq))
         .or(just(Token::PercentEq).to(ParsedAssignOp::ModEq))
+        // `<<=` and `>>=` lex as `<` `<=` and `>` `>=`.
+        .or(adjacent_tokens_parser(Token::Less, Token::LessEq).to(ParsedAssignOp::ShlEq))
+        .or(adjacent_tokens_parser(Token::Greater, Token::GreaterEq).to(ParsedAssignOp::ShrEq))
         .map_with(|op, e| ParsedSpanned::new(op, e.span()))
 }
 
@@ -83,7 +86,7 @@ fn assign_stmt_kind<'src>(
             let rhs = ParsedExpr {
                 span,
                 kind: ParsedExprKind::UnaryOp {
-                    op: ParsedSpanned::new(function::UnOp::BitNot, op_span),
+                    op: ParsedSpanned::new(ParsedUnOp::BitNot, op_span),
                     expr: Box::new(lhs_read),
                 },
             };
@@ -111,6 +114,8 @@ fn compound_bin_op(op: ParsedAssignOp) -> Option<function::BinOp> {
         ParsedAssignOp::BitAndEq => Some(function::BinOp::BitAnd),
         ParsedAssignOp::BitOrEq => Some(function::BinOp::BitOr),
         ParsedAssignOp::ModEq => Some(function::BinOp::Mod),
+        ParsedAssignOp::ShlEq => Some(function::BinOp::Shl),
+        ParsedAssignOp::ShrEq => Some(function::BinOp::Shr),
     }
 }
 
@@ -429,6 +434,20 @@ where
             })
             .boxed();
 
+        // `unchecked` stays a valid identifier: only `unchecked {` starts a block.
+        let unchecked_stmt = unchecked_kw_parser()
+            .then(
+                stmt.clone()
+                    .repeated()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+            )
+            .map_with(|(keyword, body), e| ParsedStmt {
+                span: e.span(),
+                kind: ParsedStmtKind::Unchecked { keyword, body },
+            })
+            .boxed();
+
         let block_stmt = stmt
             .clone()
             .repeated()
@@ -485,6 +504,7 @@ where
             while_stmt,
             if_stmt,
             assembly_stmt,
+            unchecked_stmt,
             block_stmt,
             break_stmt,
             continue_stmt,

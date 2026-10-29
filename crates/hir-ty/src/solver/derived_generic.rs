@@ -204,7 +204,7 @@ pub(super) fn adt_name<'db>(db: &'db dyn HirDb, adt: AdtDef<'db>) -> String {
 }
 
 /// Returns the synthesized `Generic` instance plan for `adt` in `module`.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn derived_generic_plan<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
@@ -231,7 +231,7 @@ pub fn derived_generic_plan<'db>(
 /// Unlike [`derived_generic_plan`], this query respects both
 /// `no-generic-instance-for` and an explicit instance for the same ADT. Callers
 /// that manufacture solver evidence must use this eligibility-aware form.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn derived_generic_instance_plan<'db>(
     db: &'db dyn Db,
     module: Module<'db>,

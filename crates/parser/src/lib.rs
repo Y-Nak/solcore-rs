@@ -127,7 +127,7 @@ pub struct ParseHirOutput<'db> {
 /// The query records def-location data needed to resolve anchor-relative spans
 /// at diagnostic/LSP edges. Parse diagnostics are exposed through
 /// [`parse_diagnostics`].
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 #[tracing::instrument(
     target = "parser::query",
     level = "debug",

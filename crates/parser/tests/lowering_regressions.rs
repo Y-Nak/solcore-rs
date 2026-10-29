@@ -1006,9 +1006,49 @@ function f(a: word, b: word) returns (word) {
 }
 
 #[test]
+fn unary_minus_lowers_literals_before_conversion_and_values_through_subtraction() {
+    let db = TestDb::default();
+    let (file, module) = parse_module(
+        &db,
+        "unary-minus",
+        "function f(x: word) { let decimal = -128; let hex = -(0x80); return -x * 2; }",
+    );
+    assert!(diagnostics(&db, file).is_empty());
+    let body = top_function(&db, module, "f").body(&db).expect("body");
+    let exprs = body.exprs(&db);
+    assert!(exprs.iter().any(|(_, expr)| matches!(
+        &expr.kind,
+        ExprKind::Lit(hir::ast::function::LitKind::Number(value)) if value == "-128"
+    )));
+    assert!(exprs.iter().any(|(_, expr)| matches!(
+        &expr.kind,
+        ExprKind::Lit(hir::ast::function::LitKind::Hex(value)) if value == "-0x80"
+    )));
+    let stmt = body
+        .stmts(&db)
+        .get(*body.top_level_stmts(&db).last().unwrap());
+    let StmtKind::Return(Some(result)) = &stmt.kind else {
+        panic!("expected return");
+    };
+    let ExprKind::BinOp { lhs, op, .. } = &exprs.get(*result).kind else {
+        panic!("expected multiplication");
+    };
+    assert_eq!(*op.atom(), BinOp::Mul);
+    let ExprKind::BinOp { lhs: zero, op, rhs } = &exprs.get(*lhs).kind else {
+        panic!("expected negation lowered to subtraction");
+    };
+    assert_eq!(*op.atom(), BinOp::Sub);
+    assert!(matches!(
+        &exprs.get(*zero).kind,
+        ExprKind::Lit(hir::ast::function::LitKind::Number(value)) if value == "0"
+    ));
+    assert!(matches!(&exprs.get(*rhs).kind, ExprKind::Ident(_)));
+}
+
+#[test]
 fn compound_assignments_lower_through_binary_operator_calls() {
     let db = TestDb::default();
-    let (_, module) = parse_module(
+    let (file, module) = parse_module(
         &db,
         "compound-assignments",
         "function f(x: word, y: word) {\n\
@@ -1020,8 +1060,15 @@ fn compound_assignments_lower_through_binary_operator_calls() {
            x &= y;\n\
            x |= y;\n\
            x %= y;\n\
+           x <<= y;\n\
+           x >>= y;\n\
            x ~=;\n\
          }",
+    );
+    assert!(
+        diagnostics(&db, file).is_empty(),
+        "{:?}",
+        diagnostics(&db, file)
     );
     let function = top_function(&db, module, "f");
     let body = function.body(&db).expect("body");
@@ -1034,6 +1081,8 @@ fn compound_assignments_lower_through_binary_operator_calls() {
         BinOp::BitAnd,
         BinOp::BitOr,
         BinOp::Mod,
+        BinOp::Shl,
+        BinOp::Shr,
     ];
 
     let stmts = body.top_level_stmts(&db);
@@ -1068,6 +1117,119 @@ fn compound_assignments_lower_through_binary_operator_calls() {
         &body.exprs(&db).get(*rhs).kind,
         ExprKind::UnaryOp { op, .. } if *op.atom() == hir::ast::function::UnOp::BitNot
     ));
+}
+
+fn bin_ops(db: &TestDb, body: hir::ast::function::FuncBody<'_>) -> Vec<BinOp> {
+    let mut ops = body
+        .exprs(db)
+        .iter()
+        .filter_map(|(_, expr)| match &expr.kind {
+            ExprKind::BinOp { op, .. } => Some(*op.atom()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    ops.sort_by_key(|op| format!("{op:?}"));
+    ops
+}
+
+#[test]
+fn unchecked_blocks_lower_arithmetic_to_unchecked_operators() {
+    let db = TestDb::default();
+    let (file, module) = parse_module(
+        &db,
+        "unchecked-block",
+        "function f(x: word, y: word) returns (word) {\n\
+           let a: word = x + y;\n\
+           unchecked {\n\
+             let b: word = x + y - x * y / y % y;\n\
+             x += y;\n\
+             let c: bool = x < y;\n\
+             let d: word = x & y;\n\
+           }\n\
+           return a - y;\n\
+         }",
+    );
+    assert!(diagnostics(&db, file).is_empty());
+    let body = top_function(&db, module, "f").body(&db).expect("body");
+    let mut expected = vec![
+        // Outside the block: checked.
+        BinOp::Add,
+        BinOp::Sub,
+        // Inside the block: arithmetic only, including the `+=` desugaring.
+        BinOp::UncheckedAdd,
+        BinOp::UncheckedSub,
+        BinOp::UncheckedMul,
+        BinOp::UncheckedDiv,
+        BinOp::UncheckedMod,
+        BinOp::UncheckedAdd,
+        BinOp::Lt,
+        BinOp::BitAnd,
+    ];
+    expected.sort_by_key(|op| format!("{op:?}"));
+    assert_eq!(bin_ops(&db, body), expected);
+}
+
+#[test]
+fn lambdas_inside_unchecked_blocks_keep_checked_arithmetic() {
+    let db = TestDb::default();
+    let (file, module) = parse_module(
+        &db,
+        "unchecked-lambda",
+        "function f(x: word, y: word) returns (word) {\n\
+           unchecked {\n\
+             let g = lam (v: word) -> word { return v + y; };\n\
+             return g(x) + y;\n\
+           }\n\
+         }",
+    );
+    assert!(diagnostics(&db, file).is_empty());
+    let body = top_function(&db, module, "f").body(&db).expect("body");
+    assert_eq!(bin_ops(&db, body), [BinOp::UncheckedAdd]);
+    let lambda_body = body
+        .exprs(&db)
+        .iter()
+        .find_map(|(_, expr)| match &expr.kind {
+            ExprKind::Lambda { body, .. } => Some(*body),
+            _ => None,
+        })
+        .expect("lambda");
+    assert_eq!(bin_ops(&db, lambda_body), [BinOp::Add]);
+}
+
+#[test]
+fn nested_unchecked_blocks_are_rejected() {
+    let db = TestDb::default();
+    let (file, _) = parse_module(
+        &db,
+        "nested-unchecked",
+        "function f(x: word) returns (word) {\n\
+           unchecked {\n\
+             unchecked { return x + x; }\n\
+           }\n\
+         }",
+    );
+    let messages = diagnostics(&db, file)
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect::<Vec<_>>();
+    assert_eq!(messages, ["`unchecked` blocks cannot be nested"]);
+}
+
+#[test]
+fn unchecked_remains_a_valid_identifier() {
+    let db = TestDb::default();
+    let (file, module) = parse_module(
+        &db,
+        "unchecked-identifier",
+        "function unchecked(x: word) returns (word) { return x; }\n\
+         function f(unchecked: word) returns (word) {\n\
+           let r: word = unchecked;\n\
+           return r;\n\
+         }",
+    );
+    assert!(diagnostics(&db, file).is_empty());
+    let body = top_function(&db, module, "f").body(&db).expect("body");
+    assert!(bin_ops(&db, body).is_empty());
 }
 
 #[test]

@@ -244,7 +244,12 @@ fn render_skips_contentless_def_labels_before_absolute_resolution() {
 #[test]
 fn render_decodes_file_urls_in_human_and_short_formats() {
     let db = TestDb::default();
-    let file = file_source_file(&db, "/tmp/Solcore Project/日本語/main.sol", "missing\n");
+    let path = std::env::temp_dir()
+        .join("Solcore Project")
+        .join("日本語")
+        .join("main.sol");
+    let path = path.to_string_lossy();
+    let file = file_source_file(&db, &path, "missing\n");
     let diagnostic = Diagnostic::error("undefined name")
         .with_primary_label_span(root_span(file, 0, 7), Some("not found"));
 
@@ -252,7 +257,7 @@ fn render_decodes_file_urls_in_human_and_short_formats() {
     let short = diagnostic.render_short(&db);
 
     for rendered in [human, short] {
-        assert!(rendered.contains("/tmp/Solcore Project/日本語/main.sol"));
+        assert!(rendered.contains(path.as_ref()));
         assert!(!rendered.contains("%20"));
         assert!(!rendered.contains("%E6"));
     }

@@ -6,7 +6,7 @@ use crate::{input::SourceFile, span::Span};
 /// Diagnostics are value objects returned by pull-style diagnostic queries.
 /// Their labels are stored in a lifetime-free representation so callers can
 /// render them after the producing query has returned.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct Diagnostic {
     /// Severity of this diagnostic.
     pub level: DiagnosticLevel,
@@ -30,7 +30,7 @@ pub struct Diagnostic {
 /// HIR name-resolution diagnostics stay typed until they cross the rendering
 /// boundary. Inter-module diagnostics are kept typed inside `solcore-nameres`
 /// and wrapped here after lowering to the generic diagnostic surface.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum AnyDiagnostic {
     /// Parser/lowering diagnostic.
     Parse(Diagnostic),
@@ -43,7 +43,7 @@ pub enum AnyDiagnostic {
 }
 
 /// A source edit anchored to the same lifetime-free span model as labels.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct AnchoredTextEdit {
     /// Span to replace.
     pub span: LabelSpan,
@@ -52,7 +52,7 @@ pub struct AnchoredTextEdit {
 }
 
 /// Confidence level for applying a suggestion automatically.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum Applicability {
     /// The edit can be applied mechanically.
     MachineApplicable,
@@ -65,7 +65,7 @@ pub enum Applicability {
 }
 
 /// Reserved quick-fix surface attached to user-facing diagnostics.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct Suggestion {
     /// User-facing command title.
     pub title: String,
@@ -79,7 +79,7 @@ pub struct Suggestion {
 ///
 /// The level determines both the headline styling and how renderers categorize
 /// the message. Notes and help may also appear as secondary lines on an error.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum DiagnosticLevel {
     /// A compilation-blocking error.
     Error,
@@ -95,7 +95,7 @@ pub enum DiagnosticLevel {
 ///
 /// Labels keep their span private so construction always goes through helpers
 /// that snapshot HIR spans correctly.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct DiagnosticLabel {
     /// Where this label points to in source.
     pub(super) span: LabelSpan,
@@ -109,7 +109,7 @@ pub struct DiagnosticLabel {
 ///
 /// Primary labels highlight the main source range; secondary labels provide
 /// related context such as a previous declaration.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum LabelStyle {
     /// Main source location for the diagnostic.
     Primary,

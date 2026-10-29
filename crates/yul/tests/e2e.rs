@@ -10,6 +10,7 @@ use std::{
 
 use dir_test::{Fixture, dir_test};
 use hir::ast::item::{ContractItem, FuncKind, FunctionDef, Item, Module};
+use hir::diag::DiagnosticLevel;
 use hir_ty::{AbiParam, AbiType, contract_dispatch_surface_for_module};
 use hull::Program;
 use nameres::{Db as _, module_id_from_key};
@@ -18,10 +19,11 @@ use solcore_test_utils::{
     define_frontend_test_db,
     e2e::{
         AbiShape, COMMAND_TIMEOUT, E2eExecution, E2eFailure, FailureKind, ResolvedE2eCall,
-        command_available, e2e_enabled, e2e_pipeline_only, looks_like_hex, parse_e2e_directive,
-        resolve_e2e_comments, run_command, source_e2e_scenario, with_evm_harness,
+        command_available, e2e_enabled, e2e_pipeline_only, integers, looks_like_hex,
+        parse_e2e_directive, resolve_e2e_comments, run_command, source_e2e_scenario,
+        with_evm_harness,
     },
-    load_fixture_case_with_file_urls, load_reachable_modules_with_file_urls,
+    load_fixture_case_with_file_urls, load_reachable_modules_with_file_urls, render_diagnostics,
     repo_root_from_manifest, run_in_large_stack,
 };
 use specialize::{
@@ -32,6 +34,24 @@ define_frontend_test_db!(TestDb, hir_ty);
 
 static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 static SOLC_FOR_E2E: OnceLock<Result<Option<PathBuf>, E2eFailure>> = OnceLock::new();
+
+#[test]
+fn integer_operations() {
+    run_in_large_stack(|| integers::run(run_fixture))
+        .unwrap_or_else(|failure| panic!("Yul integer E2E failed: {failure}"));
+}
+
+#[test]
+fn integer_unchecked_operations() {
+    run_in_large_stack(|| integers::run_unchecked(run_fixture))
+        .unwrap_or_else(|failure| panic!("Yul unchecked integer E2E failed: {failure}"));
+}
+
+#[test]
+fn integer_abi() {
+    run_in_large_stack(|| integers::run_abi(run_fixture))
+        .unwrap_or_else(|failure| panic!("Yul integer ABI E2E failed: {failure}"));
+}
 
 #[dir_test(
     dir: "$CARGO_MANIFEST_DIR/../../tests/e2e",
@@ -85,6 +105,30 @@ struct RenderedFixture {
     execution: E2eExecution,
 }
 
+#[test]
+fn e2e_rejects_frontend_errors_before_specialization() {
+    run_in_large_stack(|| {
+        for (fixture, expected) in [
+            ("wildcard_collision", "SC0108"),
+            ("imported_error", "missing"),
+        ] {
+            let path = repo_root()
+                .join("crates/test-utils/tests/fixtures/e2e_frontend")
+                .join(fixture)
+                .join("main.sol");
+            let failure = render_fixture(&path)
+                .err()
+                .expect("invalid fixtures must fail before specialization");
+            assert_eq!(failure.kind, FailureKind::Pipeline);
+            assert!(
+                failure.message.starts_with("frontend diagnostics:"),
+                "{failure}"
+            );
+            assert!(failure.message.contains(expected), "{failure}");
+        }
+    });
+}
+
 fn render_fixture(path: &Path) -> Result<RenderedFixture, E2eFailure> {
     let db = Box::leak(Box::new(TestDb::default()));
     let case_root = path.parent().ok_or_else(|| {
@@ -99,6 +143,16 @@ fn render_fixture(path: &Path) -> Result<RenderedFixture, E2eFailure> {
 
     let db: &'static TestDb = &*db;
     let entry_id = module_id_from_key(db, &entry);
+    let diagnostics = hir_ty::collect_frontend_diagnostics(db, entry_id);
+    if diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
+    {
+        return Err(pipeline_error(format!(
+            "frontend diagnostics:\n{}",
+            render_diagnostics(db, &diagnostics)
+        )));
+    }
     let source_file = db
         .module_file(entry_id)
         .ok_or_else(|| pipeline_error("fixture entry source file is missing"))?;

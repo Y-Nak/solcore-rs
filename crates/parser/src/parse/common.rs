@@ -108,6 +108,31 @@ contextual_keyword_parser!(trait_kw_parser, "trait");
 contextual_keyword_parser!(impl_kw_parser, "impl");
 contextual_keyword_parser!(mapping_kw_parser, "mapping");
 contextual_keyword_parser!(while_kw_parser, "while");
+contextual_keyword_parser!(unchecked_kw_parser, "unchecked");
+
+/// Two tokens with nothing between them, as in the shift operators `<<`/`>>`
+/// and their compound forms. The lexer keeps `<` and `>` single so nested
+/// generic closers such as `Pair<a, Pair<b, c>>` lex unchanged; adjacency is
+/// what tells a shift apart from two separate tokens. Fails (backtracking)
+/// when the tokens are separated.
+pub(super) fn adjacent_tokens_parser<'src, I>(
+    first: Token<'src>,
+    second: Token<'src>,
+) -> impl Parser<'src, I, LexSpan, ParserErr<'src>> + Clone
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    just(first)
+        .map_with(|_, e| e.span())
+        .then(just(second).map_with(|_, e| e.span()))
+        .try_map(|(first, second): (LexSpan, LexSpan), span| {
+            if first.end == second.start {
+                Ok(span)
+            } else {
+                Err(Rich::custom(span, "operator tokens must be adjacent"))
+            }
+        })
+}
 
 pub(super) fn hiding_kw_parser<'src, I>() -> impl Parser<'src, I, (), ParserErr<'src>>
 where

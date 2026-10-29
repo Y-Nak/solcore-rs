@@ -1,10 +1,10 @@
 [package]
 name = "solcore-test-utils"
-version = "0.1.0"
+version.workspace = true
 license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-publish = false
+publish.workspace = true
 
 [dependencies]
 solcore-test-directives = { path = "../test-directives" }
@@ -12,6 +12,7 @@ annotate-snippets = { workspace = true }
 hir = { workspace = true }
 insta = "1.43.2"
 nameres = { workspace = true }
+num-bigint = { workspace = true }
 parser = { workspace = true }
 rustc-hash = { workspace = true }
 salsa = { workspace = true }

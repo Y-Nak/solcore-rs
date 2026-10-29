@@ -6,7 +6,7 @@ use super::*;
 /// and import-surface conflicts. They stay typed while the `solcore-nameres`
 /// crate computes module state, then lower to the generic diagnostic surface
 /// for aggregation and rendering.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum ModuleDiagnostic<'db> {
     /// `SC0109`: a module path resolved to no loaded source file.
     ModuleNotFound {

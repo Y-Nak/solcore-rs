@@ -1,9 +1,22 @@
 use chumsky::{input::ValueInput, prelude::*};
 
-use super::common::*;
+use super::{MAX_SYNTAX_NESTING, common::*};
 use crate::{lexer::Token, types::*};
 
 pub(super) fn type_parser<'src, I>() -> impl Parser<'src, I, ParsedTy<'src>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    nested_type_parser().with_ctx(0)
+}
+
+// Angle brackets are also comparison/shift tokens, and proxy types recurse
+// without any delimiters. Track actual type-grammar recursion rather than
+// guessing type nesting during tokenization. The bound protects both parsing
+// on wasm and the recursive HIR/type-system consumers after parsing.
+type TypeParserErr<'src> = extra::Full<Rich<'src, Token<'src>>, (), usize>;
+
+fn nested_type_parser<'src, I>() -> impl Parser<'src, I, ParsedTy<'src>, TypeParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
@@ -20,6 +33,7 @@ where
             .boxed();
 
         let named_type = qualified_ident_parser()
+            .with_ctx(0)
             .then(angle_args)
             .map_with(|(mut path, args), e| {
                 let name = path.pop().expect("qualified path has at least one segment");
@@ -54,6 +68,7 @@ where
             .boxed();
 
         let mapping_type = mapping_kw_parser()
+            .with_ctx(0)
             .then_ignore(just(Token::LParen))
             .then(ty.clone())
             .then_ignore(just(Token::FatArrow))
@@ -80,6 +95,7 @@ where
             .boxed();
 
         let comptime_type = comptime_kw_parser()
+            .with_ctx(0)
             .then_ignore(just(Token::Less))
             .then(ty.clone())
             .then_ignore(just(Token::Greater))
@@ -116,7 +132,12 @@ where
             .boxed();
         let function_type = just(Token::Function)
             .ignore_then(function_params)
-            .then(returns_kw_parser().ignore_then(function_ret).or_not())
+            .then(
+                returns_kw_parser()
+                    .with_ctx(0)
+                    .ignore_then(function_ret)
+                    .or_not(),
+            )
             .map_with(|((params, params_span), ret), e| {
                 let ret = ret.unwrap_or_else(|| ParsedTy {
                     span: e.span(),
@@ -152,14 +173,28 @@ where
             })
             .boxed();
 
-        choice((
+        let kind = choice((
             function_type,
             comptime_type,
             mapping_type,
             proxy_type,
             tuple_type,
             named_type,
-        ))
+        ));
+        empty::<I, TypeParserErr<'src>>()
+            .try_map_with(|(), e| {
+                if *e.ctx() >= MAX_SYNTAX_NESTING {
+                    let offset = e.span().start;
+                    Err(Rich::custom(
+                        (offset..offset).into(),
+                        format!("type nesting exceeds the compiler limit of {MAX_SYNTAX_NESTING}"),
+                    ))
+                } else {
+                    Ok(())
+                }
+            })
+            .ignore_then(map_ctx(|depth: &usize| depth + 1, kind))
+            .boxed()
     })
     .labelled("type")
     .as_context()

@@ -24,7 +24,7 @@ fn index_from_usize(value: usize) -> u32 {
 /// Type and term are the language namespaces. Field and module are represented
 /// separately so diagnostics and import integration can distinguish lookup
 /// surfaces that are not duplicate-checked like ordinary declarations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum Namespace {
     /// Type-level names: aliases, ADTs, contracts, classes, type variables.
     Type,
@@ -37,7 +37,7 @@ pub enum Namespace {
 }
 
 /// Visible candidate for a constructor leaf.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ConstructorTypeCandidate {
     /// Type that owns the constructor.
     pub ty_name: String,
@@ -48,7 +48,7 @@ pub struct ConstructorTypeCandidate {
 }
 
 /// Private imported item found while resolving a qualified module access.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct PrivateCandidate {
     /// Private item name.
     pub name: String,
@@ -59,7 +59,7 @@ pub struct PrivateCandidate {
 }
 
 /// Kind of user definition reached by a resolution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum DefResolutionKind {
     /// Function, method, constructor, or fallback definition.
     Function,
@@ -80,7 +80,7 @@ pub enum DefResolutionKind {
 /// Fields are identified by their owning contract definition and declaration
 /// index, which is stable under unrelated edits inside the contract body.
 #[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct FieldIndex(u32);
 
 impl FieldIndex {
@@ -106,7 +106,7 @@ impl FieldIndex {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct FieldId<'db> {
     /// Owning contract definition.
     pub contract: DefId<'db>,
@@ -115,7 +115,7 @@ pub struct FieldId<'db> {
 }
 
 /// Logical module binding visible in an item scope.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ModuleRef<'db> {
     /// Module definition that owns the binding.
     pub owner: DefId<'db>,
@@ -124,7 +124,7 @@ pub struct ModuleRef<'db> {
 }
 
 /// Stable reference to a type variable binder.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct TypeVarId<'db> {
     /// Definition that owns the type variable list.
     pub owner: DefId<'db>,
@@ -136,7 +136,7 @@ pub struct TypeVarId<'db> {
 
 /// Stable reference to a function-body parameter.
 #[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ParamIndex(u32);
 
 impl ParamIndex {
@@ -163,7 +163,7 @@ impl ParamIndex {
 }
 
 #[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct CtorIndex(u32);
 
 impl CtorIndex {
@@ -189,7 +189,7 @@ impl CtorIndex {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ParamId<'db> {
     /// Body whose parameter list introduced this parameter.
     pub body: FuncBody<'db>,
@@ -198,7 +198,7 @@ pub struct ParamId<'db> {
 }
 
 /// Local binding introduced inside a body or type binder list.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum LocalBinding<'db> {
     /// Binding introduced by a `let` statement.
     Let {
@@ -219,7 +219,7 @@ pub enum LocalBinding<'db> {
 }
 
 /// Builtin type names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum BuiltinType {
     /// `word`.
     Word,
@@ -238,7 +238,7 @@ pub enum BuiltinType {
 }
 
 /// Builtin class names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum BuiltinClass {
     /// `invokable`.
     Invokable,
@@ -249,7 +249,7 @@ pub enum BuiltinClass {
 }
 
 /// Builtin constructor names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum BuiltinCtor {
     /// Boolean `true`.
     True,
@@ -266,7 +266,7 @@ pub enum BuiltinCtor {
 }
 
 /// Builtin function names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum BuiltinFunction {
     /// `invoke`.
     Invoke,
@@ -291,7 +291,7 @@ pub enum BuiltinFunction {
 }
 
 /// Builtin class method names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum BuiltinClassMethod {
     /// `invokable.invoke`.
     InvokableInvoke,
@@ -302,7 +302,7 @@ pub enum BuiltinClassMethod {
 }
 
 /// Builtin resolution category.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum BuiltinKind {
     /// Builtin type.
     Type(BuiltinType),
@@ -323,7 +323,7 @@ pub enum BuiltinKind {
 /// caller boundary.
 /// `DotCtorDeferred` is used for leading-dot constructor syntax whose concrete
 /// type is determined later by type information.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum Resolution<'db> {
     /// User definition.
     Def {
@@ -363,7 +363,7 @@ pub enum Resolution<'db> {
 }
 
 /// Name exported by an item or imported scope.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ScopeEntry<'db> {
     /// Surface name in the relevant namespace.
     pub name: String,
@@ -374,7 +374,7 @@ pub struct ScopeEntry<'db> {
 }
 
 /// Ordered namespace entries with an indexed first-name lookup.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue, Default)]
 pub struct NamespaceTable<'db> {
     entries: Vec<ScopeEntry<'db>>,
     index: std::collections::BTreeMap<String, u32>,
@@ -412,7 +412,7 @@ impl<'a, 'db> IntoIterator for &'a NamespaceTable<'db> {
 }
 
 /// Constructor entry in a type's constructor list.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct CtorEntry<'db> {
     /// Unqualified constructor leaf name.
     pub name: String,
@@ -427,7 +427,7 @@ pub struct CtorEntry<'db> {
 }
 
 /// Constructors associated with one data type.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct CtorList<'db> {
     /// Owning data type.
     pub ty: DefId<'db>,
@@ -438,7 +438,7 @@ pub struct CtorList<'db> {
 }
 
 /// Contract field entry.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct FieldEntry<'db> {
     /// Field name.
     pub name: String,
@@ -453,7 +453,7 @@ pub struct FieldEntry<'db> {
 /// Contract scopes are nested below the module scope. They contain
 /// contract-local types, terms, fields, and constructors, and are consulted
 /// when resolving code inside that contract.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ContractScope<'db> {
     /// Contract definition that owns this scope.
     pub contract: DefId<'db>,
@@ -476,7 +476,7 @@ pub type ItemScopeDiagnostics = Vec<NameresDiagnostic>;
 ///
 /// The scope records declarations before body resolution so functions can refer
 /// to later items in the same module.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ItemScopeFacts<'db> {
     /// Module this scope belongs to.
     pub module: Module<'db>,
@@ -499,7 +499,7 @@ pub struct ItemScopeFacts<'db> {
 /// This is the compatibility composite used by diagnostic paths. Facts-only
 /// consumers should depend on [`ItemScopeFacts`] so diagnostic changes do not
 /// invalidate downstream type work.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ItemScope<'db> {
     /// Lookup facts for item and body resolution.
     pub facts: ItemScopeFacts<'db>,
@@ -508,7 +508,7 @@ pub struct ItemScope<'db> {
 }
 
 /// Resolution attached to an unresolved type reference.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct TypeResolution<'db> {
     /// Type reference being resolved.
     pub ty: TypeRef<'db>,
@@ -517,7 +517,7 @@ pub struct TypeResolution<'db> {
 }
 
 /// Resolution attached to an unresolved predicate reference.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct PredResolution<'db> {
     /// Predicate being resolved.
     pub pred: PredRef<'db>,
@@ -526,7 +526,7 @@ pub struct PredResolution<'db> {
 }
 
 /// Resolution attached to one class requested by an ADT `derive` attribute.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct AdtDeriveResolution<'db> {
     /// ADT carrying the attribute.
     pub adt: DefId<'db>,
@@ -540,7 +540,7 @@ pub struct AdtDeriveResolution<'db> {
 pub type ItemResolutionDiagnostics = Vec<NameresDiagnostic>;
 
 /// Type and predicate resolution facts for item signatures.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue, Default)]
 pub struct ItemResolutionFacts<'db> {
     /// Resolved type references.
     pub types: Vec<TypeResolution<'db>>,
@@ -555,7 +555,7 @@ pub struct ItemResolutionFacts<'db> {
 /// This compatibility composite preserves diagnostics for callers that publish
 /// nameres output. Facts-only consumers should depend on
 /// [`ItemResolutionFacts`].
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue, Default)]
 pub struct ItemResolutionMap<'db> {
     /// Resolution facts used by type lowering and inference.
     pub facts: ItemResolutionFacts<'db>,
@@ -564,7 +564,7 @@ pub struct ItemResolutionMap<'db> {
 }
 
 /// Resolution attached to an expression occurrence.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct BodyExprResolution<'db> {
     /// Body containing the expression.
     pub body: FuncBody<'db>,
@@ -575,7 +575,7 @@ pub struct BodyExprResolution<'db> {
 }
 
 /// Resolution attached to a statement binder.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct BodyStmtResolution<'db> {
     /// Body containing the statement.
     pub body: FuncBody<'db>,
@@ -586,7 +586,7 @@ pub struct BodyStmtResolution<'db> {
 }
 
 /// Resolution attached to a pattern binder or constructor occurrence.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct BodyPatResolution<'db> {
     /// Body containing the pattern.
     pub body: FuncBody<'db>,
@@ -600,7 +600,7 @@ pub struct BodyPatResolution<'db> {
 ///
 /// Yul locals and function names have their own scopes. Only occurrences that
 /// cross the assembly boundary into the enclosing source scope are recorded.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct BodyAssemblyResolution<'db> {
     /// Span of the identifier being read or assigned.
     pub span: Span<'db>,
@@ -609,7 +609,7 @@ pub struct BodyAssemblyResolution<'db> {
 }
 
 /// A body binding and its source visibility, recorded by lexical resolution.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ScopedBodyBinding<'db> {
     /// Source spelling of the binding.
     pub name: String,
@@ -622,7 +622,7 @@ pub struct ScopedBodyBinding<'db> {
 }
 
 /// Name-resolution results for one function body.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue, Default)]
 pub struct BodyResolutionMap<'db> {
     /// Local and parameter bindings with lexical visibility information.
     pub scoped_bindings: Vec<ScopedBodyBinding<'db>>,
@@ -643,14 +643,14 @@ pub struct BodyResolutionMap<'db> {
 }
 
 /// Parameter binding passed into body resolution.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ParamBinding<'db> {
     /// Parameter name with source span.
     pub name: SpannedElem<'db, Ident<'db>>,
 }
 
 /// Type-variable binding passed into body or item resolution.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct TypeVarBinding<'db> {
     /// Definition that owns the type variable list.
     pub owner: DefId<'db>,
@@ -661,7 +661,7 @@ pub struct TypeVarBinding<'db> {
 }
 
 /// Context required to resolve a function body.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct BodyResolutionContext<'db> {
     /// Module containing the body.
     pub module: Module<'db>,
@@ -674,7 +674,7 @@ pub struct BodyResolutionContext<'db> {
 }
 
 /// Complete local resolution result for one module.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ModuleResolutionMap<'db> {
     /// Item-level scope built for the module.
     pub item_scope: ItemScope<'db>,

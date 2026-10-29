@@ -17,7 +17,6 @@ enum Loader {
     #[default]
     Bare,
     Std,
-    StdCurrent,
     Fixture,
 }
 
@@ -95,8 +94,7 @@ impl Expectations {
                     assert!(loader.is_none(), "line {line}: duplicate loader");
                     loader = Some(match value {
                         "bare" => Loader::Bare,
-                        "std" => Loader::Std,
-                        "std-current" => Loader::StdCurrent,
+                        "std" | "std-current" => Loader::Std,
                         "fixture" => Loader::Fixture,
                         _ => panic!("line {line}: unknown loader {value}"),
                     });
@@ -196,7 +194,6 @@ impl Expectations {
                 (&*db, file, output)
             }
             Loader::Std => specialize_src_with_std_and_db_options(source, options),
-            Loader::StdCurrent => specialize_with_current_std(source, options),
         }
     }
 
@@ -348,29 +345,6 @@ fn check_source(
 
 #[path = "audit_ir.rs"]
 mod audit_ir;
-
-fn specialize_with_current_std(
-    source: &str,
-    options: SpecializeOptions,
-) -> (&'static TestDb, SourceFile, SpecializeOutput<'static>) {
-    let db = Box::leak(Box::new(TestDb::default()));
-    let root = PathBuf::from("/main");
-    let std_root = repo_root().join("std");
-    db.module_tree = Some(ModuleTree::new(
-        db,
-        root.clone(),
-        std_root.clone(),
-        BTreeMap::new(),
-    ));
-    db.module_fs_snapshot = Some(module_fs_snapshot_for_roots(db, [std_root.as_path()]));
-    let path = root.join("main.sol");
-    let file = source_file_at_path(db, &path, source);
-    let key = module_key_for_path(LibraryId::Main, &root, &path).unwrap();
-    db.insert_module_file(key.clone(), file);
-    assert!(load_reachable_modules(db, key).is_empty());
-    let output = specialize_module(db, parse_file_to_hir(db, file).module(db), options);
-    (db, file, output)
-}
 
 fn functions<'a, 'db>(
     output: &'a SpecializeOutput<'db>,

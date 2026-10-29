@@ -14,8 +14,8 @@ use crate::lexer::Token;
 pub(crate) type LexSpan = chumsky::span::SimpleSpan;
 /// Borrowed source string paired with its absolute span.
 pub(crate) type SpannedStr<'src> = (&'src str, LexSpan);
-/// Parser error type used by Chumsky combinators.
-pub(crate) type ParserErr<'src> = extra::Err<Rich<'src, Token<'src>>>;
+/// Parser error type and recursive-expression depth used by Chumsky combinators.
+pub(crate) type ParserErr<'src> = extra::Full<Rich<'src, Token<'src>>, (), usize>;
 
 /// Lexical form of a parsed source comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -535,6 +535,13 @@ pub(crate) enum ParsedLitKind<'src> {
     String(&'src str),
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ParsedUnOp {
+    Not,
+    BitNot,
+    Neg,
+}
+
 /// Parsed expression.
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedExpr<'src> {
@@ -611,7 +618,7 @@ pub(crate) enum ParsedExprKind<'src> {
     /// Unary operator expression.
     UnaryOp {
         /// Operator and span.
-        op: ParsedSpanned<'src, function::UnOp>,
+        op: ParsedSpanned<'src, ParsedUnOp>,
         /// Operand.
         expr: Box<ParsedExpr<'src>>,
     },
@@ -724,6 +731,10 @@ pub(crate) enum ParsedAssignOp {
     BitOrEq,
     /// `%=` assignment.
     ModEq,
+    /// `<<=` assignment.
+    ShlEq,
+    /// `>>=` assignment.
+    ShrEq,
 }
 
 /// Parsed statement payload.
@@ -794,6 +805,14 @@ pub(crate) enum ParsedStmtKind<'src> {
     Assembly {
         /// Parsed Yul statements.
         body: Vec<ParsedYulStmt<'src>>,
+    },
+    /// `unchecked { ... }`: arithmetic operators written directly inside the
+    /// block lower to the wrapping `std.unchecked` classes.
+    Unchecked {
+        /// Span of the contextual `unchecked` keyword.
+        keyword: LexSpan,
+        /// Statements inside the block.
+        body: Vec<ParsedStmt<'src>>,
     },
     /// Break statement.
     Break,

@@ -29,3 +29,6 @@
 /result-*
 /.direnv/
 /.npm-cache/
+
+# Local release tooling
+/scripts/**/__pycache__/

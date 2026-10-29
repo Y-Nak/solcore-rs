@@ -14,6 +14,7 @@ use url::Url;
 #[salsa::input]
 pub struct CompilationRoot {
     /// Source files that belong to this compilation unit.
+    #[returns(clone)]
     files: Vec<SourceFile>,
 }
 

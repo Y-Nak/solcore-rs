@@ -28,7 +28,7 @@ use hir::{
 use crate::Db;
 
 /// Source span that should receive diagnostics for a generated/desugared node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct SourceOrigin<'db> {
     /// User-written syntax that caused the generated node to exist.
     pub span: Span<'db>,
@@ -44,7 +44,7 @@ impl<'db> SourceOrigin<'db> {
 }
 
 /// Categories of user syntax that can produce generated/desugared nodes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum SourceOriginKind {
     /// Tuple expression syntax normalized to unit/single/pair product form.
     TupleExpr,
@@ -76,7 +76,7 @@ pub enum SourceOriginKind {
 /// - `(a)` becomes `a`.
 /// - `(a, b)` becomes `pair(a, b)`.
 /// - `(a, b, c)` becomes `pair(a, pair(b, c))`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum ProductShape<T> {
     /// Empty product/unit.
     Unit,
@@ -87,6 +87,9 @@ pub enum ProductShape<T> {
         /// First element at this level.
         head: T,
         /// Remaining product payload.
+        // SAFETY: the tail is another `ProductShape<T>`, which stores only `T`
+        // values. Proving `T` directly avoids the derive's cyclic field bound.
+        #[salsa_value(unsafe(prove(T: salsa::SalsaValue)))]
         tail: Box<ProductShape<T>>,
     },
 }
@@ -453,7 +456,7 @@ impl<'a, 'db> BodyDesugarView<'a, 'db> {
 /// This plan is consumed before or during type checking. It deliberately avoids
 /// backend-only hooks so each body can keep depending on the smallest possible
 /// tracked desugar tree.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct PreTypeckDesugarPlan<'db> {
     /// Tuple type references from item signatures, aliases, and fields.
     ///
@@ -467,7 +470,7 @@ pub struct PreTypeckDesugarPlan<'db> {
 }
 
 /// Planned tuple-type desugar for one source type occurrence.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct TypeProductDesugar<'db> {
     /// Source type reference being normalized.
     pub ty: TypeRef<'db>,
@@ -481,7 +484,7 @@ pub struct TypeProductDesugar<'db> {
 ///
 /// The source body is left unchanged; consumers query this plan through
 /// [`BodyDesugarView`] to interpret selected source nodes as core syntax.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct BodyPreTypeckDesugarPlan<'db> {
     /// Function or lambda body containing the source nodes.
     pub body: FuncBody<'db>,
@@ -492,7 +495,7 @@ pub struct BodyPreTypeckDesugarPlan<'db> {
 }
 
 /// One body-local pre-typecheck transform.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum PreTypeckTransform<'db> {
     /// Tuple expression normalized to unit/single/pair product form.
     TupleExprToProduct {
@@ -550,7 +553,7 @@ pub enum PreTypeckTransform<'db> {
 }
 
 /// Bool source node category for unit-sum views.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum BoolUnitSumNode<'db> {
     /// Expression constructor.
     Expr(Id<Expr<'db>>),
@@ -562,7 +565,7 @@ pub enum BoolUnitSumNode<'db> {
 ///
 /// Field initializers are typechecked through synthetic bodies, so this module
 /// also records a compact module-level view for diagnostics and tests.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct FieldInitPreTypeckDesugarPlan<'db> {
     /// Contract owning the field.
     pub contract: DefId<'db>,
@@ -573,7 +576,7 @@ pub struct FieldInitPreTypeckDesugarPlan<'db> {
 }
 
 /// One field-initializer pre-typecheck transform.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum FieldInitPreTypeckTransform<'db> {
     /// Tuple expression normalized to unit/single/pair product form.
     TupleExprToProduct {
@@ -610,7 +613,7 @@ pub enum FieldInitPreTypeckTransform<'db> {
 
 /// Computes pre-typecheck desugar facts for the parsed module without changing
 /// the module itself.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn pre_typeck_desugar_plan<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
@@ -636,7 +639,7 @@ pub fn pre_typeck_desugar_plan<'db>(
 /// The returned list contains `body` and any nested lambda bodies that contain
 /// tuple/product desugar facts. Keeping this as a separate tracked query gives
 /// type checking a narrow cache boundary to call before inference.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn pre_typeck_desugar_body_tree<'db>(
     db: &'db dyn Db,
     body: FuncBody<'db>,

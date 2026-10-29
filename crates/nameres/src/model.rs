@@ -63,7 +63,7 @@ pub struct ModuleFileSnapshot {
 }
 
 /// Logical library namespace that owns a module path.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::SalsaValue)]
 pub enum LibraryId {
     /// User input tree.
     Main,
@@ -117,7 +117,7 @@ impl<'db> ModuleId<'db> {
 }
 
 /// Module path reference extracted from import/export syntax.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ModulePathRef<'db> {
     /// Span covering the complete module path syntax.
     pub span: Span<'db>,
@@ -128,7 +128,7 @@ pub struct ModulePathRef<'db> {
 }
 
 /// Import/export module references found in one source file.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ModuleImports<'db> {
     /// Import declarations in source order.
     pub imports: Vec<Import<'db>>,
@@ -141,7 +141,7 @@ pub struct ModuleImports<'db> {
 }
 
 /// Resolved module path and its file location.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ResolvedModulePath<'db> {
     /// Logical module identity.
     pub module: ModuleId<'db>,
@@ -150,7 +150,7 @@ pub struct ResolvedModulePath<'db> {
 }
 
 /// Interface namespace.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum Namespace {
     /// Term namespace.
     Term,
@@ -161,7 +161,7 @@ pub enum Namespace {
 }
 
 /// Origin of a public/imported item.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct Origin<'db> {
     /// Module where the item originates.
     pub module: ModuleId<'db>,
@@ -175,7 +175,7 @@ pub struct Origin<'db> {
 /// definition ultimately exposed by that provider. Their equality therefore
 /// distinguishes direct exports from re-exports without discarding definition
 /// identity needed by candidate ranking.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct AutoImportCandidate<'db> {
     /// Loaded module whose public interface exposes this symbol.
     pub provider: ModuleId<'db>,
@@ -203,7 +203,7 @@ impl<'db> AutoImportCandidate<'db> {
 /// module import (`import lib.foo;`). `member` is retained as evidence that the
 /// requested immediate qualified term lookup is present in the provider's
 /// public interface.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct AutoImportModuleCandidate<'db> {
     /// Loaded module named by the generated import.
     pub provider: ModuleId<'db>,
@@ -216,7 +216,7 @@ pub struct AutoImportModuleCandidate<'db> {
 }
 
 /// Public or imported item reference.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ItemRef<'db> {
     /// Namespace in which the item is visible.
     pub namespace: Namespace,
@@ -231,7 +231,7 @@ pub struct ItemRef<'db> {
 }
 
 /// Constructor visibility carried by an item reference.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum ConstructorVisibility {
     /// The referenced item is not a data type.
     NotData,
@@ -242,7 +242,7 @@ pub enum ConstructorVisibility {
 }
 
 /// Non-empty ordered set of visible constructor names.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct VisibleConstructors {
     names: BTreeSet<String>,
 }
@@ -302,7 +302,7 @@ impl VisibleConstructors {
 }
 
 /// Public module alias exported by an interface.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ModuleAlias<'db> {
     /// Alias name visible to importers.
     pub public_name: String,
@@ -315,7 +315,7 @@ pub struct ModuleAlias<'db> {
 /// The maps are the lookup surfaces used by imports and re-exports. `item_refs`
 /// preserves normalized item references for selector filtering and constructor
 /// visibility.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct Interface<'db> {
     /// Public term names.
     pub terms: BTreeMap<String, Origin<'db>>,
@@ -332,7 +332,7 @@ pub struct Interface<'db> {
 }
 
 /// Directed edge in a reachable module graph.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ModuleEdge<'db> {
     /// Source module.
     pub from: ModuleId<'db>,
@@ -341,7 +341,7 @@ pub struct ModuleEdge<'db> {
 }
 
 /// Reachable module graph from an entry module.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ModuleGraph<'db> {
     /// Entry module.
     pub entry: ModuleId<'db>,
@@ -354,14 +354,14 @@ pub struct ModuleGraph<'db> {
 }
 
 /// Summary returned by validation queries.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ValidationSummary {
     /// `true` once validation has traversed the module.
     pub checked: bool,
 }
 
 /// Instance origins visible for a module.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct InstanceImports<'db> {
     /// Locally declared instances.
     pub local: Vec<Origin<'db>>,
@@ -375,7 +375,7 @@ pub struct InstanceImports<'db> {
 /// construction, and body inference should depend on this value rather than on
 /// [`ModuleEnv`] so import-diagnostic-only edits can backdate before reaching
 /// type queries.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ModuleImportSurface<'db> {
     /// Owner used when synthesizing module qualifier resolutions.
     pub owner: Option<DefId<'db>>,
@@ -421,7 +421,7 @@ pub struct ModuleImportSurface<'db> {
 /// This compatibility composite keeps diagnostics together with the import
 /// facts for frontend diagnostic aggregation. Facts-only consumers should use
 /// [`ModuleImportSurface`].
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ModuleEnv<'db> {
     /// Facts used by lookup and type inference.
     pub surface: ModuleImportSurface<'db>,
@@ -596,7 +596,7 @@ impl<'db> hir_nameres::ImportedNames<'db> for ModuleEnv<'db> {
 }
 
 /// Summary returned by full resolution queries.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct FullResolutionSummary {
     /// `true` once full resolution has traversed the module.
     pub checked: bool,

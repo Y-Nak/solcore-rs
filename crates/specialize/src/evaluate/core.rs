@@ -17,7 +17,8 @@ use super::{
     CEnv, TypeReg, VEnv, YulState,
     assigned::{AssignedNames, invalidate_assigned},
     effects::{
-        compute_comptime_pure_funs, compute_pure_funs, compute_write_effects, expr_is_pure,
+        compute_comptime_inlinable_funs, compute_comptime_pure_funs, compute_inlinable_funs,
+        compute_pure_funs, compute_write_effects, expr_is_pure,
         expr_write_effects_from_call_summaries, intrinsic_is_pure, storage_field_names,
     },
     erasure::{
@@ -32,7 +33,8 @@ use super::{
         match_expr_arms_with, match_known_patterns_with, pattern_bindings, string_expr,
     },
     value::{
-        BigInt, bitand_word, bitor_word, bitxor_word, not_word, word_div, word_low_byte, word_mod,
+        BigInt, bitand_word, bitor_word, bitxor_word, not_word, shl_word, shr_word, word_div,
+        word_low_byte, word_mod,
     },
     yul_const::{
         eval_yul_op, merge_yul_state, subst_yul_block, venv_to_yul_state, venv_to_yul_subst,
@@ -58,7 +60,7 @@ mod pattern_tests;
 #[path = "staged_patterns.rs"]
 mod staged_patterns;
 
-use closures::{ClosureCloneKey, LiftedClosure};
+use closures::{ClosureCloneKey, ClosureFactory, LiftedClosure};
 
 struct LetInput<'db> {
     span: Span<'db>,
@@ -166,7 +168,11 @@ pub(super) struct Evaluator<'db> {
     pub(super) db: &'db dyn Db,
     functions: FxHashMap<String, MonoFunction<'db>>,
     pure_funs: FxHashSet<String>,
+    // `pure_funs` plus functions whose only effects are guarded statement
+    // calls (such as checked-arithmetic panics); see `compute_inlinable_funs`.
+    inlinable_funs: FxHashSet<String>,
     comptime_pure_funs: FxHashSet<String>,
+    comptime_inlinable_funs: FxHashSet<String>,
     write_effects: FxHashMap<String, AssignedNames>,
     pub(super) diagnostics: Vec<SpecializeDiagnostic<'db>>,
     inline_stack: Vec<InlineFrame<'db>>,
@@ -175,12 +181,16 @@ pub(super) struct Evaluator<'db> {
     // Unlike inline fuel, clone fuel is never reset per emitted function. A
     // recursive function deriving a fresh literal therefore terminates.
     clone_fuel: usize,
+    // Generated functions must not reclaim the work spent creating large
+    // literals when their ordinary per-function evaluation budget is reset.
+    literal_fuel: usize,
     // Mono functions are module-global. Hull's object reachability copies a
     // shared clone into every object that calls it, so module-wide dedup is safe.
     clone_names: FxHashMap<StringCloneKey, String>,
     pending_clones: VecDeque<PendingClone<'db>>,
     next_clone_id: usize,
     closure_clone_names: FxHashMap<ClosureCloneKey<'db>, String>,
+    closure_factories: FxHashMap<String, ClosureFactory<'db>>,
     lifted_closures: Vec<LiftedClosure<'db>>,
     capture_types: TypeReg<'db>,
     // Fresh symbolic identities for locals whose runtime declaration cannot be
@@ -305,23 +315,30 @@ impl<'db> Evaluator<'db> {
             .collect::<FxHashMap<_, _>>();
         let storage_fields = storage_field_names(db, module);
         let pure_funs = compute_pure_funs(db, &functions, &storage_fields);
+        let inlinable_funs = compute_inlinable_funs(db, &functions, &storage_fields);
         let comptime_pure_funs = compute_comptime_pure_funs(db, &functions, &storage_fields);
+        let comptime_inlinable_funs =
+            compute_comptime_inlinable_funs(db, &functions, &storage_fields);
         let write_effects = compute_write_effects(&functions, &storage_fields);
         Self {
             db,
             functions,
             pure_funs,
+            inlinable_funs,
             comptime_pure_funs,
+            comptime_inlinable_funs,
             write_effects,
             diagnostics: Vec::new(),
             inline_stack: Vec::new(),
             fuel_limit: fuel,
             fuel,
             clone_fuel: fuel,
+            literal_fuel: fuel,
             clone_names: FxHashMap::default(),
             pending_clones: VecDeque::new(),
             next_clone_id: 0,
             closure_clone_names: FxHashMap::default(),
+            closure_factories: FxHashMap::default(),
             lifted_closures: Vec::new(),
             capture_types: TypeReg::default(),
             unavailable_values: FxHashSet::default(),
@@ -682,6 +699,11 @@ impl<'db> Evaluator<'db> {
                 let (expr, effects) = self.eval_expr_stable(&env, &comptime_env, expr);
                 let mut env = env;
                 let mut comptime_env = comptime_env;
+                let (expr, factory_bindings) = self.capture_closure_factory(expr);
+                if !factory_bindings.is_empty() {
+                    self.invalidate_assigned_effects(&effects, &mut env, &mut comptime_env);
+                    return (env, comptime_env, factory_bindings);
+                }
                 if let MonoExprKind::Call { callee, args, .. } = &expr.kind
                     && let Some(body) = self.try_inline_stmt_call(callee, args, span)
                 {
@@ -720,7 +742,9 @@ impl<'db> Evaluator<'db> {
                 let (rhs_env, rhs_comptime_env) =
                     self.mask_assigned_env(env.clone(), comptime_env.clone(), &lhs_effects);
                 let (rhs, rhs_effects) = self.eval_expr_stable(&rhs_env, &rhs_comptime_env, rhs);
-                let (rhs, mut capture_bindings) = self.capture_closure_value(rhs);
+                let (rhs, mut capture_bindings) = self.capture_closure_factory(rhs);
+                let (rhs, bindings) = self.capture_closure_value(rhs);
+                capture_bindings.extend(bindings);
                 let static_assignment = matches!(&lhs.kind, MonoExprKind::Var(_))
                     && target
                         .as_ref()
@@ -1080,8 +1104,14 @@ impl<'db> Evaluator<'db> {
         };
         let (init, capture_bindings) = match init {
             Some(expr) => {
+                let (expr, mut factory_bindings) = if comptime {
+                    (expr, Vec::new())
+                } else {
+                    self.capture_closure_factory(expr)
+                };
                 let (expr, bindings) = self.capture_closure_value(expr);
-                (Some(expr), bindings)
+                factory_bindings.extend(bindings);
+                (Some(expr), factory_bindings)
             }
             init => (init, Vec::new()),
         };
@@ -2202,7 +2232,7 @@ impl<'db> Evaluator<'db> {
     }
 
     fn eval_primitive(
-        &self,
+        &mut self,
         intrinsic: MonoIntrinsic,
         args: &[MonoExpr<'db>],
         ty: MonoTy<'db>,
@@ -2216,13 +2246,13 @@ impl<'db> Evaluator<'db> {
                 known_int(arg).map(|value| int_expr(value.mod_word(), ty, span))
             }
             (MonoIntrinsic::IntegerAdd, [lhs, rhs]) => {
-                Some(int_expr(known_int(lhs)?.add(&known_int(rhs)?), ty, span))
+                self.eval_integer_arithmetic(BinOp::Add, known_int(lhs)?, known_int(rhs)?, ty, span)
             }
             (MonoIntrinsic::IntegerSub, [lhs, rhs]) => {
-                Some(int_expr(known_int(lhs)?.sub(&known_int(rhs)?), ty, span))
+                self.eval_integer_arithmetic(BinOp::Sub, known_int(lhs)?, known_int(rhs)?, ty, span)
             }
             (MonoIntrinsic::IntegerMul, [lhs, rhs]) => {
-                Some(int_expr(known_int(lhs)?.mul(&known_int(rhs)?), ty, span))
+                self.eval_integer_arithmetic(BinOp::Mul, known_int(lhs)?, known_int(rhs)?, ty, span)
             }
             (MonoIntrinsic::IntegerLt, [lhs, rhs]) => Some(bool_expr(
                 known_int(lhs)?.cmp(&known_int(rhs)?) == Ordering::Less,
@@ -2232,11 +2262,9 @@ impl<'db> Evaluator<'db> {
             (MonoIntrinsic::IntegerEq, [lhs, rhs]) => {
                 Some(bool_expr(known_int(lhs)? == known_int(rhs)?, ty, span))
             }
-            (MonoIntrinsic::ConcatLit, [lhs, rhs]) => Some(string_expr(
-                format!("{}{}", known_string(lhs)?, known_string(rhs)?),
-                ty,
-                span,
-            )),
+            (MonoIntrinsic::ConcatLit, [lhs, rhs]) => {
+                self.eval_string_concat(known_string(lhs)?, known_string(rhs)?, ty, span)
+            }
             (MonoIntrinsic::StrlenLit, [arg]) => {
                 let len = known_string(arg)?.len() as u64;
                 Some(int_expr(BigInt::from_u64(len), ty, span))
@@ -2305,7 +2333,7 @@ impl<'db> Evaluator<'db> {
     }
 
     fn eval_binop(
-        &self,
+        &mut self,
         lhs: &MonoExpr<'db>,
         op: BinOp,
         rhs: &MonoExpr<'db>,
@@ -2315,15 +2343,15 @@ impl<'db> Evaluator<'db> {
         if op == BinOp::Add
             && let (Some(lhs), Some(rhs)) = (known_string(lhs), known_string(rhs))
         {
-            return Some(string_expr(format!("{lhs}{rhs}"), ty, span));
+            return self.eval_string_concat(lhs, rhs, ty, span);
         }
         let lhs_int = known_int(lhs)?;
         let rhs_int = known_int(rhs)?;
         if ty_is_builtin(self.db, ty.ty(), BuiltinTyCtor::Integer) {
             return match op {
-                BinOp::Add => Some(int_expr(lhs_int.add(&rhs_int), ty, span)),
-                BinOp::Sub => Some(int_expr(lhs_int.sub(&rhs_int), ty, span)),
-                BinOp::Mul => Some(int_expr(lhs_int.mul(&rhs_int), ty, span)),
+                BinOp::Add | BinOp::Sub | BinOp::Mul => {
+                    self.eval_integer_arithmetic(op, lhs_int, rhs_int, ty, span)
+                }
                 BinOp::Eq => Some(bool_expr(lhs_int == rhs_int, ty, span)),
                 BinOp::NotEq => Some(bool_expr(lhs_int != rhs_int, ty, span)),
                 BinOp::Lt => Some(bool_expr(lhs_int < rhs_int, ty, span)),
@@ -2359,6 +2387,15 @@ impl<'db> Evaluator<'db> {
                 BinOp::Mul => Some(int_expr(lhs_int.mul(&rhs_int).mod_word(), ty, span)),
                 BinOp::Div => Some(int_expr(word_div(lhs_int, rhs_int), ty, span)),
                 BinOp::Mod => Some(int_expr(word_mod(lhs_int, rhs_int), ty, span)),
+                BinOp::UncheckedAdd => Some(int_expr(lhs_int.add(&rhs_int).mod_word(), ty, span)),
+                BinOp::UncheckedSub => Some(int_expr(lhs_int.sub(&rhs_int).mod_word(), ty, span)),
+                BinOp::UncheckedMul => Some(int_expr(lhs_int.mul(&rhs_int).mod_word(), ty, span)),
+                // Unchecked division by zero still reverts: leave it to runtime.
+                BinOp::UncheckedDiv | BinOp::UncheckedMod if rhs_int.mod_word().is_zero() => None,
+                BinOp::UncheckedDiv => Some(int_expr(word_div(lhs_int, rhs_int), ty, span)),
+                BinOp::UncheckedMod => Some(int_expr(word_mod(lhs_int, rhs_int), ty, span)),
+                BinOp::Shl => Some(int_expr(shl_word(&lhs_int, &rhs_int), ty, span)),
+                BinOp::Shr => Some(int_expr(shr_word(&lhs_int, &rhs_int), ty, span)),
                 BinOp::BitAnd => Some(int_expr(bitand_word(&lhs_int, &rhs_int), ty, span)),
                 BinOp::BitOr => Some(int_expr(bitor_word(&lhs_int, &rhs_int), ty, span)),
                 BinOp::BitXor => Some(int_expr(bitxor_word(&lhs_int, &rhs_int), ty, span)),
@@ -2366,6 +2403,83 @@ impl<'db> Evaluator<'db> {
             };
         }
         None
+    }
+
+    fn eval_string_concat(
+        &mut self,
+        lhs: String,
+        rhs: String,
+        ty: MonoTy<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        // A short recursive program can double a literal on every call. Call
+        // fuel alone does not bound the memory used by those intermediate
+        // values. Charge before allocating, leaving ordinary small strings on
+        // the existing scalar evaluation budget.
+        let bytes = lhs.len().saturating_add(rhs.len());
+        let work = bytes.saturating_sub(64).div_ceil(64);
+        if !self.charge_bulk_work(work, "concatLit", span) {
+            return None;
+        }
+        Some(string_expr(format!("{lhs}{rhs}"), ty, span))
+    }
+
+    fn eval_integer_arithmetic(
+        &mut self,
+        op: BinOp,
+        lhs: BigInt,
+        rhs: BigInt,
+        ty: MonoTy<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        let limbs = if op == BinOp::Mul {
+            lhs.limb_len().saturating_add(rhs.limb_len())
+        } else {
+            lhs.limb_len().max(rhs.limb_len()).saturating_add(1)
+        };
+        // Both schoolbook multiplication and conversion of the result back to
+        // decimal are quadratic in its limb count. Include that work before
+        // performing either operation; word-sized arithmetic stays unchanged.
+        let work = if limbs > 32 {
+            limbs.saturating_mul(limbs).div_ceil(64)
+        } else {
+            0
+        };
+        let operation = match op {
+            BinOp::Add => "integerAdd",
+            BinOp::Sub => "integerSub",
+            BinOp::Mul => "integerMul",
+            _ => return None,
+        };
+        if !self.charge_bulk_work(work, operation, span) {
+            return None;
+        }
+        let value = match op {
+            BinOp::Add => lhs.add(&rhs),
+            BinOp::Sub => lhs.sub(&rhs),
+            BinOp::Mul => lhs.mul(&rhs),
+            _ => return None,
+        };
+        Some(int_expr(value, ty, span))
+    }
+
+    fn charge_bulk_work(&mut self, work: usize, operation: &str, span: Span<'db>) -> bool {
+        if work <= self.fuel && work <= self.literal_fuel {
+            self.fuel -= work;
+            self.literal_fuel -= work;
+            return true;
+        }
+        self.fuel = 0;
+        self.literal_fuel = 0;
+        self.push_inline_limit_diagnostic(
+            operation.to_owned(),
+            self.inline_chain_is_comptime(self.comptime_mode),
+            span,
+            InlineBudgetExhaustion::TotalWork {
+                limit: self.fuel_limit,
+            },
+        );
+        false
     }
 
     fn eval_unary(
@@ -2555,8 +2669,14 @@ impl<'db> Evaluator<'db> {
             if self.pure_funs.contains(&function.name) {
                 self.pure_funs.insert(name.clone());
             }
+            if self.inlinable_funs.contains(&function.name) {
+                self.inlinable_funs.insert(name.clone());
+            }
             if self.comptime_pure_funs.contains(&function.name) {
                 self.comptime_pure_funs.insert(name.clone());
+            }
+            if self.comptime_inlinable_funs.contains(&function.name) {
+                self.comptime_inlinable_funs.insert(name.clone());
             }
             self.write_effects.insert(
                 name.clone(),
@@ -2751,7 +2871,7 @@ impl<'db> Evaluator<'db> {
     }
 
     fn function_can_inline(&self, name: &str, function: &MonoFunction<'db>) -> bool {
-        self.pure_funs.contains(name) || self.function_is_std_dispatch(function)
+        self.inlinable_funs.contains(name) || self.function_is_std_dispatch(function)
     }
 
     fn function_is_std_dispatch(&self, function: &MonoFunction<'db>) -> bool {
@@ -2839,8 +2959,8 @@ impl<'db> Evaluator<'db> {
         if self.has_inline_failure_diagnostic() {
             return;
         }
-        // Both limits bound evaluator unfold steps. Keep the established
-        // SC0410/SC0414 fuel diagnostics for compatibility, but report the
+        // Keep the established SC0410/SC0414 fuel diagnostics for both
+        // call unfolding and bulk literal work, but report the
         // limit that actually stopped evaluation: total work or inline depth.
         let limit = exhaustion.diagnostic_limit();
         let kind = if comptime {
@@ -2889,6 +3009,12 @@ impl<'db> Evaluator<'db> {
                 MonoStmtKind::Let { id, mode, init, .. } => {
                     let comptime = mode.is_comptime();
                     let init = init.map(|expr| self.eval_expr(&env, &comptime_env, expr));
+                    if init
+                        .as_ref()
+                        .is_some_and(|expr| self.residual_has_effects(expr))
+                    {
+                        return FoldOutcome::ReturnedUnknownAbort;
+                    }
                     let init_is_comptime = init
                         .as_ref()
                         .is_some_and(|expr| self.expr_is_comptime(expr, &comptime_env));
@@ -2915,6 +3041,9 @@ impl<'db> Evaluator<'db> {
                 } => {
                     let (lhs, target) = self.eval_lvalue(&env, &comptime_env, lhs);
                     let rhs = self.eval_expr(&env, &comptime_env, rhs);
+                    if self.residual_has_effects(&rhs) {
+                        return FoldOutcome::ReturnedUnknownAbort;
+                    }
                     if let Some(id) = target {
                         let rhs_is_comptime = self.expr_is_comptime(&rhs, &comptime_env);
                         if expr_is_pure(&rhs, &self.comptime_pure_funs) {
@@ -2953,6 +3082,15 @@ impl<'db> Evaluator<'db> {
                     } else {
                         FoldOutcome::ReturnedUnknownAbort
                     };
+                }
+                // Pure statements are droppable. An inlinable function may
+                // guard an effect here (for example a panic); unfold past it
+                // only if evaluation makes it vanish.
+                MonoStmtKind::Expr(expr) if !expr_is_pure(&expr, &self.pure_funs) => {
+                    let expr = self.eval_expr(&env, &comptime_env, expr);
+                    if self.residual_has_effects(&expr) {
+                        return FoldOutcome::ReturnedUnknownAbort;
+                    }
                 }
                 MonoStmtKind::Expr(_) => {}
                 MonoStmtKind::Match { scrutinees, arms } => {
@@ -3109,6 +3247,13 @@ impl<'db> Evaluator<'db> {
         FoldOutcome::FellThroughContinue(env, comptime_env)
     }
 
+    /// Whether an expression left after evaluation may still have an effect
+    /// (for example an unfolded checked-arithmetic call that could revert).
+    /// Unfolding a function body past such a residual would discard it.
+    fn residual_has_effects(&self, expr: &MonoExpr<'db>) -> bool {
+        !self.expr_is_known_value(expr) && !expr_is_pure(expr, &self.pure_funs)
+    }
+
     fn check_comptime_params(
         &mut self,
         name: &str,
@@ -3168,8 +3313,13 @@ impl<'db> Evaluator<'db> {
             } => {
                 let callee_is_comptime = match origin {
                     MonoCallOrigin::Builtin(intrinsic) => intrinsic_is_pure(*intrinsic),
+                    // A guarded effect (such as an overflow panic) only means
+                    // the call may fail to fold. With every argument known,
+                    // evaluation already tried, so a surviving call reached it.
                     MonoCallOrigin::Source(_) | MonoCallOrigin::ByName => {
                         self.comptime_pure_funs.contains(&callee.name)
+                            || (self.comptime_inlinable_funs.contains(&callee.name)
+                                && !args.iter().all(|arg| self.expr_is_known_value(arg)))
                     }
                 };
                 callee_is_comptime

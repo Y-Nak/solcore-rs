@@ -83,6 +83,11 @@ fn parser_corpus_ok_no_diagnostics(fixture: Fixture<&str>) {
     run_fixture_assertion(fixture, assert_ok_fixture);
 }
 
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/../../std", glob: "*.sol")]
+fn standard_library_has_no_diagnostics(fixture: Fixture<&str>) {
+    run_fixture_assertion(fixture, assert_ok_fixture);
+}
+
 fn assert_ok_fixture(path: &str, content: &str) {
     let db = TestDb::default();
     let file = fixture_source_file(&db, path, content);

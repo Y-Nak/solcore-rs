@@ -43,6 +43,16 @@ fn formats_declarations_types_and_control_flow() {
 }
 
 #[test]
+fn formats_unary_minus_without_changing_operator_precedence() {
+    let source = "function f(x:word){let low=-128;let hex=-0x80;return -x*2- -(-x);}";
+    let formatted = format(source);
+    assert!(formatted.contains("let low = -128;"), "{formatted}");
+    assert!(formatted.contains("let hex = -0x80;"), "{formatted}");
+    assert!(formatted.contains("return -x * 2 - -(-x);"), "{formatted}");
+    assert_stable(source);
+}
+
+#[test]
 fn formats_yul_without_semicolon_boundaries() {
     let source = "function f(){assembly{let x:=0 x:=add(x,1) for{let i:=0}lt(i,3){i:=add(i,1)}{mstore(i,x)} switch x case 0{leave}default{revert(0,0)}}}";
     assert_eq!(
@@ -80,6 +90,26 @@ fn keeps_empty_for_clauses_inline() {
         format("function f(){for(;true;){break;}}"),
         "function f() {\n    for (; true;) {\n        break;\n    }\n}\n"
     );
+}
+
+#[test]
+fn formats_unchecked_blocks_like_blocks() {
+    let source = "function f(x:word)returns(word){unchecked{let y=x+x;x-=y;return x;}}";
+    assert_eq!(
+        format(source),
+        "function f(x: word) returns (word) {\n    unchecked {\n        let y = x + x;\n        x -= y;\n        return x;\n    }\n}\n"
+    );
+    assert_stable(source);
+}
+
+#[test]
+fn keeps_shift_operator_tokens_together() {
+    let source = "function f(x:word,y:Pair<word,Pair<word,word>>)returns(word){let a=x<<1;x>>=a;x<<=1;let p=@P<Q<word>>;return x>>a>y.fst?a:x>=a?1:0;}";
+    assert_eq!(
+        format(source),
+        "function f(x: word, y: Pair<word, Pair<word, word>>) returns (word) {\n    let a = x << 1;\n    x >>= a;\n    x <<= 1;\n    let p = @P<Q<word>>;\n    return x >> a > y.fst ? a : x >= a ? 1 : 0;\n}\n"
+    );
+    assert_stable(source);
 }
 
 #[test]

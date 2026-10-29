@@ -83,7 +83,7 @@ fn multi_root_workspace_prefix(db: &dyn Db, importing: ModuleId<'_>) -> Vec<Stri
 ///
 /// Returns a diagnostic when the path cannot be mapped to a library root or
 /// when the target source file has not been loaded into the database.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 #[tracing::instrument(
     target = "nameres::query",
     level = "debug",

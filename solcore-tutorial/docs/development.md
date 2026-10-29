@@ -13,8 +13,6 @@ From a fresh checkout at the repository root:
 cargo install wasm-pack --version 0.15.0 --locked
 cargo install mdbook --version 0.4.52 --locked
 cd playground
-wasm-pack build ../crates/wasm --target web --out-dir pkg --profile wasm-release
-wasm-pack build ../crates/lsp --target web --out-dir pkg --profile wasm-release -- --features wasm
 npm ci
 cd ../solcore-tutorial
 npm run build
@@ -31,8 +29,8 @@ Serve `.wasm` files as `application/wasm`.
 Opening `index.html` through a `file://` URL does not support the module workers.
 The output also works below a hosting subdirectory when you copy all its files together.
 
-The two initial `wasm-pack` commands generate local packages before dependency installation.
-The full tutorial build then rebuilds both WASM packages and downloads the pinned solc build if needed.
+`npm ci` links the local WASM package directories before they are built.
+The full tutorial build generates both WASM packages and downloads the pinned solc build if needed.
 See the [playground development guide](https://github.com/argotorg/solcore-rs/blob/HEAD/playground/README.md#development) for the shared editor and runtime.
 
 For chapter, example, or frontend changes, run `npm run build:book` from `solcore-tutorial/` to reuse prepared WASM and solc assets.

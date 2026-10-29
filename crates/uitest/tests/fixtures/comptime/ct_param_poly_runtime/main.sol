@@ -22,6 +22,7 @@ function process<t>(z: t) returns (word) where t: Wrap {
 
 contract ComptimeParamPolyRuntime {
     function main() returns (word) {
-        return process(42);
+        let value: word = 42;
+        return process(value);
     }
 }

@@ -9,7 +9,8 @@ use parser::parse_file_to_hir;
 use rustc_hash::FxHashSet;
 
 use crate::{
-    BuiltinTyCtor, Db, Ty, TyCtor, TyKind, UserTyCtor, support::is_canonical_std_def_named,
+    BuiltinTyCtor, Db, Ty, TyCtor, TyKind, UserTyCtor,
+    support::{is_canonical_std_def_named, is_canonical_std_module_def_named},
 };
 
 type AbiAdtStack<'db> = Vec<Ty<'db>>;
@@ -45,7 +46,7 @@ impl<'db> AbiAdtEvidence<'db> {
 }
 
 /// ABI parameter or tuple component.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct AbiParam {
     /// Parameter name. Outputs and tuple components use the empty name,
     /// matching the reference ABI emitter.
@@ -56,7 +57,7 @@ pub struct AbiParam {
     pub components: Vec<AbiParam>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum AbiType {
     Uint256,
     Bool,
@@ -93,7 +94,7 @@ impl AbiType {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct AbiSelector(pub [u8; 4]);
 
 impl AbiSelector {
@@ -114,7 +115,7 @@ pub struct AbiSignature<'db> {
 }
 
 /// Computes the ABI selector for a canonical signature.
-#[salsa::tracked]
+#[salsa::tracked(returns(clone))]
 pub fn abi_selector<'db>(db: &'db dyn Db, signature: AbiSignature<'db>) -> AbiSelector {
     let hash = hir::keccak::keccak256(signature.text(db).as_bytes());
     AbiSelector([hash[0], hash[1], hash[2], hash[3]])
@@ -407,7 +408,9 @@ fn abi_value_type_of<'db>(
             {
                 return Ok((AbiType::Named(name), Vec::new()));
             }
-            if let Some(element) = canonical_calldata_array_element(db, user, args)? {
+            if let Some(element) = canonical_calldata_array_element(db, user, args)?
+                .or(canonical_memory_array_element(db, user, args)?)
+            {
                 let (element_ty, components) = abi_value_type_of(
                     db,
                     element,
@@ -501,6 +504,39 @@ fn canonical_calldata_array_element<'db>(
     let [element] = elements.as_slice() else {
         return Err(format!(
             "array (expected one type argument, found {})",
+            elements.len()
+        ));
+    };
+    Ok(Some(*element))
+}
+
+/// Memory arrays use the canonical `DynArray` representation. Their element
+/// codec and word-sized memory representation are checked by the generated
+/// dispatch's `ABIEncode` obligation; this only describes the ABI value type.
+fn canonical_memory_array_element<'db>(
+    db: &'db dyn Db,
+    user: &UserTyCtor<'db>,
+    args: &[Ty<'db>],
+) -> Result<Option<Ty<'db>>, String> {
+    if !is_canonical_std_def_named(db, user.def, "memory") {
+        return Ok(None);
+    }
+    let [inner] = args else {
+        return Ok(None);
+    };
+    let TyKind::Named {
+        ctor: TyCtor::User(array),
+        args: elements,
+    } = inner.kind(db)
+    else {
+        return Ok(None);
+    };
+    if !is_canonical_std_def_named(db, array.def, "DynArray") {
+        return Ok(None);
+    }
+    let [element] = elements.as_slice() else {
+        return Err(format!(
+            "DynArray (expected one type argument, found {})",
             elements.len()
         ));
     };
@@ -776,13 +812,13 @@ fn abi_item_type_resolutions<'db>(
 
 fn canonical_user_abi_name(db: &dyn Db, user: &UserTyCtor<'_>) -> Option<String> {
     let name = user.def.name(db)?;
-    if !is_canonical_std_def_named(db, user.def, &name) {
-        return None;
-    }
-    match name.as_str() {
-        "uint256" | "address" | "bytes4" | "bytes32" => Some(name),
-        _ => None,
-    }
+    let module = match name.as_str() {
+        "uint256" | "address" | "bytes4" | "bytes32" => "std",
+        "int8" | "int16" | "int32" | "int64" | "int128" | "int256" => "signed",
+        "uint8" | "uint16" | "uint32" | "uint64" | "uint128" => "unsigned",
+        _ => return None,
+    };
+    is_canonical_std_module_def_named(db, user.def, module, &name).then_some(name)
 }
 
 fn contains_canonical_calldata_array<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
@@ -1212,7 +1248,9 @@ fn is_canonical_std_location(db: &dyn Db, user: &UserTyCtor<'_>) -> bool {
 }
 
 fn is_canonical_std_abi_container(db: &dyn Db, user: &UserTyCtor<'_>) -> bool {
-    is_canonical_std_location(db, user) || is_canonical_std_def_named(db, user.def, "array")
+    is_canonical_std_location(db, user)
+        || is_canonical_std_def_named(db, user.def, "array")
+        || is_canonical_std_def_named(db, user.def, "DynArray")
 }
 
 pub(super) fn contract_diag_unsupported_abi_type<'db>(

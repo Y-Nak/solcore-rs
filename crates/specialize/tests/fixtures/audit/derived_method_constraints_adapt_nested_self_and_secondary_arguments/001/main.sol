@@ -29,5 +29,6 @@ impl P<(Box, word), (Box, bool)> {
     }
 }
 function main() returns (word) {
-    return C.f(Box(1), 2);
+    let value: word = 2;
+    return C.f(Box(1), value);
 }

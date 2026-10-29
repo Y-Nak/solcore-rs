@@ -1310,6 +1310,59 @@ impl<'db> InferCtx<'db> {
             BinOp::Mod => self.infer_operator_call_expected(
                 body, expr, lhs_expr, rhs_expr, "Mod", "mod", expected,
             ),
+            // The shift amount may have a different type than the shifted
+            // value (any type with a `ShiftAmount` instance).
+            BinOp::Shl => self.infer_operator_call_expected(
+                body, expr, lhs_expr, rhs_expr, "Shl", "bshl", expected,
+            ),
+            BinOp::Shr => self.infer_operator_call_expected(
+                body, expr, lhs_expr, rhs_expr, "Shr", "bshr", expected,
+            ),
+            BinOp::UncheckedAdd => self.infer_operator_call_expected(
+                body,
+                expr,
+                lhs_expr,
+                rhs_expr,
+                "UncheckedAdd",
+                "add",
+                expected,
+            ),
+            BinOp::UncheckedSub => self.infer_operator_call_expected(
+                body,
+                expr,
+                lhs_expr,
+                rhs_expr,
+                "UncheckedSub",
+                "sub",
+                expected,
+            ),
+            BinOp::UncheckedMul => self.infer_operator_call_expected(
+                body,
+                expr,
+                lhs_expr,
+                rhs_expr,
+                "UncheckedMul",
+                "mul",
+                expected,
+            ),
+            BinOp::UncheckedDiv => self.infer_operator_call_expected(
+                body,
+                expr,
+                lhs_expr,
+                rhs_expr,
+                "UncheckedDiv",
+                "div",
+                expected,
+            ),
+            BinOp::UncheckedMod => self.infer_operator_call_expected(
+                body,
+                expr,
+                lhs_expr,
+                rhs_expr,
+                "UncheckedMod",
+                "mod",
+                expected,
+            ),
             BinOp::BitAnd => self.infer_operator_call_expected(
                 body, expr, lhs_expr, rhs_expr, "BitAnd", "band", expected,
             ),

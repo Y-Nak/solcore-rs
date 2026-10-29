@@ -214,6 +214,8 @@ fn leaf_range_at(source: &str, offset: usize) -> Option<ByteRange> {
                         }
                         break;
                     }
+                } else if matches!(bytes.get(i..i + 3), Some(b"<<=" | b">>=")) {
+                    i += 3;
                 } else if is_two_byte_operator(bytes.get(i..i + 2)) {
                     i += 2;
                 } else {
@@ -266,6 +268,8 @@ fn is_two_byte_operator(bytes: Option<&[u8]>) -> bool {
                 | b"|="
                 | b"%="
                 | b"~="
+                | b"<<"
+                | b">>"
         )
     )
 }
@@ -500,8 +504,8 @@ mod tests {
 
     #[test]
     fn compound_assignment_leaf_ranges_include_every_canonical_operator() {
-        let source = "left *= right; left /= right; left ~=;";
-        for operator in ["*=", "/=", "~="] {
+        let source = "left *= right; left /= right; left ~=; left <<= right; left >>= right;";
+        for operator in ["*=", "/=", "~=", "<<=", ">>="] {
             let start = source.find(operator).expect("operator");
             assert_eq!(
                 leaf_range_at(source, start + 1),

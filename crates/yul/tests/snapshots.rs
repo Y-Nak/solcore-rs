@@ -7,9 +7,13 @@ use std::{
 
 use hir::{
     anchor::DefLocationTable,
+    ast::{
+        Ident,
+        function::{YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind},
+    },
     diag::Offset,
     input::SourceFile,
-    span::{AnchorId, Span},
+    span::{AnchorId, Span, SpannedElem},
 };
 use hull::{
     Alt as HullAlt, Arg as HullArg, CodeBlock as HullCodeBlock, Expr as HullExpr,
@@ -540,6 +544,98 @@ fn zero_sized_structured_return_needs_no_result_binding() {
     let function = yul_function(&yul, "usr$zero");
     assert!(function.contains("leave"), "{function}");
     assert!(!function.contains("->"), "{function}");
+}
+
+#[test]
+fn assembly_calls_use_checked_hull_function_resolution() {
+    let db = TestDb::default();
+    let sp = test_span(&db);
+    let name = |text: &str| SpannedElem::new(Ident::new(&db, text), sp);
+    let call = |callee: &str, args| YulExpr {
+        span: sp,
+        kind: YulExprKind::Call {
+            name: name(callee),
+            args,
+        },
+    };
+    let stmt = |kind| YulStmt { span: sp, kind };
+    let call_stmt = |callee: &str| stmt(YulStmtKind::Expr(call(callee, vec![])));
+    let local_function = |callee: &str, body| {
+        stmt(YulStmtKind::FunctionDef {
+            name: name(callee),
+            params: vec![],
+            rets: vec![],
+            body,
+        })
+    };
+    let literal = |value: &str| YulExpr {
+        span: sp,
+        kind: YulExprKind::Lit(YulLitKind::Number(value.to_owned())),
+    };
+    let function = |callee: &str, ret, body| HullFunction {
+        span: sp,
+        name: callee.into(),
+        args: vec![],
+        ret,
+        body,
+    };
+    let program = HullProgram {
+        span: sp,
+        entry_points: vec!["main".into()],
+        objects: vec![],
+        functions: vec![
+            function("helper", HullTy::unit(sp), vec![]),
+            function("pc", HullTy::unit(sp), vec![]),
+            function("difficulty", HullTy::unit(sp), vec![]),
+            function(
+                "main",
+                HullTy::word(sp),
+                vec![
+                    HullStmt {
+                        span: sp,
+                        kind: HullStmtKind::Assembly(vec![
+                            call_stmt("helper"),
+                            call_stmt("usr$helper"),
+                            call_stmt("wrapper"),
+                            local_function("wrapper", vec![call_stmt("helper")]),
+                            stmt(YulStmtKind::Block(vec![
+                                call_stmt("helper"),
+                                local_function("helper", vec![]),
+                            ])),
+                            call_stmt("helper"),
+                            local_function("add", vec![]),
+                            stmt(YulStmtKind::Expr(call(
+                                "pop",
+                                vec![call("add", vec![literal("1"), literal("2")])],
+                            ))),
+                            call_stmt("pc"),
+                            call_stmt("difficulty"),
+                        ]),
+                    },
+                    HullStmt {
+                        span: sp,
+                        kind: HullStmtKind::Return(HullExpr::word(sp, "0")),
+                    },
+                ],
+            ),
+        ],
+    };
+
+    assert_eq!(hull::check_program_with_db(&db, &program), Vec::new());
+    let yul = solcore_yul::render_hull_program(&db, &program).expect("Yul translation");
+    // One definition, two unqualified calls, an explicitly qualified call,
+    // and a call from an inline function all refer to the same Hull function.
+    assert_eq!(yul.matches("usr$helper()").count(), 5, "{yul}");
+    assert_eq!(yul.matches("asm$helper_").count(), 2, "{yul}");
+    assert_eq!(yul.matches("asm$wrapper_").count(), 2, "{yul}");
+    assert!(yul.contains("pop(add(1, 2))"), "{yul}");
+    assert_eq!(yul.matches("asm$add_").count(), 1, "{yul}");
+    assert_eq!(yul.matches("usr$pc()").count(), 2, "{yul}");
+    assert_eq!(yul.matches("usr$difficulty()").count(), 2, "{yul}");
+    assert!(!yul.contains("usr$usr$"), "{yul}");
+    if let Some(solc) = solc_strict_assembly_path() {
+        assert_solc_strict_assembly(&solc, "assembly_hull_function_calls", &yul);
+    }
 }
 
 #[test]

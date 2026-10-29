@@ -86,18 +86,16 @@ also has a copy button. Generating these outputs does not deploy or execute code
 
 ## Development
 
-Use wasm-pack 0.15.0, as pinned in CI, for the custom WASM build profile.
+Use Node.js 22 or newer and wasm-pack 0.15.0 for the custom WASM build profile.
 Playground development and builds are independent of the tutorial and do not
 require mdBook. The [Solcore Tutorial](../solcore-tutorial/README.md) owns its
 curriculum sources and bundles this application through the generic project
 interface described below.
 
-On a fresh checkout, generate the local wasm packages once before installing JavaScript dependencies:
+On a fresh checkout, install the locked JavaScript dependencies, then build:
 
 ```sh
-wasm-pack build ../crates/wasm --target web --out-dir pkg --profile wasm-release
-wasm-pack build ../crates/lsp --target web --out-dir pkg --profile wasm-release -- --features wasm
-npm install
+npm ci
 npm run dev
 ```
 
@@ -109,7 +107,7 @@ The rebuilt wasm packages are:
 - `../crates/wasm/pkg` for compiler/runtime calls
 - `../crates/lsp/pkg` for Monaco language features
 
-`package.json` depends on `solcore-wasm` and `solcore-lsp` through `file:` dependencies, so a normal install links the generated wasm-pack output into Vite without publishing it. If a dev server was already running while rebuilding wasm, restart with `npm run dev:force` once to clear Vite's dependency cache.
+`package.json` depends on `solcore-wasm` and `solcore-lsp` through `file:` dependencies. `npm ci` creates links to their output directories, and the build fills them before Vite starts. No npm publication is needed. If a dev server was already running while rebuilding wasm, restart with `npm run dev:force` once to clear Vite's dependency cache.
 
 ## Styles
 
@@ -202,10 +200,14 @@ same project in multiple tabs simultaneously.
 npm run build
 ```
 
-The build script downloads soljson, rebuilds both WASM packages, checks TypeScript,
-and builds the Playground into `dist/`. The reusable `buildPlayground({ outDir,
-base })` function in `scripts/build.mjs` also lets another static site bundle the
-same editor and runtime. It includes local compiler, LSP, and solc assets, with no
+The build script downloads the checksum-verified soljson, rebuilds both WASM packages
+with Cargo's `--locked` option, checks TypeScript, and builds the Playground into
+`dist/`. The pinned Binaryen version performs the final WASM optimization.
+Keep `Cargo.lock` and `package-lock.json` committed with every release.
+
+The reusable `buildPlayground({ outDir, base })` function in `scripts/build.mjs`
+also lets another static site bundle the same editor and runtime.
+It includes local compiler, LSP, and solc assets, with no
 knowledge of the site's content.
 The same module exports `previewStaticSite({ outDir, port })`, a Vite preview
 server for built static sites with missing-file 404 responses.
@@ -225,13 +227,39 @@ For static hosting under a subpath, set `VITE_BASE`:
 VITE_BASE=/solcore-rs/ npm run build
 ```
 
-The public playground at https://playground.solcore.soliditylang.org is a Cloudflare Worker configured in `wrangler.jsonc`. After `npm run build`, deploy it from `playground/`:
+The public playground at https://playground.solcore.soliditylang.org is a static-assets
+Cloudflare Worker configured in `wrangler.jsonc`. Releases are prepared and published
+locally using the repository's [release workflow](../docs/releasing.md), which also
+packages this site with the compiler's GitHub release. There is no release CI job.
+
+For a standalone deployment, run these commands from `playground/`:
 
 ```sh
-npx wrangler deploy
+npm ci
+npm run build
+npm run test:unit
+npm run test:wasm
+npm run deploy:check
+npm run deploy
 ```
 
-Authenticate with `npx wrangler login` as a member of the Argot Cloudflare account, or set `CLOUDFLARE_API_TOKEN` (Workers Scripts edit permission) and `CLOUDFLARE_ACCOUNT_ID`. The Worker and its custom domain are managed by the Argot infrastructure team.
+`deploy:check` validates Wrangler's deployment locally with `--dry-run`; it does not
+upload files. `deploy` publishes the existing `dist/` without rebuilding it. Both use
+the exact Wrangler version in the lockfile, so release commands never download an
+unpinned CLI with `npx`. Additional Wrangler arguments can be passed after `--`, for
+example `npm run deploy:check -- --assets /absolute/path/to/reviewed/dist`.
+
+Authenticate with `npm exec -- wrangler login` as a member of the Argot Cloudflare
+account, or set `CLOUDFLARE_API_TOKEN` (Workers Scripts edit permission) and
+`CLOUDFLARE_ACCOUNT_ID`. The Worker and its custom domain are managed by the Argot
+infrastructure team. Keep `workers_dev` and `preview_urls` disabled. The managed
+production hostname is served at `/`; use the default `VITE_BASE=/` for that release.
+
+The release bundle includes a `release.json` containing the compiler version and
+source commit. Retain a previously released bundle to roll back: deploy that bundle's
+assets with its archived Wrangler configuration rather than rebuilding an old branch.
+See [Wrangler's deploy documentation](https://developers.cloudflare.com/workers/wrangler/commands/workers/#deploy)
+for the deployment and dry-run options.
 
 ## WASM packages
 
@@ -251,8 +279,8 @@ npm run build:lsp-wasm
 Or directly from the repository root:
 
 ```sh
-wasm-pack build --target web crates/wasm --out-dir pkg --profile wasm-release
-wasm-pack build --target web crates/lsp --out-dir pkg --profile wasm-release -- --features wasm
+wasm-pack build --target web crates/wasm --out-dir pkg --profile wasm-release -- --locked
+wasm-pack build --target web crates/lsp --out-dir pkg --profile wasm-release -- --locked --features wasm
 ```
 
 That produces `crates/wasm/pkg/` and `crates/lsp/pkg/`. The workspace `[profile.wasm-release]` keeps

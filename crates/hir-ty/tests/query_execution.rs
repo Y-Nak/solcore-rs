@@ -12,7 +12,7 @@ fn solver_and_soundness_queries_execute(fixture: Fixture<&str>) {
         .canonicalize()
         .expect("solver source");
     run_in_large_stack(move || {
-        let std_root = frontend::repo_root().join("crates/parser/tests/fixtures/corpus/ok/std");
+        let std_root = frontend::repo_root().join("std");
         let outcome = frontend::run_frontend(&path, &std_root);
         assert_no_diagnostics(&outcome);
         for query in ["solve_report", "instance_soundness_diagnostics"] {

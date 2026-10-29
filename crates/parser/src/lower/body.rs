@@ -71,6 +71,11 @@ fn lower_assign_op(op: ParsedAssignOp) -> function::AssignOp {
         ParsedAssignOp::BitAndEq => function::AssignOp::BitAnd,
         ParsedAssignOp::BitOrEq => function::AssignOp::BitOr,
         ParsedAssignOp::ModEq => function::AssignOp::Mod,
+        // `assign_stmt_kind` lowers every compound assignment to `lhs = lhs op
+        // rhs`; only the shifts lack an `AssignOp`, so they cannot reach here.
+        ParsedAssignOp::ShlEq | ParsedAssignOp::ShrEq => {
+            unreachable!("compound shift assignments are desugared by the parser")
+        }
     }
 }
 
@@ -214,9 +219,14 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         let lhs = self.lower_expr(anchor, base_start, lhs, arenas);
         let rhs = self.lower_expr(anchor, base_start, rhs, arenas);
         let op_span = span_from_absolute(anchor, op.span, base_start);
+        let op = if self.unchecked {
+            op.elem.unchecked()
+        } else {
+            op.elem
+        };
         function::ExprKind::BinOp {
             lhs,
-            op: SpannedElem::new(op.elem, op_span),
+            op: SpannedElem::new(op, op_span),
             rhs,
         }
     }
@@ -264,14 +274,47 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         &mut self,
         anchor: AnchorId<'db>,
         base_start: usize,
-        op: ParsedSpanned<'_, function::UnOp>,
+        op: ParsedSpanned<'_, ParsedUnOp>,
         expr: ParsedExpr<'_>,
         arenas: &mut BodyArenas<'db>,
     ) -> function::ExprKind<'db> {
-        let expr = self.lower_expr(anchor, base_start, expr, arenas);
         let op_span = span_from_absolute(anchor, op.span, base_start);
+        let op = match op.elem {
+            ParsedUnOp::Not => function::UnOp::Not,
+            ParsedUnOp::BitNot => function::UnOp::BitNot,
+            ParsedUnOp::Neg => {
+                // Convert the signed mathematical literal as a whole, so a
+                // signed minimum never needs its out-of-range positive value.
+                match &expr.kind {
+                    ParsedExprKind::Lit(ParsedLitKind::Number(value)) => {
+                        return function::ExprKind::Lit(function::LitKind::Number(format!(
+                            "-{value}"
+                        )));
+                    }
+                    ParsedExprKind::Lit(ParsedLitKind::Hex(value)) => {
+                        return function::ExprKind::Lit(function::LitKind::Hex(format!(
+                            "-{value}"
+                        )));
+                    }
+                    _ => {}
+                }
+                let lhs = ParsedExpr {
+                    span: op.span,
+                    kind: ParsedExprKind::Lit(ParsedLitKind::Number("0")),
+                };
+                return self.lower_bin_op_expr(
+                    anchor,
+                    base_start,
+                    lhs,
+                    ParsedSpanned::new(function::BinOp::Sub, op.span),
+                    expr,
+                    arenas,
+                );
+            }
+        };
+        let expr = self.lower_expr(anchor, base_start, expr, arenas);
         function::ExprKind::UnaryOp {
-            op: SpannedElem::new(op.elem, op_span),
+            op: SpannedElem::new(op, op_span),
             expr,
         }
     }
@@ -339,6 +382,9 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         let mut lambda_arenas = BodyArenas::new();
         let mut top_level_stmts = Vec::with_capacity(parsed_body.output.len());
         self.with_owner(body_def, |ctx| {
+            // A lambda is a separate function: like a called function, its
+            // body is not affected by an enclosing `unchecked` block.
+            let enclosing_unchecked = std::mem::replace(&mut ctx.unchecked, false);
             for stmt in parsed_body.output {
                 top_level_stmts.push(ctx.lower_stmt(
                     body_anchor,
@@ -347,6 +393,7 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
                     &mut lambda_arenas,
                 ));
             }
+            ctx.unchecked = enclosing_unchecked;
         });
 
         let lowered_body_span = span_from_absolute(body_anchor, body_span, body_span.start);
@@ -465,6 +512,18 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             ParsedStmtKind::Block { body } => function::StmtKind::Block {
                 body: self.lower_stmt_block(anchor, base_start, body, arenas),
             },
+            ParsedStmtKind::Unchecked { keyword, body } => {
+                if self.unchecked {
+                    self.parse_errors.push(ParsedError::new(
+                        keyword,
+                        "`unchecked` blocks cannot be nested",
+                    ));
+                }
+                let enclosing_unchecked = std::mem::replace(&mut self.unchecked, true);
+                let body = self.lower_stmt_block(anchor, base_start, body, arenas);
+                self.unchecked = enclosing_unchecked;
+                function::StmtKind::Block { body }
+            }
             ParsedStmtKind::Assembly { body } => function::StmtKind::Assembly {
                 body: body
                     .into_iter()

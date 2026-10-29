@@ -1199,6 +1199,17 @@ impl<'db> Emitter<'db> {
         rhs: &MonoExpr<'db>,
     ) -> Expr<'db> {
         match op {
+            // EVM shifts take the shift amount first: `shl(shift, value)`.
+            BinOp::Shl | BinOp::Shr => {
+                return Expr {
+                    span,
+                    ty,
+                    kind: ExprKind::Call {
+                        callee: if op == BinOp::Shl { "shl" } else { "shr" }.into(),
+                        args: vec![self.emit_expr(rhs), self.emit_expr(lhs)],
+                    },
+                };
+            }
             BinOp::NotEq => {
                 let eq = Expr {
                     span,
@@ -1512,17 +1523,20 @@ fn intrinsic_name(intrinsic: MonoIntrinsic) -> &'static str {
 
 fn bin_op_name(op: BinOp) -> Option<&'static str> {
     match op {
-        BinOp::Add => Some("add"),
-        BinOp::Sub => Some("sub"),
-        BinOp::Mul => Some("mul"),
-        BinOp::Div => Some("div"),
-        BinOp::Mod => Some("mod"),
+        // Primitive words already wrap, so an unchecked operator lowers alike.
+        BinOp::Add | BinOp::UncheckedAdd => Some("add"),
+        BinOp::Sub | BinOp::UncheckedSub => Some("sub"),
+        BinOp::Mul | BinOp::UncheckedMul => Some("mul"),
+        BinOp::Div | BinOp::UncheckedDiv => Some("div"),
+        BinOp::Mod | BinOp::UncheckedMod => Some("mod"),
         BinOp::BitAnd => Some("and"),
         BinOp::BitXor => Some("xor"),
         BinOp::BitOr => Some("or"),
         BinOp::Eq => Some("primEqWord"),
         BinOp::Lt => Some("lt"),
         BinOp::Gt => Some("gt"),
+        // Emitted with swapped arguments by `emit_bin_op`.
+        BinOp::Shl | BinOp::Shr => None,
         BinOp::NotEq | BinOp::LtEq | BinOp::GtEq | BinOp::And | BinOp::Or | BinOp::Error => None,
     }
 }

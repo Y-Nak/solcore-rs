@@ -1,26 +1,38 @@
 {
   "name": "solcore-language",
   "displayName": "Solcore Language",
-  "description": "Syntax highlighting and editor configuration for Solcore .sol files.",
-  "version": "0.0.0",
+  "description": "Solcore language support with the compiler-integrated language server.",
+  "version": "0.1.0",
   "publisher": "solcore",
   "license": "Apache-2.0",
   "main": "./extension.js",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Programming Languages"],
+  "categories": [
+    "Programming Languages"
+  ],
   "scripts": {
-    "test:unit": "node --test test/*.test.js"
+    "test:unit": "node --test test/*.test.js",
+    "package": "vsce package --no-git-tag-version"
   },
-  "activationEvents": ["onLanguage:solcore"],
-  "extensionKind": ["workspace"],
+  "activationEvents": [
+    "onLanguage:solcore"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
   "contributes": {
     "languages": [
       {
         "id": "solcore",
-        "aliases": ["Solcore", "Core Solidity"],
-        "extensions": [".sol"],
+        "aliases": [
+          "Solcore",
+          "Core Solidity"
+        ],
+        "extensions": [
+          ".sol"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -37,12 +49,46 @@
         "solcore.lsp.serverPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the solcore-lsp executable. Falls back to SOLCORE_LSP_SERVER, then solcore-lsp on PATH."
+          "description": "Legacy standalone solcore-lsp executable, started without arguments. Prefer solcore.path for the compiler-integrated server.",
+          "scope": "machine-overridable"
+        },
+        "solcore.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "Path to the solcore compiler executable (started with lsp). Overrides automatic discovery via SOLCORE_PATH, Cargo and local install directories, then PATH."
         }
       }
     }
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/argotorg/solcore-rs.git",
+    "directory": "editors/vscode-solcore"
+  },
+  "homepage": "https://github.com/argotorg/solcore-rs/tree/main/editors/vscode-solcore",
+  "bugs": {
+    "url": "https://github.com/argotorg/solcore-rs/issues"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Syntax highlighting is available; starting the native language server requires a trusted workspace.",
+      "restrictedConfigurations": [
+        "solcore.path",
+        "solcore.lsp.serverPath"
+      ]
+    },
+    "virtualWorkspaces": false
+  },
+  "devDependencies": {
+    "@vscode/vsce": "3.9.2"
+  },
+  "overrides": {
+    "@azure/identity": "4.13.0",
+    "uuid": "11.1.1"
   }
 }

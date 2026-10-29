@@ -189,12 +189,32 @@ fn insert_real_std_modules(db: &mut TestDb) {
             "/std/eip7951.sol",
             include_str!("../../../std/eip7951.sol"),
         ),
+        (
+            "signed",
+            "/std/signed.sol",
+            include_str!("../../../std/signed.sol"),
+        ),
+        (
+            "unsigned",
+            "/std/unsigned.sol",
+            include_str!("../../../std/unsigned.sol"),
+        ),
+        (
+            "unchecked/signed",
+            "/std/unchecked/signed.sol",
+            include_str!("../../../std/unchecked/signed.sol"),
+        ),
+        (
+            "unchecked/unsigned",
+            "/std/unchecked/unsigned.sol",
+            include_str!("../../../std/unchecked/unsigned.sol"),
+        ),
     ] {
         insert_module_source(
             db,
             ModuleKey {
                 library: LibraryId::Std,
-                logical_path: vec![logical.to_owned()],
+                logical_path: logical.split('/').map(str::to_owned).collect(),
             },
             path,
             source,
@@ -652,6 +672,70 @@ fn bytes4_is_supported_by_the_e136_public_abi_surface(fixture: Fixture<&str>) {
     assert!(abi.contains("\"type\": \"bytes4\""), "{abi}");
 }
 
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/std_signed_and_unsigned_integers_are_supported_by_the_public_abi_surface", glob: "main.sol")]
+fn std_signed_and_unsigned_integers_are_supported_by_the_public_abi_surface(
+    fixture: Fixture<&str>,
+) {
+    let (mut db, key) = db_with_main(fixture.content());
+    insert_real_std_modules(&mut db);
+    let file = db.module_files[&key];
+    let module = parse_file_to_hir(&db, file).module(&db);
+    let contract = contract_named(&db, module, "IntEcho");
+    let surface = contract_dispatch_surface(&db, module, contract);
+    assert!(
+        surface
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_deref() != Some("SC0231")),
+        "{:?}",
+        surface.diagnostics
+    );
+    let expected = [
+        "int8", "int16", "int32", "int64", "int128", "int256", "uint8", "uint16", "uint32",
+        "uint64", "uint128",
+    ];
+    let method = &surface.methods[0];
+    assert_eq!(method.signature, format!("echo({})", expected.join(",")));
+    for params in [&method.inputs, &method.outputs] {
+        assert_eq!(
+            params
+                .iter()
+                .map(|param| param.ty.to_string())
+                .collect::<Vec<_>>(),
+            expected,
+        );
+    }
+
+    let abi = contract_abi_json(&db, module, contract).expect("integer ABI JSON");
+    for ty in expected {
+        assert_eq!(
+            abi.matches(&format!("\"type\": \"{ty}\"")).count(),
+            2,
+            "{abi}"
+        );
+    }
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/integer_names_outside_std_signed_and_unsigned_are_not_canonical_abi_types", glob: "main.sol")]
+fn integer_names_outside_std_signed_and_unsigned_are_not_canonical_abi_types(
+    fixture: Fixture<&str>,
+) {
+    let (mut db, key) = db_with_main(fixture.content());
+    insert_real_std_modules(&mut db);
+    let file = db.module_files[&key];
+    let module = parse_file_to_hir(&db, file).module(&db);
+    let contract = contract_named(&db, module, "LocalInt");
+    let surface = contract_dispatch_surface(&db, module, contract);
+    assert!(
+        surface
+            .methods
+            .iter()
+            .all(|method| method.signature != "echo(int8)"),
+        "{:?}",
+        surface.methods
+    );
+}
+
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/calldata_array_abi_uses_generic_signature_and_source_adt_json_name", glob: "main.sol")]
 fn calldata_array_abi_uses_generic_signature_and_source_adt_json_name(fixture: Fixture<&str>) {
     let (mut db, key) = db_with_main(fixture.content());
@@ -704,6 +788,77 @@ fn nested_calldata_arrays_recurse_in_signatures_and_abi_json(fixture: Fixture<&s
     let abi = contract_abi_json(&db, module, contract).expect("nested array ABI JSON");
     assert!(abi.contains("\"internalType\": \"uint256[][]\""), "{abi}");
     assert!(abi.contains("\"type\": \"uint256[][]\""), "{abi}");
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/memory_dynamic_array_outputs_recurse_in_abi_json", glob: "main.sol")]
+fn memory_dynamic_array_outputs_recurse_in_abi_json(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
+    insert_real_std_modules(&mut db);
+    let file = db.module_files[&key];
+    let module = parse_file_to_hir(&db, file).module(&db);
+    let contract = contract_named(&db, module, "Arrays");
+    let surface = contract_dispatch_surface(&db, module, contract);
+
+    assert!(surface.diagnostics.is_empty(), "{:?}", surface.diagnostics);
+    for (method, expected) in surface.methods.iter().zip([
+        vec!["address[]"],
+        vec!["address[][]"],
+        vec!["string[]"],
+        vec!["uint256", "bytes4[]"],
+    ]) {
+        assert_eq!(
+            method
+                .outputs
+                .iter()
+                .map(|param| param.ty.to_string())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+    let abi = contract_abi_json(&db, module, contract).expect("memory array ABI JSON");
+    for expected in ["address[]", "address[][]", "string[]", "bytes4[]"] {
+        assert!(abi.contains(&format!("\"type\": \"{expected}\"")), "{abi}");
+    }
+    let diagnostics = diagnostics_for_module(&db, &key);
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/memory_dynamic_array_outputs_require_canonical_wrappers", glob: "*.sol")]
+fn memory_dynamic_array_outputs_require_canonical_wrappers(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
+    insert_real_std_modules(&mut db);
+    let module = parse_file_to_hir(&db, db.module_files[&key]).module(&db);
+    let contract = contract_named(&db, module, "Fake");
+    let surface = contract_dispatch_surface(&db, module, contract);
+
+    assert_eq!(
+        surface.methods[0].outputs[0].ty.to_string(),
+        "<unsupported>"
+    );
+    assert!(
+        surface
+            .diagnostics
+            .iter()
+            .any(|diagnostic| { diagnostic.code.as_deref() == Some("SC0231") }),
+        "{:?}",
+        surface.diagnostics
+    );
+    assert!(contract_abi_json(&db, module, contract).is_err());
+}
+
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/memory_dynamic_array_outputs_require_element_encoding", glob: "main.sol")]
+fn memory_dynamic_array_outputs_require_element_encoding(fixture: Fixture<&str>) {
+    let (mut db, key) = db_with_main(fixture.content());
+    insert_real_std_modules(&mut db);
+    let diagnostics = diagnostics_for_module(&db, &key);
+
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some("SC0207")
+                && diagnostic.message.contains("RunContract")
+        }),
+        "{diagnostics:?}"
+    );
 }
 
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/calldata_arrays_are_rejected_from_nested_output_positions", glob: "main.sol")]

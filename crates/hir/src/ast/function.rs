@@ -24,7 +24,7 @@ use crate::{
 /// The signature stores source-level types and predicates, not checked types.
 /// `public` and `payable` keep the keyword spans when present so diagnostics
 /// can point at modifier misuse.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct FuncSig<'db> {
     /// Span covering the complete signature syntax.
     pub span: Span<'db>,
@@ -90,7 +90,7 @@ pub struct FuncBody<'db> {
 }
 
 /// Statement node stored in a function-body arena.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct Stmt<'db> {
     /// Span covering the statement syntax.
     pub span: Span<'db>,
@@ -99,7 +99,7 @@ pub struct Stmt<'db> {
 }
 
 /// Assignment operator used by a statement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum AssignOp {
     /// `=` assignment.
     Plain,
@@ -146,7 +146,7 @@ impl AssignOp {
 /// are inserted. Lexical scope boundaries use [`StmtKind::Block`], including
 /// source `if` branches, loop bodies/post clauses, and the scope enclosing a
 /// loop's initializer. Control-flow statement lists do not add implicit scopes.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum StmtKind<'db> {
     /// Local binding statement.
     Let {
@@ -218,7 +218,7 @@ pub enum StmtKind<'db> {
 }
 
 /// Expression node stored in a function-body arena.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct Expr<'db> {
     /// Span covering the expression syntax.
     pub span: Span<'db>,
@@ -227,7 +227,7 @@ pub struct Expr<'db> {
 }
 
 /// Kinds of expressions accepted in lowered function bodies.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum ExprKind<'db> {
     /// Literal expression.
     Lit(LitKind),
@@ -320,7 +320,7 @@ pub enum ExprKind<'db> {
 }
 
 /// One arm of a match statement.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct MatchArm<'db> {
     /// Span covering the arm, including its leading separator.
     pub span: Span<'db>,
@@ -331,7 +331,7 @@ pub struct MatchArm<'db> {
 }
 
 /// Pattern node stored in a function-body arena.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct Pat<'db> {
     /// Span covering the pattern syntax.
     pub span: Span<'db>,
@@ -340,7 +340,7 @@ pub struct Pat<'db> {
 }
 
 /// Constructor pattern head syntax.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum PatCtorHead<'db> {
     /// Leading-dot constructor lookup deferred to the expected type.
     Deferred {
@@ -374,7 +374,7 @@ impl<'db> PatCtorHead<'db> {
 }
 
 /// Kinds of patterns accepted by match arms.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum PatKind<'db> {
     /// `_` wildcard pattern.
     Wildcard,
@@ -406,7 +406,7 @@ pub enum PatKind<'db> {
 }
 
 /// Source literal kind shared by expressions and patterns.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum LitKind {
     /// Decimal number literal text.
     Number(String),
@@ -419,7 +419,7 @@ pub enum LitKind {
 }
 
 /// Binary operators represented in HIR.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum BinOp {
     /// Addition.
     Add,
@@ -431,6 +431,10 @@ pub enum BinOp {
     Div,
     /// Remainder.
     Mod,
+    /// Left shift (`<<`).
+    Shl,
+    /// Right shift (`>>`): arithmetic for signed types, logical otherwise.
+    Shr,
     /// Bitwise and.
     BitAnd,
     /// Bitwise xor.
@@ -453,12 +457,37 @@ pub enum BinOp {
     And,
     /// Logical or.
     Or,
+    /// Wrapping addition written inside an `unchecked` block.
+    UncheckedAdd,
+    /// Wrapping subtraction written inside an `unchecked` block.
+    UncheckedSub,
+    /// Wrapping multiplication written inside an `unchecked` block.
+    UncheckedMul,
+    /// Division written inside an `unchecked` block (`MIN / -1` wraps).
+    UncheckedDiv,
+    /// Remainder written inside an `unchecked` block.
+    UncheckedMod,
     /// Parser recovery placeholder.
     Error,
 }
 
+impl BinOp {
+    /// The operator an `unchecked` block substitutes for `self`. Only the
+    /// arithmetic operators have unchecked counterparts.
+    pub fn unchecked(self) -> Self {
+        match self {
+            Self::Add => Self::UncheckedAdd,
+            Self::Sub => Self::UncheckedSub,
+            Self::Mul => Self::UncheckedMul,
+            Self::Div => Self::UncheckedDiv,
+            Self::Mod => Self::UncheckedMod,
+            op => op,
+        }
+    }
+}
+
 /// Unary operators represented in HIR.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum UnOp {
     /// Logical negation.
     Not,
@@ -469,7 +498,7 @@ pub enum UnOp {
 }
 
 /// Inline Yul statement node.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct YulStmt<'db> {
     /// Span covering the Yul statement.
     pub span: Span<'db>,
@@ -478,7 +507,7 @@ pub struct YulStmt<'db> {
 }
 
 /// Kinds of inline Yul statements.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum YulStmtKind<'db> {
     /// Braced statement block.
     Block(Vec<YulStmt<'db>>),
@@ -547,7 +576,7 @@ pub enum YulStmtKind<'db> {
 }
 
 /// Inline Yul expression node.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct YulExpr<'db> {
     /// Span covering the Yul expression.
     pub span: Span<'db>,
@@ -556,7 +585,7 @@ pub struct YulExpr<'db> {
 }
 
 /// Kinds of inline Yul expressions.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum YulExprKind<'db> {
     /// Literal expression.
     Lit(YulLitKind),
@@ -574,7 +603,7 @@ pub enum YulExprKind<'db> {
 }
 
 /// Inline Yul literal kind.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum YulLitKind {
     /// Decimal number literal text.
     Number(String),
@@ -589,7 +618,7 @@ pub enum YulLitKind {
 }
 
 /// One case in a Yul switch.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct YulCase<'db> {
     /// Span covering the case label and body.
     pub span: Span<'db>,
@@ -652,7 +681,7 @@ impl<'db> Spanned<'db> for YulCase<'db> {
 /// Parameters can be typed or untyped at this stage because different syntactic
 /// contexts allow different requirements. Semantic phases decide whether a
 /// particular untyped parameter is legal.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum FuncParam<'db> {
     /// Parameter with an explicit type.
     Typed {

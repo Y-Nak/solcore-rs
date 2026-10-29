@@ -14,10 +14,79 @@ contract. The tutorial owns and tests its source examples.
 The book bundles the Playground editor and compiler to run those projects in
 the page and can be distributed as a standalone static site.
 
+## Installation
+
+Release archives include the compiler, formatter and matching language server;
+Rust is not required to use them. If an archive is not yet available for your
+platform, [build from source](#build-and-test).
+
+### macOS and Linux
+
+1. Open [GitHub Releases](https://github.com/argotorg/solcore-rs/releases) and
+   download `SHA256SUMS` and the `solcore-v<VERSION>-<TARGET>.tar.gz` archive
+   for your machine. Only targets attached to that release are available.
+
+   | Platform | Target |
+   | --- | --- |
+   | macOS, Apple Silicon | `aarch64-apple-darwin` |
+   | macOS, Intel | `x86_64-apple-darwin` |
+   | Linux, x86-64 | `x86_64-unknown-linux-gnu` |
+   | Linux, ARM64 | `aarch64-unknown-linux-gnu` |
+
+2. In the directory containing both downloads, set the downloaded version and
+   target, then verify the archive. For example, on Apple Silicon macOS:
+
+   ```sh
+   version=0.1.0
+   target=aarch64-apple-darwin
+   release="solcore-v${version}-${target}"
+   archive="${release}.tar.gz"
+   awk -v file="$archive" '$2 == file' SHA256SUMS | shasum -a 256 --check
+   ```
+
+   On Linux, use `sha256sum --check` instead of `shasum -a 256 --check`.
+   Continue only if verification reports `OK` for the downloaded archive.
+
+3. Extract the entire archive and add its directory to `PATH`:
+
+   ```sh
+   mkdir -p "$HOME/.local/opt/solcore"
+   tar -xzf "$archive" -C "$HOME/.local/opt/solcore"
+   export SOLCORE_PATH="$HOME/.local/opt/solcore/$release/solcore"
+   export PATH="${SOLCORE_PATH%/*}:$PATH"
+
+   solcore --version
+   solcore lsp --version
+   solcore-fmt --version
+   ```
+
+   Keep `std/` beside the executables. To make the settings persist, add the
+   `SOLCORE_PATH` and `PATH` exports to `~/.zshrc` or `~/.bashrc`, replacing
+   `$release` with the actual extracted directory name. Restart your terminal
+   and editor after changing these settings.
+
+Compile a source file with `solcore main.sol --emit-yul`. The native Windows
+release is not yet qualified; WSL can use a matching Linux archive.
+
+### Editor support
+
+Install the separate [VS Code, Neovim/Vim, or Emacs integration](editors/README.md)
+for syntax highlighting and LSP features. For VS Code, download the release's
+`.vsix` file and use **Extensions: Install from VSIX...**. The integrations start
+`solcore lsp` automatically; you do not need to run it in a terminal.
+
+`SOLCORE_PATH` selects the installed compiler explicitly. If a GUI editor does
+not inherit your shell environment, configure the absolute executable path in
+the editor (for example, `solcore.path` in VS Code). Updating the compiler also
+updates its LSP; editor packages need updating only when their integration changes.
+
+Maintainers: [local release workflow](docs/releasing.md) covers native archives,
+editor packages, GitHub Releases and playground deployment without hosted CI.
+
 ## Language and standard library
 
 The Rust compiler and its regression tests define the supported Solcore
-language. Sources use the canonical `.sol` syntax. The eight library sources
+language. Sources use the canonical `.sol` syntax. The ten library sources
 in [`std/`](std/) are maintained with this compiler; see the standard library's
 [README](std/README.md) for its maintenance and verification policy.
 

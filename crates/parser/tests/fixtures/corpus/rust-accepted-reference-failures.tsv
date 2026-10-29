@@ -4,9 +4,6 @@ cases/class-return-type-miss.sol	canonical omitted results mean unit consistentl
 cases/compose_desugared.sol	SC0209 reference rejects the explicitly desugared closure because its inferred invoke implementation is not polymorphic enough; Rust accepts it
 cases/signature.sol	canonical trait parameters and function constraints make every binder explicit, eliminating the reference source's legacy binder failure
 cases/super-class-recursive-arg.sol	SC0223 reference legacy solver rejects this recursive superclass argument, while the reference tabled mode and Rust both accept it
-cases/tabled-answer-reuse.sol	SC0299 reference legacy solver reports an ambiguous inferred type, while the reference tabled mode and Rust both accept it
-cases/tabled-mutual-chain.sol	SC0299 reference legacy solver reports an ambiguous inferred type, while the reference tabled mode and Rust both accept it
-comptime/ct_param_poly_runtime.sol	SC0299 historical frontend ambiguity; specialization rejects the runtime argument, while this frontend-only regression gate intentionally defers that check
 comptime/OneOne.sol	canonical function result annotations make the formerly inferred word-valued helpers explicit
 spec/051negBool.sol	canonical named-parameter and result annotations make the formerly inferred signatures explicit
 spec/052negPair.sol	canonical generics, named-parameter types, and result annotations make the formerly inferred signatures explicit

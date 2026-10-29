@@ -6,8 +6,8 @@ use super::{
     TypeReg, VEnv, YulState, ident_text,
     known::{int_expr, known_int},
     value::{
-        BigInt, bitand_word, bitor_word, bitxor_word, not_word, shl_word, shr_word, word_div,
-        word_mod,
+        BigInt, bitand_word, bitor_word, bitxor_word, not_word, sar_word, shl_word, shr_word,
+        signed_word, signextend_word, word_div, word_mod, word_sdiv, word_smod,
     },
 };
 use crate::ir::{MonoExpr, MonoExprKind};
@@ -71,8 +71,13 @@ fn yul_op_is_interpretable(name: &str, arity: usize) -> bool {
             | ("mul", 2)
             | ("div", 2)
             | ("mod", 2)
+            | ("sdiv", 2)
+            | ("smod", 2)
             | ("gt", 2)
             | ("lt", 2)
+            | ("sgt", 2)
+            | ("slt", 2)
+            | ("signextend", 2)
             | ("eq", 2)
             | ("iszero", 1)
             | ("and", 2)
@@ -81,6 +86,7 @@ fn yul_op_is_interpretable(name: &str, arity: usize) -> bool {
             | ("not", 1)
             | ("shl", 2)
             | ("shr", 2)
+            | ("sar", 2)
     )
 }
 
@@ -330,8 +336,13 @@ pub(super) fn eval_yul_op(name: &str, values: &[BigInt]) -> Option<BigInt> {
         ("mul", [a, b]) => Some(a.mul(b).mod_word()),
         ("div", [a, b]) => Some(word_div(a.clone(), b.clone())),
         ("mod", [a, b]) => Some(word_mod(a.clone(), b.clone())),
+        ("sdiv", [a, b]) => Some(word_sdiv(a, b)),
+        ("smod", [a, b]) => Some(word_smod(a, b)),
         ("gt", [a, b]) => Some(BigInt::from_u64(u64::from(a.mod_word() > b.mod_word()))),
         ("lt", [a, b]) => Some(BigInt::from_u64(u64::from(a.mod_word() < b.mod_word()))),
+        ("sgt", [a, b]) => Some(BigInt::from_u64(u64::from(signed_word(a) > signed_word(b)))),
+        ("slt", [a, b]) => Some(BigInt::from_u64(u64::from(signed_word(a) < signed_word(b)))),
+        ("signextend", [byte_index, value]) => Some(signextend_word(byte_index, value)),
         ("eq", [a, b]) => Some(BigInt::from_u64(u64::from(a.mod_word() == b.mod_word()))),
         ("iszero", [a]) => Some(BigInt::from_u64(u64::from(a.mod_word().is_zero()))),
         ("and", [a, b]) => Some(bitand_word(a, b)),
@@ -340,6 +351,7 @@ pub(super) fn eval_yul_op(name: &str, values: &[BigInt]) -> Option<BigInt> {
         ("not", [a]) => Some(not_word(a)),
         ("shl", [sh, value]) => Some(shl_word(value, sh)),
         ("shr", [sh, value]) => Some(shr_word(value, sh)),
+        ("sar", [sh, value]) => Some(sar_word(value, sh)),
         _ => None,
     }
 }

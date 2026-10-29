@@ -22,6 +22,57 @@ pub(super) fn word_mod(lhs: BigInt, rhs: BigInt) -> BigInt {
     }
 }
 
+pub(super) fn signed_word(value: &BigInt) -> BigInt {
+    let value = value.mod_word();
+    if value.bit(255) {
+        value.sub(&two_pow_256())
+    } else {
+        value
+    }
+}
+
+pub(super) fn word_sdiv(lhs: &BigInt, rhs: &BigInt) -> BigInt {
+    let lhs = signed_word(lhs);
+    let rhs = signed_word(rhs);
+    let Some((quotient, _)) = lhs.abs().div_rem_nonnegative(&rhs.abs()) else {
+        return BigInt::zero();
+    };
+    // Wrapping the signed quotient also preserves EVM's MIN / -1 = MIN.
+    if lhs.sign == rhs.sign {
+        quotient.mod_word()
+    } else {
+        quotient.neg().mod_word()
+    }
+}
+
+pub(super) fn word_smod(lhs: &BigInt, rhs: &BigInt) -> BigInt {
+    let lhs = signed_word(lhs);
+    let rhs = signed_word(rhs);
+    let Some((_, remainder)) = lhs.abs().div_rem_nonnegative(&rhs.abs()) else {
+        return BigInt::zero();
+    };
+    if lhs.sign < 0 {
+        remainder.neg().mod_word()
+    } else {
+        remainder
+    }
+}
+
+pub(super) fn signextend_word(byte_index: &BigInt, value: &BigInt) -> BigInt {
+    let Some(byte_index) = byte_index.mod_word().to_usize_limit(30) else {
+        return value.mod_word();
+    };
+    let mut bytes = value.to_word_be_bytes();
+    let sign_byte = 31 - byte_index;
+    let extension = if bytes[sign_byte] & 0x80 != 0 {
+        0xff
+    } else {
+        0
+    };
+    bytes[..sign_byte].fill(extension);
+    BigInt::from_be_bytes(&bytes)
+}
+
 pub(super) fn word_low_byte(value: &BigInt) -> u8 {
     value.mod_word().limbs.first().copied().unwrap_or(0) as u8
 }
@@ -65,6 +116,17 @@ pub(super) fn shr_word(value: &BigInt, shift: &BigInt) -> BigInt {
         BigInt::zero()
     } else {
         value.mod_word().shr_bits(shift)
+    }
+}
+
+pub(super) fn sar_word(value: &BigInt, shift: &BigInt) -> BigInt {
+    let value = value.mod_word();
+    if value.bit(255) {
+        // For negative words, ~((~value) >> shift) sign-extends and rounds
+        // toward negative infinity, including shifts of 256 or more.
+        not_word(&shr_word(&not_word(&value), shift))
+    } else {
+        shr_word(&value, shift)
     }
 }
 
@@ -139,6 +201,9 @@ impl BigInt {
     }
 
     pub(super) fn from_hex_str(text: &str) -> Option<Self> {
+        let (negative, text) = text
+            .strip_prefix('-')
+            .map_or((false, text), |rest| (true, rest));
         let digits = text
             .strip_prefix("0x")
             .or_else(|| text.strip_prefix("0X"))
@@ -150,6 +215,9 @@ impl BigInt {
         for ch in digits.chars() {
             let digit = ch.to_digit(16)?;
             value = value.mul_small(16).add_small(digit);
+        }
+        if negative && !value.is_zero() {
+            value.sign = -1;
         }
         Some(value)
     }
@@ -173,6 +241,10 @@ impl BigInt {
 
     pub(super) fn is_zero(&self) -> bool {
         self.sign == 0
+    }
+
+    pub(super) fn limb_len(&self) -> usize {
+        self.limbs.len()
     }
 
     fn normalize(&mut self) {

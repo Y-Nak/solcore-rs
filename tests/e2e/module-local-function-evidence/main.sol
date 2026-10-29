@@ -1,4 +1,4 @@
-import * from std;
+import { uint256, Proxy, string } from std;
 import * from std.dispatch;
 import { a, bothA, valueA } from a;
 import { b, bothB, valueB } from b;

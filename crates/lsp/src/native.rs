@@ -1,6 +1,7 @@
 //! Native stdio transport for the Solcore language server.
 
 use std::{
+    ffi::{OsStr, OsString},
     fs,
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
@@ -573,6 +574,43 @@ fn is_ignored_directory(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| matches!(name, ".git" | ".hg" | ".svn" | "node_modules" | "target"))
+}
+
+/// Runs the native CLI, shared by `solcore lsp` and `solcore-lsp`.
+///
+/// No startup message is written to stdout: it belongs exclusively to the LSP
+/// transport. Help and version are only printed when explicitly requested.
+pub fn run_cli(program: &str, args: Vec<OsString>) -> i32 {
+    match args.as_slice() {
+        [arg] if arg == OsStr::new("--help") || arg == OsStr::new("-h") => {
+            println!(
+                "Usage: {program} [--stdio]\n\nRun the Solcore language server over stdin/stdout.\n\nOptions:\n  --stdio        Use LSP stdio transport (default)\n  -h, --help     Show this help text\n  -V, --version  Show version information"
+            );
+            return 0;
+        }
+        [arg] if arg == OsStr::new("--version") || arg == OsStr::new("-V") => {
+            println!("solcore-lsp {}", env!("CARGO_PKG_VERSION"));
+            return 0;
+        }
+        [] => {}
+        [arg] if arg == OsStr::new("--stdio") => {}
+        _ => {
+            eprintln!("unsupported language server arguments; try `{program} --help`");
+            return 2;
+        }
+    }
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("failed to start language server runtime: {error}");
+            return 1;
+        }
+    };
+    runtime.block_on(run_stdio());
+    0
 }
 
 /// Runs the native language server over process stdin/stdout.

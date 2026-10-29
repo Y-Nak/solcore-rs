@@ -2,7 +2,7 @@ use super::*;
 use crate::display::{display_ty_source, display_type_ref_source};
 
 /// User-facing information about a callable definition.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct CalleeDiagnostic {
     /// Callable display name.
     pub name: String,
@@ -13,7 +13,7 @@ pub struct CalleeDiagnostic {
 }
 
 /// User-facing information about a callable parameter.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct ParameterDiagnostic {
     /// Zero-based parameter index.
     pub index: usize,
@@ -29,7 +29,7 @@ pub struct ParameterDiagnostic {
 ///
 /// Diagnostics store display-string type snapshots so they are lifetime-free
 /// and do not expose ephemeral inference variables after inference finishes.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub enum TypeckDiagnostic {
     /// `SC0201`: two types could not be unified.
     Mismatch {
@@ -207,6 +207,13 @@ pub enum TypeckDiagnostic {
         /// Source span for the unknown Yul identifier or function.
         span: LabelSpan,
         /// Referenced Yul name.
+        name: String,
+    },
+    /// `SC0245`: an inline Yul function shadows a builtin operation.
+    ReservedYulFunction {
+        /// Source span for the function name.
+        span: LabelSpan,
+        /// Reserved builtin name.
         name: String,
     },
     /// `SC0212`: weak instance-head variables are not determined by the main
@@ -645,11 +652,22 @@ impl TypeckDiagnostic {
                 diagnostic.with_note("rename or remove the duplicate type definition")
             }
             TypeckDiagnostic::UnsatisfiedConstraint { span, pred } => {
+                // Operators inside `unchecked` desugar to std.unchecked traits,
+                // which are only visible through an explicit import.
+                let help = if pred.starts_with("operator Unchecked") || pred.contains(": Unchecked")
+                {
+                    "arithmetic inside `unchecked` requires `import * from std.unchecked.unsigned;` (word, uintN) or `import * from std.unchecked.signed;` (intN)"
+                } else if pred.contains(": Shl<") || pred.contains(": Shr<") {
+                    // As in Solidity, only unsigned types are shift amounts.
+                    "the shift amount must be an unsigned type (`word`, `uint8` .. `uint256`); signed amounts are not allowed"
+                } else {
+                    "add a matching impl or strengthen the surrounding type context"
+                };
                 Diagnostic::error(format!("cannot satisfy trait constraint: {pred}"))
                     .with_code(DiagnosticCode::TYPECK_UNSATISFIED_CONSTRAINT)
                     .with_primary_label_span(span.clone(), Some("constraint originates here"))
                     .with_note(format!("no visible impl matches `{pred}`"))
-                    .with_help("add a matching impl or strengthen the surrounding type context")
+                    .with_help(help)
             }
             TypeckDiagnostic::AmbiguousConstraint {
                 span,
@@ -683,6 +701,12 @@ impl TypeckDiagnostic {
                 Diagnostic::error(format!("unknown Yul identifier or function: {name}"))
                     .with_code(DiagnosticCode::TYPECK_UNKNOWN_YUL_NAME)
                     .with_primary_label_span(span.clone(), Some("unknown Yul name"))
+            }
+            TypeckDiagnostic::ReservedYulFunction { span, name } => {
+                Diagnostic::error(format!("cannot redefine Yul builtin function `{name}`"))
+                    .with_code(DiagnosticCode::TYPECK_RESERVED_YUL_FUNCTION)
+                    .with_primary_label_span(span.clone(), Some("reserved Yul builtin name"))
+                    .with_help("choose a function name that does not shadow a Yul builtin")
             }
             TypeckDiagnostic::CoverageCondition {
                 span,

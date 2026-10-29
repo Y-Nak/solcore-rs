@@ -70,7 +70,7 @@ contract GenericSum {
         let buf = allocate_zeroed_memory(64);
         mstore(buf, Typedef.rep(tag));
         mstore(buf + 32, Typedef.rep(value));
-        let rdr: MemoryWordReader = MemoryWordReader(buf);
+        let rdr: MemoryWordReader = MemoryWordReader(buf, buf + 64);
         let dec: ABIDecoder<Option<uint256>, MemoryWordReader> = ABIDecoder(rdr);
         let opt: Option<uint256> = decode(dec, 0);
         match (opt) {

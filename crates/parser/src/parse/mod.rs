@@ -35,12 +35,31 @@ use crate::types::*;
 /// including wasm workers whose stack cannot be enlarged at runtime.
 pub(crate) const MAX_SYNTAX_NESTING: usize = 128;
 
+// In debug builds the expression combinator ladder can consume more than
+// Chumsky's stack-growth red zone between recursive entry checks. Give native
+// callers (including default 2 MiB editor/test threads) enough initial room
+// for the bounded grammar. Wasm has a fixed stack and uses the grammar limits.
+fn with_parser_stack<T>(parse: impl FnOnce() -> T) -> T {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        stacker::maybe_grow(8 * 1024 * 1024, 16 * 1024 * 1024, parse)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        parse()
+    }
+}
+
 /// Parses the top-level items currently supported by the front end.
 ///
 /// Invalid top-level spans are represented as `ParsedTopItem::Error` and also
 /// converted into user-facing parse errors. The function never panics on
 /// malformed source.
 pub(crate) fn parse_supported_items<'src>(src: &'src str) -> ParseOutput<ParsedTopItem<'src>> {
+    with_parser_stack(|| parse_supported_items_impl(src))
+}
+
+fn parse_supported_items_impl<'src>(src: &'src str) -> ParseOutput<ParsedTopItem<'src>> {
     let (tokens, comments, mut errors) = tokenize_with_comments(src);
     let token_count = tokens.len();
     let stream = chumsky::input::Stream::from_iter(tokens)
@@ -367,6 +386,13 @@ pub(crate) fn parse_body_statements<'src>(
     source: &'src str,
     body_span: LexSpan,
 ) -> ParseOutput<ParsedStmt<'src>> {
+    with_parser_stack(|| parse_body_statements_impl(source, body_span))
+}
+
+fn parse_body_statements_impl<'src>(
+    source: &'src str,
+    body_span: LexSpan,
+) -> ParseOutput<ParsedStmt<'src>> {
     if body_span.end <= body_span.start + 2 {
         tracing::trace!(
             target: "parser",
@@ -466,7 +492,7 @@ fn validate_expression_statement_terminators(
             ParsedStmtKind::For { body, .. } => {
                 validate_expression_statement_terminators(&body.stmts, false, errors);
             }
-            ParsedStmtKind::Block { body } => {
+            ParsedStmtKind::Block { body } | ParsedStmtKind::Unchecked { body, .. } => {
                 validate_expression_statement_terminators(body, false, errors);
             }
             ParsedStmtKind::If {
@@ -1480,6 +1506,56 @@ match (left, right) {
                 "missing noncanonical comptime-parameter error for `{source}`: {:#?}",
                 parsed.errors
             );
+        }
+    }
+
+    fn render_expr(expr: &ParsedExpr<'_>) -> String {
+        match &expr.kind {
+            ParsedExprKind::Ident((name, _)) => (*name).to_owned(),
+            ParsedExprKind::BinOp { lhs, op, rhs } => {
+                format!("({} {:?} {})", render_expr(lhs), op.elem, render_expr(rhs))
+            }
+            other => format!("{other:?}"),
+        }
+    }
+
+    fn render_return(source: &str) -> Result<String, Vec<ParsedError>> {
+        let parsed = parse_body_statements(source, (0..source.len()).into());
+        if !parsed.errors.is_empty() {
+            return Err(parsed.errors);
+        }
+        match parsed.output.as_slice() {
+            [
+                ParsedStmt {
+                    kind: ParsedStmtKind::Return(Some(expr)),
+                    ..
+                },
+            ] => Ok(render_expr(expr)),
+            other => panic!("expected one return statement: {other:#?}"),
+        }
+    }
+
+    #[test]
+    fn shifts_bind_between_additive_and_bitwise_operators() {
+        for (source, expected) in [
+            ("{ return a + b << c & d; }", "(((a Add b) Shl c) BitAnd d)"),
+            ("{ return a >> b >> c; }", "((a Shr b) Shr c)"),
+            ("{ return a << b < c; }", "((a Shl b) Lt c)"),
+            ("{ return a > b; }", "(a Gt b)"),
+            ("{ return a >= b; }", "(a GtEq b)"),
+        ] {
+            assert_eq!(render_return(source).unwrap(), expected, "{source}");
+        }
+    }
+
+    #[test]
+    fn shift_operators_require_adjacent_tokens() {
+        for source in [
+            "{ return a > > b; }",
+            "{ return a < < b; }",
+            "{ a < <= b; }",
+        ] {
+            assert!(render_return(source).is_err(), "{source} must not parse");
         }
     }
 

@@ -21,4 +21,4 @@ error[SC0001]: parse error: unexpected `^`
    |                                               ^ unexpected token
 18 |     return f(2);
    |
-   = note: expecting `!`, `(`, `.`, `@`, `[`, `lam`, or `~`
+   = note: expecting `!`, `(`, `-`, `.`, `@`, `[`, `lam`, or `~`
